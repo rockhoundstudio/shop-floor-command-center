@@ -24,6 +24,7 @@ export const BLOCKED_UNVERIFIED_PINS = [];
 
 export const FIELD_LIMITS = {
   "custom.seo_title": 70,
+  "native_seo_title": 70,
   "native_seo_description": 160,
   "shopify_title": 255,
   "custom.piece_name": 255,
@@ -56,7 +57,8 @@ export const POLICY_PRE_APPROVED_FIELDS = [
   "custom.setting_ready",
   "custom.chain_material",
   "custom.jewelry_finding_type",
-  "custom.seo_title"
+  "custom.seo_title",
+  "native_seo_title"
 ];
 
 export const GENERIC_VALUES = ["None", "Unknown", "N/A", "N/a", "none", "unknown", "n/a"];
@@ -70,6 +72,95 @@ export const NATIVE_ALIAS_MAP = {
   "native_seo_title": "custom.seo_title",
   "native_shipping_weight": "custom.shipping_weight_oz",
   "native_price": "price"
+};
+
+export const DESTINATION_SPECIFIC_APPROVAL_KEYS = new Set([
+  "native_description",
+  "custom.generated_description",
+  "native_seo_title",
+  "custom.seo_title"
+]);
+
+export const resolveApprovalStorageKey = (key) => {
+  if (typeof key !== "string") return "";
+  const trimmed = key.trim();
+  if (!trimmed) return "";
+  if (trimmed === "generated_description") return "custom.generated_description";
+  if (trimmed === "seo_title") return "custom.seo_title";
+  if (DESTINATION_SPECIFIC_APPROVAL_KEYS.has(trimmed)) {
+    return trimmed;
+  }
+  return NATIVE_ALIAS_MAP[trimmed] || trimmed;
+};
+
+const isExactProductGidString = (val) =>
+  typeof val === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(val.trim());
+
+export const hasVerifiedLoadedDestinationBaseline = (destKey, data, expectedProductId) => {
+  if (!data || typeof data !== "object") return false;
+  if (!isExactProductGidString(expectedProductId)) return false;
+
+  const cleanProductId = expectedProductId.trim();
+  const manifestProductId =
+    (typeof data.nativeTargets?.productId === "string" && data.nativeTargets.productId.trim()) ||
+    (typeof data.productId === "string" && data.productId.trim()) ||
+    null;
+
+  if (!manifestProductId || manifestProductId !== cleanProductId) {
+    return false;
+  }
+
+  const unverifiedFields = Array.isArray(data.nativeTargets?.unverifiedFields)
+    ? data.nativeTargets.unverifiedFields
+    : [];
+
+  if (destKey === "native_description") {
+    if (unverifiedFields.includes("descriptionHtml")) return false;
+    return typeof data.nativeTargets?.descriptionHtml === "string";
+  }
+
+  if (destKey === "native_seo_title") {
+    if (unverifiedFields.includes("seo")) return false;
+    const seoObj = data.nativeTargets?.seo;
+    if (!seoObj || typeof seoObj !== "object" || Array.isArray(seoObj)) return false;
+    if (!Object.prototype.hasOwnProperty.call(seoObj, "title")) return false;
+    return typeof seoObj.title === "string" || seoObj.title === null;
+  }
+
+  if (destKey === "native_seo_description") {
+    if (unverifiedFields.includes("seo")) return false;
+    const seoObj = data.nativeTargets?.seo;
+    if (!seoObj || typeof seoObj !== "object" || Array.isArray(seoObj)) return false;
+    if (!Object.prototype.hasOwnProperty.call(seoObj, "description")) return false;
+    return typeof seoObj.description === "string" || seoObj.description === null;
+  }
+
+  if (destKey === "native_title" || destKey === "shopify_title") {
+    if (unverifiedFields.includes("productTitle")) return false;
+    return typeof data.nativeTargets?.productTitle === "string";
+  }
+
+  if (destKey === "custom.generated_description" || destKey === "custom.seo_title") {
+    if (
+      !data.currentMetafields ||
+      typeof data.currentMetafields !== "object" ||
+      Array.isArray(data.currentMetafields)
+    ) {
+      return false;
+    }
+    if (data.readBackVerified === false) {
+      return false;
+    }
+    const hasLoadedProductContext =
+      data.intent === "loadProductData" ||
+      data.intent === "executeRepairPlan" ||
+      data.diagnostics?.shopifyRead === "Success" ||
+      typeof data.nativeTargets?.productTitle === "string" ||
+      typeof data.productTitle === "string";
+    return Boolean(hasLoadedProductContext);
+  }
+
+  return true;
 };
 
 const CANONICAL_READ_COMPANIONS = Object.freeze({
@@ -411,6 +502,18 @@ export const evaluateFieldMetadata = ({
 }) => {
   const safeData = data || {};
   const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
+  const approvalStorageKey = resolveApprovalStorageKey(key);
+  const isDestinationSpecificApprovalField = DESTINATION_SPECIFIC_APPROVAL_KEYS.has(approvalStorageKey);
+  const isDescriptionDestination =
+    key === "native_description" ||
+    key === "custom.generated_description" ||
+    approvalStorageKey === "native_description" ||
+    approvalStorageKey === "custom.generated_description";
+  const isSeoTitleDestination =
+    key === "native_seo_title" ||
+    key === "custom.seo_title" ||
+    approvalStorageKey === "native_seo_title" ||
+    approvalStorageKey === "custom.seo_title";
   const isNativeImageAlt = key.startsWith("native_image_alts_");
   const isImageAltCapabilityPlaceholder = key === "native_image_alt";
   const isShippingWeightField = key === "native_shipping_weight" || key === "custom.shipping_weight_oz";
@@ -438,21 +541,32 @@ export const evaluateFieldMetadata = ({
       return true;
     }
     return false;
+  }) || (COMPATIBILITY_ADAPTER_FIELDS || []).find(f => {
+    if (!f) return false;
+    const resolvedDest = resolveConfigFieldDestination(f);
+    return (
+      resolvedDest === key ||
+      resolvedDest === targetKeyForProposal ||
+      f.registryIdentity === key ||
+      f.registryIdentity === targetKeyForProposal ||
+      f.key === key ||
+      f.key === unprefixedKey
+    );
   });
 
   const expectedType =
-    templateConfig?.type ||
     (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") || NATIVE_FIELDS.includes(key)
       ? "native"
-      : key.startsWith("shopify.")
-        ? "list.metaobject_reference"
-        : key === "custom.character_marks" || key === "custom.stone_story"
-          ? "list.single_line_text_field"
-          : key === "custom.weight_grams" || key === "custom.shipping_weight_oz" || key === "custom.overall_solid_length_in" || key === "custom.whole_product_weight_grams"
-            ? "number_decimal"
-            : key === "custom.honest_flaws_and_character" || key === "custom.origin_story" || key === "custom.generated_description"
-              ? "multi_line_text_field"
-              : "single_line_text_field");
+      : templateConfig?.type || templateConfig?.metaConfig?.type ||
+        (key.startsWith("shopify.")
+          ? "list.metaobject_reference"
+          : key === "custom.character_marks" || key === "custom.stone_story"
+            ? "list.single_line_text_field"
+            : key === "custom.weight_grams" || key === "custom.shipping_weight_oz" || key === "custom.overall_solid_length_in" || key === "custom.whole_product_weight_grams"
+              ? "number_decimal"
+              : key === "custom.honest_flaws_and_character" || key === "custom.origin_story" || key === "custom.generated_description"
+                ? "multi_line_text_field"
+                : "single_line_text_field"));
 
   const isStandardizedAttribute =
     templateConfig?.role === "standardized_attribute" ||
@@ -546,14 +660,14 @@ export const evaluateFieldMetadata = ({
       currentVal = safeData.nativeTargets?.productTitle ?? safeData.canonicalFields?.shopify_title ?? "";
   } else if (key === "native_description" || key === "custom.generated_description") {
       currentVal = key === "native_description" 
-        ? (safeData.nativeTargets?.descriptionHtml ?? "")
-        : (safeData.currentMetafields?.["custom.generated_description"] ?? "");
+        ? (typeof safeData.nativeTargets?.descriptionHtml === "string" ? safeData.nativeTargets.descriptionHtml : "")
+        : (typeof safeData.currentMetafields?.["custom.generated_description"] === "string" ? safeData.currentMetafields["custom.generated_description"] : String(safeData.currentMetafields?.["custom.generated_description"] ?? ""));
   } else if (key === "native_seo_title" || key === "custom.seo_title") {
       currentVal = key === "native_seo_title"
-        ? (safeData.nativeTargets?.seo?.title ?? "")
-        : (safeData.currentMetafields?.["custom.seo_title"] ?? "");
+        ? (typeof safeData.nativeTargets?.seo?.title === "string" ? safeData.nativeTargets.seo.title : "")
+        : (typeof safeData.currentMetafields?.["custom.seo_title"] === "string" ? safeData.currentMetafields["custom.seo_title"] : String(safeData.currentMetafields?.["custom.seo_title"] ?? ""));
   } else if (key === "native_seo_description") {
-      currentVal = safeData.nativeTargets?.seo?.description ?? "";
+      currentVal = typeof safeData.nativeTargets?.seo?.description === "string" ? safeData.nativeTargets.seo.description : "";
   } else if (key === "native_price" || key === "price") {
       if (isSingleVariant) {
           currentVal = variants[0].node?.price ?? "";
@@ -697,14 +811,21 @@ export const evaluateFieldMetadata = ({
 
   const isKnownKey =
     templateConfig !== undefined ||
+    DESTINATION_SPECIFIC_APPROVAL_KEYS.has(key) ||
+    DESTINATION_SPECIFIC_APPROVAL_KEYS.has(targetKeyForProposal) ||
     NATIVE_FIELDS.includes(key) ||
     isNativeImageAlt ||
     isImageAltCapabilityPlaceholder ||
     HIDDEN_CONTEXT_FIELDS.includes(key) ||
     key.startsWith("native_");
 
-  // Never auto-preapprove standardized reference proposals, image-alt placeholders, or fields under contract/owner hold
-  if (!hasContractOrOwnerHold && !isVerifiedStdDest && !isImageAltCapabilityPlaceholder) {
+  const hasLoadedBaseline =
+    (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
+      ? hasVerifiedLoadedDestinationBaseline(approvalStorageKey, safeData, productId)
+      : true;
+
+  // Never auto-preapprove description destinations, standardized reference proposals, image-alt placeholders, or fields under contract/owner hold
+  if (!hasContractOrOwnerHold && !isVerifiedStdDest && !isImageAltCapabilityPlaceholder && !isDescriptionDestination) {
       if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
           isContentPreApproved = true;
           preApprovalReason = "Category pre-approved";
@@ -716,7 +837,7 @@ export const evaluateFieldMetadata = ({
       ) {
           isContentPreApproved = true;
           preApprovalReason = "Verified Geo Library";
-      } else if (POLICY_PRE_APPROVED_FIELDS.includes(targetKeyForProposal) && proposalExists) {
+      } else if ((POLICY_PRE_APPROVED_FIELDS.includes(key) || POLICY_PRE_APPROVED_FIELDS.includes(targetKeyForProposal)) && proposalExists) {
           isContentPreApproved = true;
           preApprovalReason = "Pre-approved by operator policy";
       } else if (isNativeImageAlt && proposalExists) {
@@ -732,7 +853,7 @@ export const evaluateFieldMetadata = ({
 
   const currentCount = currentExists ? currentVal.length : 0;
   const propCount = propVal.length;
-  const limit = FIELD_LIMITS[targetKeyForProposal] || FIELD_LIMITS[key] || null;
+  const limit = FIELD_LIMITS[key] || FIELD_LIMITS[targetKeyForProposal] || null;
 
   const isManualOnly = false;
   const isOperatorOwned = (
@@ -742,13 +863,18 @@ export const evaluateFieldMetadata = ({
     hasExplicitStorageHold
   );
   
-  const exactApprovalVal =
-    currentApprovals?.[productId]?.[key] !== undefined
-      ? currentApprovals[productId][key]
-      : currentApprovals?.[productId]?.[targetKeyForProposal];
+  // Destination-specific approval lookup: native_description, custom.generated_description, native_seo_title, and custom.seo_title
+  // require exact-value approval stored under their own destination key and never fall back across NATIVE_ALIAS_MAP.
+  const exactApprovalVal = isDestinationSpecificApprovalField
+    ? currentApprovals?.[productId]?.[approvalStorageKey]
+    : (currentApprovals?.[productId]?.[key] !== undefined
+        ? currentApprovals[productId][key]
+        : currentApprovals?.[productId]?.[targetKeyForProposal]);
+
   const isApproved =
     !isImageAltCapabilityPlaceholder &&
     !hasContractOrOwnerHold &&
+    hasLoadedBaseline &&
     (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
     exactApprovalVal !== undefined &&
     String(exactApprovalVal) === propVal &&
@@ -760,7 +886,8 @@ export const evaluateFieldMetadata = ({
         isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false,
         hasTechnicalBlock: true, contentNeedsReview: false, isContentPreApproved: false, preApprovalReason: "",
         isManualOnly: false, isActualBlockedProposal: false, isOperatorOwned: false, isSupported: true,
-        isPendingReadOnly: false, isStandardizedAttribute: false,
+        isPendingReadOnly: false, isStandardizedAttribute: false, hasLoadedBaseline: true,
+        approvalStorageKey,
         type: expectedType, owner: templateConfig?.owner || "metafield", namespace: templateConfig?.namespace || "custom",
         metaKey: templateConfig?.metaKey || unprefixedKey, label: templateConfig?.label || formatLabel(key),
         control: templateConfig?.control || "multiline"
@@ -770,14 +897,22 @@ export const evaluateFieldMetadata = ({
   let hasTechnicalBlock = false;
   let contentNeedsReview = false;
 
-  // Require explicit operator approval for custom.jewelry_type, custom.wire_material, and native_seo_description proposals
+  // Require explicit exact-value operator approval for native_description, custom.generated_description,
+  // custom.jewelry_type, custom.wire_material, and native_seo_description proposals (including blank destinations).
   if (
-    (targetKeyForProposal === "custom.jewelry_type" ||
+    (isDescriptionDestination ||
+      targetKeyForProposal === "custom.jewelry_type" ||
       targetKeyForProposal === "custom.wire_material" ||
       key === "native_seo_description") &&
     proposalExists
   ) {
       contentNeedsReview = true;
+  }
+
+  // Require demonstrably loaded baseline for the exact product and destination before authorizing any write
+  if (!hasLoadedBaseline && (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")) {
+      hasTechnicalBlock = true;
+      reasons.push(`Baseline not loaded or unverified for ${approvalStorageKey} — reload product data before saving`);
   }
 
   // Technical Verification Layer
@@ -871,30 +1006,37 @@ export const evaluateFieldMetadata = ({
       }
   }
 
-  // New Backend Technical Blockers
-  const apiBlockReason =
-    safeData.blockedFields?.[key] ||
-    safeData.blockedFields?.[targetKeyForProposal] ||
-    safeData.blockedFields?.[unprefixedKey];
+  // Destination-Specific Backend Technical Blockers & Read-Back Conflicts
+  // Do not let a custom.seo_title or custom.generated_description metafield block/conflict poison native_seo_title or native_description
+  const apiBlockReason = isDestinationSpecificApprovalField
+    ? (safeData.blockedFields?.[key] ||
+        (key.startsWith("custom.") ? safeData.blockedFields?.[unprefixedKey] : undefined))
+    : (safeData.blockedFields?.[key] ||
+        safeData.blockedFields?.[targetKeyForProposal] ||
+        safeData.blockedFields?.[unprefixedKey]);
+
   if (apiBlockReason) {
+      hasTechnicalBlock = true;
       reasons.push(`Backend Blocked: ${apiBlockReason}`);
   }
 
-  let conflictData =
-    safeData.conflicts?.[key] ||
-    safeData.conflicts?.[targetKeyForProposal] ||
-    safeData.conflicts?.[unprefixedKey];
+  let conflictData = isDestinationSpecificApprovalField
+    ? (safeData.conflicts?.[key] ||
+        (key.startsWith("custom.") ? safeData.conflicts?.[unprefixedKey] : undefined))
+    : (safeData.conflicts?.[key] ||
+        safeData.conflicts?.[targetKeyForProposal] ||
+        safeData.conflicts?.[unprefixedKey]);
+
   let nativeDescConflictData = null;
-  
-  if (targetKeyForProposal === "custom.generated_description" && safeData.conflicts?.["native_description"]) {
+  if (key === "native_description" && safeData.conflicts?.["native_description"]) {
       nativeDescConflictData = safeData.conflicts["native_description"];
       const expLen = String(nativeDescConflictData.expected || "").length;
       const actLen = String(nativeDescConflictData.actual || "").length;
       reasons.push(`Read-back Mismatch [Native descriptionHtml]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
   }
 
-  if (conflictData) {
-      if (targetKeyForProposal === "custom.generated_description") {
+  if (conflictData && !(key === "native_description" && conflictData === nativeDescConflictData)) {
+      if (key === "custom.generated_description" || key === "native_description") {
           const expLen = String(conflictData.expected || "").length;
           const actLen = String(conflictData.actual || "").length;
           reasons.push(`Read-back Mismatch [Metafield / Native Field]: Expected (${expLen} chars) != Actual (${actLen} chars)`);
@@ -1042,6 +1184,8 @@ export const evaluateFieldMetadata = ({
     isContentPreApproved, preApprovalReason, isManualOnly, isOperatorOwned, isActualBlockedProposal,
     conflictData, nativeDescConflictData,
     isSupported: isKnownKey,
+    hasLoadedBaseline,
+    approvalStorageKey,
     isPendingReadOnly,
     isStandardizedAttribute,
     isVerifiedStdDest,
@@ -1057,8 +1201,8 @@ export const evaluateFieldMetadata = ({
     imageAltPlaceholderReason,
     applicabilityState,
     type: expectedType,
-    owner: templateConfig?.owner || (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") || NATIVE_FIELDS.includes(key) ? "native" : "metafield"),
-    namespace: templateConfig?.namespace || (key.startsWith("shopify.") ? "shopify" : (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") ? "native" : "custom")),
+    owner: (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") || NATIVE_FIELDS.includes(key)) ? "native" : (templateConfig?.owner || "metafield"),
+    namespace: key.startsWith("shopify.") ? "shopify" : ((isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_")) ? "native" : (templateConfig?.namespace || "custom")),
     metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : unprefixedKey),
     label: templateConfig?.label || formatLabel(key),
     control: templateConfig?.control
@@ -1283,7 +1427,7 @@ export const computeDiagnosticsStats = ({
                   stats.conflicts++;
                   conflictCounted = true;
               }
-              if (meta.nativeDescConflictData) {
+              if (meta.nativeDescConflictData && meta.nativeDescConflictData !== meta.conflictData) {
                   stats.conflicts++;
                   conflictCounted = true;
               }
@@ -1306,6 +1450,10 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   const safePlan = {};
   const nativeChanges = {};
   
+  if (!manifest || typeof manifest !== "object" || !isExactProductGidString(currentId)) {
+    return { safePlan, nativeChanges };
+  }
+
   const dynamicSections = getDynamicSections(manifest);
   const allConfigFields = dynamicSections.flatMap(sec => sec.configFields || []);
 
@@ -1315,15 +1463,19 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   });
   candidateKeys.add("native_title");
   candidateKeys.add("native_description");
+  candidateKeys.add("custom.generated_description");
   candidateKeys.add("native_seo_title");
+  candidateKeys.add("custom.seo_title");
   candidateKeys.add("native_seo_description");
   candidateKeys.add("native_price");
   candidateKeys.add("native_shipping_weight");
 
   let handledTitle = false;
   let handledShippingWeight = false;
-  let handledDescription = false;
-  let handledSeoTitle = false;
+  let handledNativeDescription = false;
+  let handledCustomDescription = false;
+  let handledNativeSeoTitle = false;
+  let handledCustomSeoTitle = false;
   let handledSeoDescription = false;
   let handledPrice = false;
 
@@ -1361,12 +1513,13 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           if (handledTitle) return;
           handledTitle = true;
           const titleMeta = getFieldMetadata("native_title", manifest, currentId, currentApprovals, allConfigFields);
-          const hasTitleBaseline = typeof manifest.nativeTargets?.productTitle === "string";
+          const hasTitleBaseline = hasVerifiedLoadedDestinationBaseline("native_title", manifest, currentId);
           if (
+              hasTitleBaseline &&
               !titleMeta.isBlockedAction &&
               !titleMeta.hasTechnicalBlock &&
               titleMeta.proposalExists &&
-              (!hasTitleBaseline || titleMeta.propVal !== titleMeta.currentVal)
+              titleMeta.propVal !== titleMeta.currentVal
           ) {
               nativeChanges.title = titleMeta.propVal;
           }
@@ -1377,12 +1530,14 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           if (handledSeoDescription) return;
           handledSeoDescription = true;
           const seoDescMeta = getFieldMetadata("native_seo_description", manifest, currentId, currentApprovals, allConfigFields);
-          const hasSeoDescBaseline = typeof manifest.nativeTargets?.seo?.description === "string";
+          const hasSeoDescBaseline = hasVerifiedLoadedDestinationBaseline("native_seo_description", manifest, currentId);
           if (
+              hasSeoDescBaseline &&
               !seoDescMeta.isBlockedAction &&
               !seoDescMeta.hasTechnicalBlock &&
+              seoDescMeta.isApproved &&
               seoDescMeta.proposalExists &&
-              (!hasSeoDescBaseline || seoDescMeta.propVal !== seoDescMeta.currentVal)
+              seoDescMeta.propVal !== seoDescMeta.currentVal
           ) {
               nativeChanges.seoDescription = seoDescMeta.propVal;
           }
@@ -1432,47 +1587,73 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           return;
       }
 
-      if (key === "custom.generated_description" || key === "native_description") {
-          if (handledDescription) return;
-          handledDescription = true;
-          const customDescMeta = getFieldMetadata("custom.generated_description", manifest, currentId, currentApprovals, allConfigFields);
+      if (key === "native_description") {
+          if (handledNativeDescription) return;
+          handledNativeDescription = true;
           const nativeDescMeta = getFieldMetadata("native_description", manifest, currentId, currentApprovals, allConfigFields);
+          const hasNativeDescBaseline = hasVerifiedLoadedDestinationBaseline("native_description", manifest, currentId);
           if (
-              customDescMeta.isBlockedAction ||
-              customDescMeta.hasTechnicalBlock ||
-              !customDescMeta.proposalExists
-          ) return;
-          const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, "custom.generated_description");
-          const hasNativeDescBaseline = typeof manifest.nativeTargets?.descriptionHtml === "string";
-          const metafieldDiffers = !hasMetafieldBaseline || customDescMeta.propVal !== customDescMeta.currentVal;
-          const nativeDescDiffers =
+              hasNativeDescBaseline &&
               !nativeDescMeta.isBlockedAction &&
               !nativeDescMeta.hasTechnicalBlock &&
-              (!hasNativeDescBaseline || nativeDescMeta.propVal !== nativeDescMeta.currentVal);
-          if (metafieldDiffers || nativeDescDiffers) {
+              nativeDescMeta.isApproved &&
+              nativeDescMeta.proposalExists &&
+              nativeDescMeta.propVal !== nativeDescMeta.currentVal
+          ) {
+              nativeChanges.description = nativeDescMeta.propVal;
+          }
+          return;
+      }
+
+      if (key === "custom.generated_description") {
+          if (handledCustomDescription) return;
+          handledCustomDescription = true;
+          const customDescMeta = getFieldMetadata("custom.generated_description", manifest, currentId, currentApprovals, allConfigFields);
+          const hasCustomDescBaseline = hasVerifiedLoadedDestinationBaseline("custom.generated_description", manifest, currentId);
+          if (
+              hasCustomDescBaseline &&
+              !customDescMeta.isBlockedAction &&
+              !customDescMeta.hasTechnicalBlock &&
+              customDescMeta.isApproved &&
+              customDescMeta.proposalExists &&
+              customDescMeta.propVal !== customDescMeta.currentVal
+          ) {
               safePlan["custom.generated_description"] = customDescMeta.propVal;
           }
           return;
       }
 
-      if (key === "custom.seo_title" || key === "native_seo_title") {
-          if (handledSeoTitle) return;
-          handledSeoTitle = true;
-          const customSeoMeta = getFieldMetadata("custom.seo_title", manifest, currentId, currentApprovals, allConfigFields);
+      if (key === "native_seo_title") {
+          if (handledNativeSeoTitle) return;
+          handledNativeSeoTitle = true;
           const nativeSeoMeta = getFieldMetadata("native_seo_title", manifest, currentId, currentApprovals, allConfigFields);
+          const hasNativeSeoBaseline = hasVerifiedLoadedDestinationBaseline("native_seo_title", manifest, currentId);
           if (
-              customSeoMeta.isBlockedAction ||
-              customSeoMeta.hasTechnicalBlock ||
-              !customSeoMeta.proposalExists
-          ) return;
-          const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, "custom.seo_title");
-          const hasNativeSeoBaseline = typeof manifest.nativeTargets?.seo?.title === "string";
-          const metafieldDiffers = !hasMetafieldBaseline || customSeoMeta.propVal !== customSeoMeta.currentVal;
-          const nativeSeoDiffers =
+              hasNativeSeoBaseline &&
               !nativeSeoMeta.isBlockedAction &&
               !nativeSeoMeta.hasTechnicalBlock &&
-              (!hasNativeSeoBaseline || nativeSeoMeta.propVal !== nativeSeoMeta.currentVal);
-          if (metafieldDiffers || nativeSeoDiffers) {
+              (nativeSeoMeta.isContentPreApproved || nativeSeoMeta.isApproved) &&
+              nativeSeoMeta.proposalExists &&
+              nativeSeoMeta.propVal !== nativeSeoMeta.currentVal
+          ) {
+              nativeChanges.seoTitle = nativeSeoMeta.propVal;
+          }
+          return;
+      }
+
+      if (key === "custom.seo_title") {
+          if (handledCustomSeoTitle) return;
+          handledCustomSeoTitle = true;
+          const customSeoMeta = getFieldMetadata("custom.seo_title", manifest, currentId, currentApprovals, allConfigFields);
+          const hasCustomSeoBaseline = hasVerifiedLoadedDestinationBaseline("custom.seo_title", manifest, currentId);
+          if (
+              hasCustomSeoBaseline &&
+              !customSeoMeta.isBlockedAction &&
+              !customSeoMeta.hasTechnicalBlock &&
+              (customSeoMeta.isContentPreApproved || customSeoMeta.isApproved) &&
+              customSeoMeta.proposalExists &&
+              customSeoMeta.propVal !== customSeoMeta.currentVal
+          ) {
               safePlan["custom.seo_title"] = customSeoMeta.propVal;
           }
           return;
@@ -1525,8 +1706,14 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           return;
       }
 
-      const hasMetafieldBaseline = Object.prototype.hasOwnProperty.call(manifest.currentMetafields || {}, canonicalKey);
-      if (!hasMetafieldBaseline || meta.propVal !== meta.currentVal) {
+      const hasLoadedMetafieldsMap = Boolean(
+        manifest.currentMetafields &&
+        typeof manifest.currentMetafields === "object" &&
+        !Array.isArray(manifest.currentMetafields)
+      );
+      if (!hasLoadedMetafieldsMap) return;
+
+      if (meta.propVal !== meta.currentVal) {
           safePlan[canonicalKey] = serializeFieldValueByType(meta.propVal, meta.type, canonicalKey);
       }
   });
@@ -1543,10 +1730,11 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
                   const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
                   const hasMediaAltBaseline = typeof node.alt === "string";
                   if (
+                      hasMediaAltBaseline &&
                       !meta.isBlockedAction &&
                       !meta.hasTechnicalBlock &&
                       meta.proposalExists &&
-                      (!hasMediaAltBaseline || meta.propVal !== meta.currentVal)
+                      meta.propVal !== meta.currentVal
                   ) {
                       imageAlts.push({ imageId: node.id, altText: meta.propVal });
                   }

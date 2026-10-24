@@ -15,7 +15,9 @@ import {
   STATUS,
   NATIVE_FIELDS,
   NATIVE_ALIAS_MAP,
+  DESTINATION_SPECIFIC_APPROVAL_KEYS,
   RETIRED_KEYS,
+  resolveApprovalStorageKey,
   resolveConfigFieldDestination,
   buildRepairPayload
 } from "./meta-injector.matrix-domain.jsx";
@@ -41,7 +43,7 @@ const CANONICAL_INCOMING_ALIAS_MAP = Object.freeze({
 const ALIAS_COMPANION_LOOKUP = Object.freeze({
   "custom.material": ["stone_family", "custom.stone_family", "primary_medium", "custom.primary_medium"],
   "custom.is_one_of_a_kind": ["is_ooak", "custom.is_ooak"],
-  "custom.origin_page_handle": ["origin_handle", "custom.origin_handle"],
+  "custom.origin_page_handle": ["origin_handle", "custom.origin_page_handle"],
   "shopify_title": ["native_title", "canonical_title", "product_title"],
   "custom.generated_description": ["native_description", "generated_description"],
   "custom.seo_title": ["native_seo_title", "seo_title"],
@@ -325,6 +327,20 @@ const extractPieceNameOnly = (rawPieceName, fullTitleCandidate) => {
   return trimmed;
 };
 
+const resolveLockedProposalFromApprovals = (canonicalKey, productApprovals = {}) => {
+  if (!productApprovals || typeof productApprovals !== "object") return undefined;
+  if (productApprovals[canonicalKey] !== undefined) {
+    return productApprovals[canonicalKey];
+  }
+  if (canonicalKey === "custom.generated_description" && productApprovals["native_description"] !== undefined) {
+    return productApprovals["native_description"];
+  }
+  if (canonicalKey === "custom.seo_title" && productApprovals["native_seo_title"] !== undefined) {
+    return productApprovals["native_seo_title"];
+  }
+  return undefined;
+};
+
 const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualProductEdits = {}, productApprovals = {}, allConfigFields = []) => {
   const incomingPlan = validObj(rawPlan);
   const cleanedPlan = {};
@@ -413,12 +429,17 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
       .filter(e => e.formatted !== "");
 
     if (isKeyManuallyLocked(canonicalKey)) {
-      if (manualProductEdits?.[canonicalKey] === true && incomingPlan[canonicalKey] !== undefined) {
+      if (
+        (manualProductEdits?.[canonicalKey] === true ||
+          (ALIAS_COMPANION_LOOKUP[canonicalKey] || []).some(ak => manualProductEdits?.[ak] === true)) &&
+        incomingPlan[canonicalKey] !== undefined
+      ) {
         cleanedPlan[canonicalKey] = formatComparableValue(incomingPlan[canonicalKey], expectedType, canonicalKey);
         return;
       }
-      if (productApprovals?.[canonicalKey] !== undefined) {
-        cleanedPlan[canonicalKey] = formatComparableValue(productApprovals[canonicalKey], expectedType, canonicalKey);
+      const lockedApprovalVal = resolveLockedProposalFromApprovals(canonicalKey, productApprovals);
+      if (lockedApprovalVal !== undefined) {
+        cleanedPlan[canonicalKey] = formatComparableValue(lockedApprovalVal, expectedType, canonicalKey);
         return;
       }
     }
@@ -479,10 +500,15 @@ const mergeReadBackNativeTargets = (existingNativeTargets, rbNativeTargets) => {
   if (unverifiedFields.includes("seo") || !rbNativeTargets.seo || typeof rbNativeTargets.seo !== "object") {
     next.seo = undefined;
   } else {
-    next.seo = {
-      title: typeof rbNativeTargets.seo.title === "string" ? rbNativeTargets.seo.title : undefined,
-      description: typeof rbNativeTargets.seo.description === "string" ? rbNativeTargets.seo.description : undefined
-    };
+    const rbSeo = rbNativeTargets.seo;
+    const nextSeo = {};
+    if (Object.prototype.hasOwnProperty.call(rbSeo, "title")) {
+      nextSeo.title = typeof rbSeo.title === "string" || rbSeo.title === null ? rbSeo.title : undefined;
+    }
+    if (Object.prototype.hasOwnProperty.call(rbSeo, "description")) {
+      nextSeo.description = typeof rbSeo.description === "string" || rbSeo.description === null ? rbSeo.description : undefined;
+    }
+    next.seo = nextSeo;
   }
 
   if (unverifiedFields.includes("media") || !Array.isArray(rbNativeTargets.media?.edges)) {
@@ -536,6 +562,46 @@ const mergeReadBackNativeTargets = (existingNativeTargets, rbNativeTargets) => {
   return next;
 };
 
+const buildExactSubmittedSnapshot = (safePlan = {}, nativeChanges = {}) => {
+  const snapshot = {};
+
+  Object.entries(validObj(safePlan)).forEach(([destKey, val]) => {
+    if (val === undefined) return;
+    snapshot[destKey] = val;
+    if (destKey === "price") {
+      snapshot.native_price = val;
+    }
+  });
+
+  if (nativeChanges && typeof nativeChanges === "object") {
+    if (nativeChanges.title !== undefined) {
+      snapshot.native_title = nativeChanges.title;
+      snapshot.shopify_title = nativeChanges.title;
+    }
+    if (nativeChanges.description !== undefined) {
+      snapshot.native_description = nativeChanges.description;
+    }
+    if (nativeChanges.seoTitle !== undefined) {
+      snapshot.native_seo_title = nativeChanges.seoTitle;
+    }
+    if (nativeChanges.seoDescription !== undefined) {
+      snapshot.native_seo_description = nativeChanges.seoDescription;
+    }
+    if (nativeChanges.shippingWeight?.value !== undefined) {
+      snapshot.native_shipping_weight = `${nativeChanges.shippingWeight.value} ${nativeChanges.shippingWeight.unit || "OUNCES"}`;
+    }
+    if (Array.isArray(nativeChanges.imageAlts)) {
+      nativeChanges.imageAlts.forEach((alt) => {
+        if (alt && typeof alt.imageId === "string" && alt.altText !== undefined) {
+          snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
+        }
+      });
+    }
+  }
+
+  return snapshot;
+};
+
 const prepareAndSubmitRepairPlan = ({
   targetId,
   manifest,
@@ -549,25 +615,21 @@ const prepareAndSubmitRepairPlan = ({
   setSubmittedPayloads,
   batchFetcher
 }) => {
-  setPendingOperation({ id: targetId, intent: "executeRepairPlan", token });
+  const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, targetId, approvals, getFieldMetadata);
+  const snapshot = buildExactSubmittedSnapshot(safePlan, nativeChanges);
+
+  setSubmittedPayloads(prev => ({ ...prev, [targetId]: snapshot }));
+  setPendingOperation({
+    id: targetId,
+    intent: "executeRepairPlan",
+    token,
+    submittedSnapshot: snapshot
+  });
   updateProductState(targetId, STATUS.SCANNING, [scanLogMessage]);
 
   const fd = new FormData();
   fd.append("intent", "executeRepairPlan");
   fd.append("pieceId", targetId);
-
-  const { safePlan, nativeChanges } = buildRepairPayload(manifest, product, targetId, approvals, getFieldMetadata);
-
-  const snapshot = { ...safePlan };
-  if (nativeChanges.title !== undefined) snapshot.shopify_title = nativeChanges.title;
-  if (nativeChanges.shippingWeight?.value !== undefined) {
-    snapshot.native_shipping_weight = `${nativeChanges.shippingWeight.value} ${nativeChanges.shippingWeight.unit || "OUNCES"}`;
-  }
-  (nativeChanges.imageAlts || []).forEach(alt => {
-    snapshot[`native_image_alts_${alt.imageId}`] = alt.altText;
-  });
-  setSubmittedPayloads(prev => ({ ...prev, [targetId]: snapshot }));
-
   fd.append("repairPlan", JSON.stringify(safePlan));
   fd.append("nativeChanges", JSON.stringify(nativeChanges));
   fd.append("legacyKeysToRemove", JSON.stringify([]));
@@ -669,6 +731,7 @@ export function useMetaInjectorExecution({
         intent: pendingOperation.intent,
         token: pendingOperation.token,
         source: pendingOperation.source || "manual_or_batch",
+        submittedSnapshot: pendingOperation.submittedSnapshot || null,
         baselineData: batchFetcher.data,
         sawNonIdle: batchFetcher.state !== "idle"
       };
@@ -820,6 +883,7 @@ export function useMetaInjectorExecution({
       intent: "loadProductData",
       token,
       source: "auto_selection_load",
+      submittedSnapshot: null,
       baselineData: batchFetcher.data,
       sawNonIdle: false
     };
@@ -1268,7 +1332,12 @@ export function useMetaInjectorExecution({
         mergeDescriptionFacts(manifest.currentMetafields, true, true);
 
         Object.entries(approvals[currentId] || {}).forEach(([key, value]) => {
-          if (key.startsWith("custom.") && key !== "custom.standardized_candidates" && manualEdits[currentId]?.[key] !== true) {
+          if (
+            key.startsWith("custom.") &&
+            key !== "custom.standardized_candidates" &&
+            key !== "custom.generated_description" &&
+            manualEdits[currentId]?.[key] !== true
+          ) {
             const fk = key.slice(7);
             if (fk === "operator_locked_fields" || fk === "passive_stored_fields") return;
             if (!hasNonBlankValue(value)) return;
@@ -1281,8 +1350,13 @@ export function useMetaInjectorExecution({
         });
 
         Object.entries(manualEdits[currentId] || {}).forEach(([key, edited]) => {
-          if (edited === true && key.startsWith("custom.") && key !== "custom.standardized_candidates" &&
-              manifest.repairPlan?.[key] !== undefined) {
+          if (
+            edited === true &&
+            key.startsWith("custom.") &&
+            key !== "custom.standardized_candidates" &&
+            key !== "custom.generated_description" &&
+            manifest.repairPlan?.[key] !== undefined
+          ) {
             const fk = key.slice(7);
             if (fk === "operator_locked_fields" || fk === "passive_stored_fields") return;
             const editVal = manifest.repairPlan[key];
@@ -1659,22 +1733,25 @@ export function useMetaInjectorExecution({
         verifiedDestinations: rawVerifiedDestinations,
         unresolvedChanges: rawUnresolvedChanges,
         blockedFields: rawBlockedFields,
-        conflicts: rawConflicts
+        conflicts: rawConflicts,
+        unchanged: rawUnchanged
       } = data;
 
       const unsupportedKeys = validArray(rawUnsupportedKeys);
       const attemptedDestinations = validArray(rawAttemptedDestinations);
       const verifiedDestinations = validArray(rawVerifiedDestinations);
-      const unresolvedChanges = validObj(rawUnresolvedChanges);
-      const blockedFields = validObj(rawBlockedFields);
-      const conflicts = validObj(rawConflicts);
+      const unchangedDestinations = validArray(rawUnchanged);
+      const unresolvedChanges = { ...validObj(rawUnresolvedChanges) };
+      const blockedFields = { ...validObj(rawBlockedFields) };
+      const conflicts = { ...validObj(rawConflicts) };
 
       const normalizedErrorObjects = extractNormalizedErrors(errors, error);
       const formattedErrorStrings = normalizedErrorObjects.map(e => e.formatted);
-      const specificErrorSummary = formattedErrorStrings.join(" | ");
-      const safeGenericMessage = sanitizeDiagString(typeof message === "string" ? message : "");
 
       if (intent === "loadProductData" && targetId) {
+        const specificErrorSummary = formattedErrorStrings.join(" | ");
+        const safeGenericMessage = sanitizeDiagString(typeof message === "string" ? message : "");
+
         if (!success) {
           const loadErrText = specificErrorSummary || safeGenericMessage || "Failed to load data";
           autoSelectionLoadGuardRef.current[targetId] = {
@@ -1736,24 +1813,29 @@ export function useMetaInjectorExecution({
               allConfigFields
             );
 
-            // Preserve any existing unsaved manual edits or explicit approvals in repairPlan
+            // Preserve any existing unsaved manual edits or explicit approvals in repairPlan without creating disconnected native proposal keys
             if (existingManifest?.repairPlan && typeof existingManifest.repairPlan === "object") {
               Object.keys(productManualEdits).forEach(editedKey => {
-                if (
-                  productManualEdits[editedKey] === true &&
-                  existingManifest.repairPlan[editedKey] !== undefined
-                ) {
-                  cleanedPlan[editedKey] = existingManifest.repairPlan[editedKey];
+                if (productManualEdits[editedKey] !== true) return;
+                const proposalStorageKey = NATIVE_ALIAS_MAP[editedKey] || editedKey;
+                const existingEditedVal =
+                  existingManifest.repairPlan[proposalStorageKey] !== undefined
+                    ? existingManifest.repairPlan[proposalStorageKey]
+                    : existingManifest.repairPlan[editedKey];
+                if (existingEditedVal !== undefined) {
+                  cleanedPlan[proposalStorageKey] = existingEditedVal;
                 }
               });
             }
             Object.entries(productApprovals).forEach(([approvedKey, approvedVal]) => {
+              if (approvedVal === undefined) return;
+              const proposalStorageKey = NATIVE_ALIAS_MAP[approvedKey] || approvedKey;
               if (
-                approvedVal !== undefined &&
                 productManualEdits[approvedKey] !== true &&
-                cleanedPlan[approvedKey] === undefined
+                productManualEdits[proposalStorageKey] !== true &&
+                cleanedPlan[proposalStorageKey] === undefined
               ) {
-                cleanedPlan[approvedKey] = approvedVal;
+                cleanedPlan[proposalStorageKey] = approvedVal;
               }
             });
 
@@ -1796,6 +1878,66 @@ export function useMetaInjectorExecution({
       }
 
       if ((intent === "executeRepairPlan" || intent === "batchAuditItem" || intent === "saveMetafields") && targetId && (!pendingOperation || pendingOperation.intent === intent)) {
+        const submittedSnapForOp =
+          validObj(pendingOperation?.submittedSnapshot || activeOperationCycleRef.current?.submittedSnapshot);
+
+        // Verify that any decoupled native destinations actually submitted in this request (e.g. native_seo_title, native_description)
+        // were processed by the backend rather than silently ignored or falsely treated as "NO_CHANGES_REQUIRED".
+        if (intent === "executeRepairPlan") {
+          const decoupledNativeKeysToVerify = [
+            "native_description",
+            "native_seo_title",
+            "native_seo_description",
+            "native_title",
+            "native_shipping_weight"
+          ];
+          decoupledNativeKeysToVerify.forEach((nKey) => {
+            if (!Object.prototype.hasOwnProperty.call(submittedSnapForOp, nKey)) return;
+            const submittedVal = submittedSnapForOp[nKey];
+            const wasAttempted = attemptedDestinations.includes(nKey);
+            const wasVerified = verifiedDestinations.includes(nKey);
+            const wasUnchanged = unchangedDestinations.includes(nKey);
+            const wasBlocked = Object.prototype.hasOwnProperty.call(blockedFields, nKey);
+            const wasUnresolved = Object.prototype.hasOwnProperty.call(unresolvedChanges, nKey);
+            const wasConflict = Object.prototype.hasOwnProperty.call(conflicts, nKey);
+
+            if (!wasAttempted && !wasVerified && !wasUnchanged && !wasBlocked && !wasUnresolved && !wasConflict) {
+              const unrecMsg = `Submitted native destination '${nKey}' was not processed or verified by backend executeRepairPlan handler.`;
+              unresolvedChanges[nKey] = {
+                reason: unrecMsg,
+                expected: submittedVal,
+                actual: "Unprocessed by backend"
+              };
+              conflicts[nKey] = {
+                expected: submittedVal,
+                actual: "Unprocessed by backend"
+              };
+              const unrecEntry = normalizeReturnedErrorEntry({
+                destination: nKey,
+                code: "UNPROCESSED_NATIVE_DESTINATION",
+                message: unrecMsg
+              });
+              if (unrecEntry && !formattedErrorStrings.includes(unrecEntry.formatted)) {
+                normalizedErrorObjects.push(unrecEntry);
+                formattedErrorStrings.push(unrecEntry.formatted);
+              }
+            }
+          });
+        }
+
+        const specificErrorSummary = formattedErrorStrings.join(" | ");
+        const safeGenericMessage = sanitizeDiagString(typeof message === "string" ? message : "");
+
+        // Reconcile verified changed count from verifiedDestinations (which only includes attempted changes that passed read-back,
+        // never unchanged matches) so a verified native-only save (e.g. native_seo_title or native_description) is never counted as 0.
+        const rawNumericUpdated =
+          typeof fieldsUpdated === "number" && Number.isFinite(fieldsUpdated)
+            ? Math.max(0, Math.floor(fieldsUpdated))
+            : 0;
+        const verifiedChangedDestinationsCount = verifiedDestinations.filter(
+          (dest) => !unchangedDestinations.includes(dest)
+        ).length;
+        const effectiveFieldsUpdated = Math.max(rawNumericUpdated, verifiedChangedDestinationsCount);
 
         const hasExplicitConfirmationEvidence =
           intent === "executeRepairPlan" &&
@@ -1812,16 +1954,45 @@ export function useMetaInjectorExecution({
           intent === "saveMetafields" ||
           (intent === "executeRepairPlan" && !hasExplicitConfirmationEvidence);
 
+        const hasUnresolvedOrConflicts =
+          Object.keys(unresolvedChanges).length > 0 ||
+          Object.keys(conflicts).length > 0;
+        const hasBlockedOrUnsupported =
+          Object.keys(blockedFields).length > 0 ||
+          unsupportedKeys.length > 0;
+
+        const effectiveReadBackVerified =
+          Boolean(readBackVerified === true) &&
+          !hasUnresolvedOrConflicts &&
+          !isUnverifiedNoOpResponse;
+
         if (intent === "executeRepairPlan" || intent === "saveMetafields") {
           const ts = new Date().toISOString();
           const isFailedOrPartial =
             !success ||
             isUnverifiedNoOpResponse ||
+            hasUnresolvedOrConflicts ||
+            hasBlockedOrUnsupported ||
             status === "REPAIR_FAILED" ||
             status === "REPAIR_BLOCKED" ||
             status === "PARTIAL_SUCCESS" ||
             finalStatus === "PARTIAL_SUCCESS" ||
-            readBackVerified === false;
+            effectiveReadBackVerified === false;
+
+          const effectiveHistoryStatus = isUnverifiedNoOpResponse
+            ? "UNVERIFIED_RESPONSE"
+            : hasUnresolvedOrConflicts || (hasBlockedOrUnsupported && effectiveFieldsUpdated > 0)
+              ? "PARTIAL_SUCCESS"
+              : (status === "NO_CHANGES_REQUIRED" && effectiveFieldsUpdated > 0
+                  ? "REPAIRED"
+                  : status);
+
+          const effectiveHistorySuccess =
+            Boolean(success) &&
+            !isUnverifiedNoOpResponse &&
+            !hasUnresolvedOrConflicts &&
+            effectiveHistoryStatus !== "REPAIR_FAILED" &&
+            effectiveHistoryStatus !== "REPAIR_BLOCKED";
 
           setRepairHistory(prev => {
             const priorHistory = prev[targetId] || {};
@@ -1848,21 +2019,21 @@ export function useMetaInjectorExecution({
             return {
               ...prev,
               [targetId]: {
-                status: isUnverifiedNoOpResponse ? "UNVERIFIED_RESPONSE" : status,
-                success: isUnverifiedNoOpResponse ? false : success,
+                status: effectiveHistoryStatus,
+                success: effectiveHistorySuccess,
                 message: effectiveMessage,
                 rawMessage: safeGenericMessage || null,
                 errors: preservedErrors,
                 errorMessages: preservedErrorStrings,
-                fieldsUpdated: (!success || isUnverifiedNoOpResponse) ? (fieldsUpdated !== undefined ? fieldsUpdated : 0) : fieldsUpdated,
-                legacyKeysRemoved: (!success || isUnverifiedNoOpResponse) ? (legacyKeysRemoved !== undefined ? legacyKeysRemoved : 0) : legacyKeysRemoved,
+                fieldsUpdated: (!effectiveHistorySuccess && effectiveFieldsUpdated === 0) ? 0 : effectiveFieldsUpdated,
+                legacyKeysRemoved: (!effectiveHistorySuccess || isUnverifiedNoOpResponse) ? (legacyKeysRemoved !== undefined ? legacyKeysRemoved : 0) : legacyKeysRemoved,
                 unsupportedKeys,
                 attemptedDestinations,
                 verifiedDestinations,
                 unresolvedChanges,
                 blockedFields,
                 conflicts,
-                readBackVerified: (!success || isUnverifiedNoOpResponse) ? false : Boolean(readBackVerified),
+                readBackVerified: effectiveHistorySuccess ? effectiveReadBackVerified : false,
                 proposedChanges,
                 completedAt: ts,
                 variantTarget: variantTarget || null
@@ -1902,9 +2073,16 @@ export function useMetaInjectorExecution({
                 || specificErrorSummary
                 || (isFailedOrPartial ? (safeGenericMessage || existingDiag.error || null) : null);
 
-              const readBackDiagStatus = (!success || isUnverifiedNoOpResponse)
-                ? (returnedNativeTargets ? "Failed" : "Not called")
-                : (data.readBackVerified === true ? "Success" : (data.readBackVerified === false ? "Failed" : "Not called"));
+              const readBackDiagStatus = (!success || isUnverifiedNoOpResponse || hasUnresolvedOrConflicts)
+                ? (returnedNativeTargets || hasUnresolvedOrConflicts ? "Failed" : "Not called")
+                : (effectiveReadBackVerified ? "Success" : (data.readBackVerified === false ? "Failed" : "Not called"));
+
+              // Replace conflicts for destinations that succeeded on read-back while preserving alias conflicts on unattempted fields
+              const nextConflicts = { ...(existing.conflicts || {}) };
+              verifiedDestinations.forEach((vKey) => {
+                delete nextConflicts[vKey];
+              });
+              Object.assign(nextConflicts, conflicts);
 
               return {
                 ...prev,
@@ -1925,10 +2103,12 @@ export function useMetaInjectorExecution({
                     returnedNativeTargets && returnedNativeTargets.seo && typeof returnedNativeTargets.seo === "object"
                       ? returnedNativeTargets.seo
                       : existing.seo,
-                  fieldsUpdated: (success && !isUnverifiedNoOpResponse && data.fieldsUpdated !== undefined) ? data.fieldsUpdated : existing.fieldsUpdated,
+                  fieldsUpdated: (!isUnverifiedNoOpResponse && (effectiveFieldsUpdated > 0 || data.fieldsUpdated !== undefined))
+                    ? effectiveFieldsUpdated
+                    : existing.fieldsUpdated,
                   legacyKeysRemoved: (success && !isUnverifiedNoOpResponse && data.legacyKeysRemoved !== undefined) ? data.legacyKeysRemoved : existing.legacyKeysRemoved,
                   blockedFields: blockedFields,
-                  conflicts: { ...(existing.conflicts || {}), ...conflicts },
+                  conflicts: nextConflicts,
                   diagnostics: {
                     ...existingDiag,
                     shopifyRead: existingDiag.shopifyRead || "Success",
@@ -1943,7 +2123,7 @@ export function useMetaInjectorExecution({
           }
         }
 
-        if (!success || isUnverifiedNoOpResponse) {
+        if (!success || isUnverifiedNoOpResponse || hasUnresolvedOrConflicts) {
           console.error("Execute Error or Unverified Persistence from Backend:", data);
           const unverifiedMsg = isUnverifiedNoOpResponse
             ? `Missing persistence confirmation for '${intent}': No verified destinations or read-back evidence returned.`
@@ -1958,6 +2138,12 @@ export function useMetaInjectorExecution({
           const failureLogs = formattedErrorStrings.length > 0
             ? formattedErrorStrings
             : (Array.isArray(logs) && logs.length > 0 ? logs.map(l => sanitizeDiagString(String(l))).filter(Boolean) : [primaryErrorDisplay]);
+          if (Object.keys(blockedFields).length > 0) {
+            failureLogs.push(`Partial API block: ${Object.keys(blockedFields).length} destination(s) blocked.`);
+          }
+          if (Object.keys(conflicts).length > 0) {
+            failureLogs.push(`Read-back conflict: ${Object.keys(conflicts).length} destination(s) failed verification.`);
+          }
           updateProductState(targetId, STATUS.FAILED, failureLogs);
         } else {
           if (intent === "batchAuditItem") {
@@ -2004,12 +2190,31 @@ export function useMetaInjectorExecution({
           }
 
           let statusToSet = STATUS.COMPLETE;
-          if (status === "NO_CHANGES_REQUIRED" || safeGenericMessage === "No changes required." || (fieldsUpdated === 0 && Object.keys(blockedFields).length === 0 && formattedErrorStrings.length === 0 && Object.keys(unresolvedChanges).length === 0)) {
+          const isGenuineNoOp =
+            effectiveFieldsUpdated === 0 &&
+            verifiedDestinations.length === 0 &&
+            !hasBlockedOrUnsupported &&
+            !hasUnresolvedOrConflicts &&
+            formattedErrorStrings.length === 0 &&
+            (status === "NO_CHANGES_REQUIRED" || safeGenericMessage === "No changes required." || safeGenericMessage === "No intended changes required.");
+
+          if (isGenuineNoOp) {
             statusToSet = STATUS.SKIPPED;
-            successLogs.push("No changes required.");
-          } else if (finalStatus === "Needs Review" || status === "REPAIR_FAILED" || status === "REPAIR_BLOCKED" || readBackVerified !== true) {
+            if (!successLogs.includes("No changes required.")) {
+              successLogs.push("No changes required.");
+            }
+          } else if (
+            finalStatus === "Needs Review" ||
+            status === "REPAIR_FAILED" ||
+            status === "REPAIR_BLOCKED" ||
+            status === "PARTIAL_SUCCESS" ||
+            finalStatus === "PARTIAL_SUCCESS" ||
+            hasBlockedOrUnsupported ||
+            hasUnresolvedOrConflicts ||
+            effectiveReadBackVerified !== true
+          ) {
             statusToSet = STATUS.FAILED;
-            if (readBackVerified !== true && !successLogs.some(l => l.includes("Read-back"))) {
+            if (effectiveReadBackVerified !== true && !successLogs.some(l => l.includes("Read-back"))) {
               successLogs.push("Missing read-back confirmation from backend.");
             }
           }
@@ -2022,6 +2227,9 @@ export function useMetaInjectorExecution({
       }
 
       if (["titleParse", "tab3FullRescan", "generateDescription"].includes(intent) && (!pendingOperation || pendingOperation.intent === intent)) {
+        const specificErrorSummary = formattedErrorStrings.join(" | ");
+        const safeGenericMessage = sanitizeDiagString(typeof message === "string" ? message : "");
+
         if (!success) {
           const aiErrDisplay = specificErrorSummary || safeGenericMessage || `Gemini failed at ${intent}`;
           updateProductState(targetId, STATUS.FAILED, formattedErrorStrings.length > 0 ? formattedErrorStrings : [aiErrDisplay]);

@@ -31,6 +31,7 @@ const ALLOWED_TAB3_KEYS = [
 
   // NATIVE CONTRACT TARGETS (ACCEPTED FOR ROUTING, EXCLUDED FROM CUSTOM NAMESPACE)
   "native_title", "native_shipping_weight", "native_image_alts", "native_seo_description",
+  "native_seo_title", "native_description",
 
   // STANDARDIZED TAXONOMY LIST
   "age-group", "chain-link-type", "color-pattern", "condition", "construction", "crystal-system", 
@@ -771,6 +772,38 @@ function attachChunkDestinationToUserErrors(userErrors, chunkItems, rootFieldNam
   });
 }
 
+function attachNativeDestinationToUserErrors(userErrors, nativeInput) {
+  if (!Array.isArray(userErrors)) return [];
+  const attemptedNativeKeys = [];
+  if (nativeInput?.title !== undefined) attemptedNativeKeys.push("native_title");
+  if (nativeInput?.descriptionHtml !== undefined) attemptedNativeKeys.push("native_description");
+  if (nativeInput?.seo?.title !== undefined) attemptedNativeKeys.push("native_seo_title");
+  if (nativeInput?.seo?.description !== undefined) attemptedNativeKeys.push("native_seo_description");
+
+  return userErrors.map(err => {
+    if (!err || typeof err !== "object") return err;
+    if (err.destination) return { ...err };
+    const pathStr = Array.isArray(err.field)
+      ? err.field.map(p => String(p)).join(".")
+      : (typeof err.field === "string" ? err.field : "");
+
+    let destination = null;
+    if (/(?:^|\.)seo\.title(?:$|\.)/i.test(pathStr)) {
+      destination = "native_seo_title";
+    } else if (/(?:^|\.)seo\.description(?:$|\.)/i.test(pathStr)) {
+      destination = "native_seo_description";
+    } else if (/(?:^|\.)descriptionHtml(?:$|\.)/i.test(pathStr)) {
+      destination = "native_description";
+    } else if (/(?:^|\.)title(?:$|\.)/i.test(pathStr) && !/seo/i.test(pathStr)) {
+      destination = "native_title";
+    } else if (attemptedNativeKeys.length === 1) {
+      destination = attemptedNativeKeys[0];
+    }
+
+    return destination ? { ...err, destination } : { ...err };
+  });
+}
+
 export const action = async ({ request }) => {
   let matchingContext = null;
   try {
@@ -1215,9 +1248,6 @@ export const action = async ({ request }) => {
       }
 
       // 2. Read live PRODUCT metafield definitions + paginated constraints
-      // Separation of concerns:
-      // - defsReadComplete tracks top-level metafieldDefinitions enumeration completeness
-      // - each definition's constraints.isComplete tracks that specific definition's constraint-values completeness
       const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
       const liveDefs = defReadResult.defs;
       const defsReadComplete = defReadResult.defsReadComplete;
@@ -1229,8 +1259,6 @@ export const action = async ({ request }) => {
       }
 
       // Evaluate category applicability for all 21 standardized destinations.
-      // An incomplete constraint read on an unrelated read-only field stays explicitly incomplete for THAT field
-      // without poisoning overallComplete for the six candidate resolutions.
       const categoryEligibility = {};
       const nonCandidateConstraintDiagnostics = {};
       for (const stdMetaKey of ALL_STANDARDIZED_META_KEYS) {
@@ -1586,8 +1614,6 @@ export const action = async ({ request }) => {
           }
         }
 
-        // Preserve per-field errors on resolutions[destination].errors so ineligible/errored fields remain blocked,
-        // while keeping topErrors strictly for candidate read/enumeration failures so eligible candidate fields can unlock.
         if (!fieldComplete && fieldErrors.length > 0) {
           topErrors.push(...fieldErrors.map(e => `[${destination}] ${e}`));
         }
@@ -1699,11 +1725,32 @@ export const action = async ({ request }) => {
       const productCategory = productNode?.category
         ? { id: productNode.category.id || null, fullName: productNode.category.fullName || null }
         : null;
-      const currentNativeTitle = productNode?.title || "";
-      const currentNativeBodyHtml = productNode?.descriptionHtml || "";
-      const currentNativeSeoTitle = productNode?.seo?.title || "";
-      const currentNativeSeoDescription = productNode?.seo?.description || "";
-      const currentMetaList = productNode?.metafields?.edges || [];
+
+      const hasNativeTitleBaseline = productLookupComplete && typeof productNode?.title === "string";
+      const hasNativeBodyBaseline = productLookupComplete && typeof productNode?.descriptionHtml === "string";
+      const hasNativeSeoObject =
+        productLookupComplete &&
+        productNode?.seo !== null &&
+        productNode?.seo !== undefined &&
+        typeof productNode.seo === "object" &&
+        !Array.isArray(productNode.seo);
+      const hasNativeSeoTitleBaseline =
+        hasNativeSeoObject &&
+        Object.prototype.hasOwnProperty.call(productNode.seo, "title") &&
+        (typeof productNode.seo.title === "string" || productNode.seo.title === null);
+      const hasNativeSeoDescriptionBaseline =
+        hasNativeSeoObject &&
+        Object.prototype.hasOwnProperty.call(productNode.seo, "description") &&
+        (typeof productNode.seo.description === "string" || productNode.seo.description === null);
+      const hasMetafieldsBaseline =
+        productLookupComplete &&
+        Array.isArray(productNode?.metafields?.edges);
+
+      const currentNativeTitle = hasNativeTitleBaseline ? productNode.title : undefined;
+      const currentNativeBodyHtml = hasNativeBodyBaseline ? productNode.descriptionHtml : undefined;
+      const currentNativeSeoTitle = hasNativeSeoTitleBaseline ? (productNode.seo.title ?? "") : undefined;
+      const currentNativeSeoDescription = hasNativeSeoDescriptionBaseline ? (productNode.seo.description ?? "") : undefined;
+      const currentMetaList = hasMetafieldsBaseline ? productNode.metafields.edges : [];
       
       const currentMetafields = {};
       const currentMetafieldsTypes = {};
@@ -1737,37 +1784,93 @@ export const action = async ({ request }) => {
       let newPriceString = null;
       let priceReadBackVerified = false;
       
-      // Native Changes Integration
+      // Native Changes Integration (Decoupled from custom.* metafields)
       let nativeTitleUpdated = false;
       if (nativeChanges.title !== undefined) {
-         if (nativeChanges.title !== currentNativeTitle) {
-             nativeInput.title = nativeChanges.title;
-             doNativeUpdate = true;
-             nativeTitleUpdated = true;
-             proposedChanges["native_title"] = { from: currentNativeTitle, to: nativeChanges.title };
-             attemptedDestinations.push("native_title");
-         } else {
-             unchanged.push("native_title");
-         }
+        const titleStr = String(nativeChanges.title ?? "").trim();
+        if (!hasNativeTitleBaseline) {
+          blockedFields["native_title"] = "Native product title baseline could not be loaded from Shopify; reload product data before saving.";
+        } else if (titleStr === "") {
+          blockedFields["native_title"] = "Native product title cannot be empty.";
+        } else if (titleStr.length > 255) {
+          blockedFields["native_title"] = "Native product title exceeds 255 characters limit.";
+        } else if (titleStr !== currentNativeTitle) {
+          nativeInput.title = titleStr;
+          doNativeUpdate = true;
+          nativeTitleUpdated = true;
+          proposedChanges["native_title"] = { from: currentNativeTitle, to: titleStr };
+          attemptedDestinations.push("native_title");
+        } else {
+          unchanged.push("native_title");
+        }
+      }
+
+      let nativeDescriptionUpdated = false;
+      if (nativeChanges.description !== undefined) {
+        const rawDescStr = String(nativeChanges.description ?? "").trim();
+        const sanitizedDescStr = sanitizeDescription(rawDescStr);
+        if (!hasNativeBodyBaseline) {
+          blockedFields["native_description"] = "Native product description baseline could not be loaded from Shopify; reload product data before saving.";
+        } else if (rawDescStr === "") {
+          blockedFields["native_description"] = "Native product description cannot be empty.";
+        } else if (sanitizedDescStr !== rawDescStr) {
+          blockedFields["native_description"] = "Native product description contains disallowed anchor links that alter approved content; remove disallowed links and re-approve before saving.";
+        } else if (sanitizedDescStr.length > 10000) {
+          blockedFields["native_description"] = "Native product description exceeds 10,000 characters limit.";
+        } else if (sanitizedDescStr !== currentNativeBodyHtml) {
+          nativeInput.descriptionHtml = sanitizedDescStr;
+          doNativeUpdate = true;
+          nativeDescriptionUpdated = true;
+          proposedChanges["native_description"] = { from: currentNativeBodyHtml, to: sanitizedDescStr };
+          attemptedDestinations.push("native_description");
+        } else {
+          unchanged.push("native_description");
+        }
+      }
+
+      let nativeSeoTitleUpdated = false;
+      if (nativeChanges.seoTitle !== undefined) {
+        const rawSeoTitleStr = String(nativeChanges.seoTitle ?? "").trim();
+        const normalizedSeoTitleStr = normalizeMetafieldValue("seo_title", rawSeoTitleStr).trim();
+        if (!hasNativeSeoTitleBaseline) {
+          blockedFields["native_seo_title"] = "Native SEO title baseline could not be loaded from Shopify; reload product data before saving.";
+        } else if (normalizedSeoTitleStr === "") {
+          blockedFields["native_seo_title"] = "Native SEO title cannot be empty.";
+        } else if (normalizedSeoTitleStr !== rawSeoTitleStr) {
+          blockedFields["native_seo_title"] = "Native SEO title contains warning prefixes that alter approved content; edit and re-approve before saving.";
+        } else if (normalizedSeoTitleStr.length > 70) {
+          blockedFields["native_seo_title"] = "Native SEO title exceeds 70 characters limit.";
+        } else if (normalizedSeoTitleStr !== currentNativeSeoTitle) {
+          nativeInput.seo = nativeInput.seo || {};
+          nativeInput.seo.title = normalizedSeoTitleStr;
+          doNativeUpdate = true;
+          nativeSeoTitleUpdated = true;
+          proposedChanges["native_seo_title"] = { from: currentNativeSeoTitle, to: normalizedSeoTitleStr };
+          attemptedDestinations.push("native_seo_title");
+        } else {
+          unchanged.push("native_seo_title");
+        }
       }
 
       let nativeSeoDescriptionUpdated = false;
       if (nativeChanges.seoDescription !== undefined) {
-         const seoDescStr = String(nativeChanges.seoDescription ?? "").trim();
-         if (seoDescStr !== "") {
-            if (seoDescStr.length > 160) {
-               blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
-            } else if (seoDescStr !== currentNativeSeoDescription) {
-               nativeInput.seo = nativeInput.seo || {};
-               nativeInput.seo.description = seoDescStr;
-               doNativeUpdate = true;
-               nativeSeoDescriptionUpdated = true;
-               proposedChanges["native_seo_description"] = { from: currentNativeSeoDescription, to: seoDescStr };
-               attemptedDestinations.push("native_seo_description");
-            } else {
-               unchanged.push("native_seo_description");
-            }
-         }
+        const seoDescStr = String(nativeChanges.seoDescription ?? "").trim();
+        if (!hasNativeSeoDescriptionBaseline) {
+          blockedFields["native_seo_description"] = "Native SEO description baseline could not be loaded from Shopify; reload product data before saving.";
+        } else if (seoDescStr === "") {
+          blockedFields["native_seo_description"] = "Native SEO description cannot be empty.";
+        } else if (seoDescStr.length > 160) {
+          blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
+        } else if (seoDescStr !== currentNativeSeoDescription) {
+          nativeInput.seo = nativeInput.seo || {};
+          nativeInput.seo.description = seoDescStr;
+          doNativeUpdate = true;
+          nativeSeoDescriptionUpdated = true;
+          proposedChanges["native_seo_description"] = { from: currentNativeSeoDescription, to: seoDescStr };
+          attemptedDestinations.push("native_seo_description");
+        } else {
+          unchanged.push("native_seo_description");
+        }
       }
       
       // We must handle shipping weight via inventoryItem mutation, not productUpdate
@@ -1863,9 +1966,60 @@ export const action = async ({ request }) => {
       const moValidationCache = new Map();
       
       for (const [fullKey, val] of Object.entries(repairPlan)) {
-        if (fullKey === "shopify_title") {
+        if (fullKey === "shopify_title" || fullKey === "native_title") {
            if (!nativeTitleUpdated && nativeChanges.title === undefined) {
                skippedKeys.push(fullKey);
+           }
+           continue;
+        }
+
+        if (fullKey === "native_description") {
+           const rawDescStr = String(val !== null && val !== undefined ? val : "").trim();
+           if (!nativeDescriptionUpdated && nativeChanges.description === undefined && rawDescStr !== "") {
+              const sanitizedDescStr = sanitizeDescription(rawDescStr);
+              if (!hasNativeBodyBaseline) {
+                 blockedFields["native_description"] = "Native product description baseline could not be loaded from Shopify; reload product data before saving.";
+              } else if (sanitizedDescStr !== rawDescStr) {
+                 blockedFields["native_description"] = "Native product description contains disallowed anchor links that alter approved content; remove disallowed links and re-approve before saving.";
+              } else if (sanitizedDescStr.length > 10000) {
+                 blockedFields["native_description"] = "Native product description exceeds 10,000 characters limit.";
+              } else if (sanitizedDescStr !== currentNativeBodyHtml) {
+                 nativeInput.descriptionHtml = sanitizedDescStr;
+                 doNativeUpdate = true;
+                 nativeDescriptionUpdated = true;
+                 proposedChanges["native_description"] = { from: currentNativeBodyHtml, to: sanitizedDescStr };
+                 attemptedDestinations.push("native_description");
+              } else {
+                 unchanged.push("native_description");
+              }
+           } else if (!nativeDescriptionUpdated) {
+              skippedKeys.push(fullKey);
+           }
+           continue;
+        }
+
+        if (fullKey === "native_seo_title") {
+           const rawSeoTitleStr = String(val !== null && val !== undefined ? val : "").trim();
+           if (!nativeSeoTitleUpdated && nativeChanges.seoTitle === undefined && rawSeoTitleStr !== "") {
+              const normalizedSeoTitleStr = normalizeMetafieldValue("seo_title", rawSeoTitleStr).trim();
+              if (!hasNativeSeoTitleBaseline) {
+                 blockedFields["native_seo_title"] = "Native SEO title baseline could not be loaded from Shopify; reload product data before saving.";
+              } else if (normalizedSeoTitleStr !== rawSeoTitleStr) {
+                 blockedFields["native_seo_title"] = "Native SEO title contains warning prefixes that alter approved content; edit and re-approve before saving.";
+              } else if (normalizedSeoTitleStr.length > 70) {
+                 blockedFields["native_seo_title"] = "Native SEO title exceeds 70 characters limit.";
+              } else if (normalizedSeoTitleStr !== currentNativeSeoTitle) {
+                 nativeInput.seo = nativeInput.seo || {};
+                 nativeInput.seo.title = normalizedSeoTitleStr;
+                 doNativeUpdate = true;
+                 nativeSeoTitleUpdated = true;
+                 proposedChanges["native_seo_title"] = { from: currentNativeSeoTitle, to: normalizedSeoTitleStr };
+                 attemptedDestinations.push("native_seo_title");
+              } else {
+                 unchanged.push("native_seo_title");
+              }
+           } else if (!nativeSeoTitleUpdated) {
+              skippedKeys.push(fullKey);
            }
            continue;
         }
@@ -1873,7 +2027,9 @@ export const action = async ({ request }) => {
         if (fullKey === "native_seo_description") {
            const valStr = String(val !== null && val !== undefined ? val : "").trim();
            if (!nativeSeoDescriptionUpdated && nativeChanges.seoDescription === undefined && valStr !== "") {
-              if (valStr.length > 160) {
+              if (!hasNativeSeoDescriptionBaseline) {
+                 blockedFields["native_seo_description"] = "Native SEO description baseline could not be loaded from Shopify; reload product data before saving.";
+              } else if (valStr.length > 160) {
                  blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
               } else if (valStr !== currentNativeSeoDescription) {
                  nativeInput.seo = nativeInput.seo || {};
@@ -1991,6 +2147,11 @@ export const action = async ({ request }) => {
             continue;
         }
 
+        if (!hasMetafieldsBaseline) {
+            blockedFields[fullKey] = "Product metafields baseline could not be loaded from Shopify; reload product data before saving.";
+            continue;
+        }
+
         const currentVal = currentMetafields[fullKey] !== undefined
           ? currentMetafields[fullKey]
           : (currentMetafields[canonicalDestinationKey] || null);
@@ -2072,26 +2233,22 @@ export const action = async ({ request }) => {
         }
 
         if (key === "generated_description") {
-            resolvedValue = sanitizeDescription(resolvedValue);
-            if (currentNativeBodyHtml !== resolvedValue) {
-                nativeInput.descriptionHtml = resolvedValue;
-                doNativeUpdate = true;
-                proposedChanges["native_description"] = { from: currentNativeBodyHtml, to: resolvedValue };
-                attemptedDestinations.push("native_description");
-            } else {
-                unchanged.push("native_description");
+            const sanitizedDesc = sanitizeDescription(resolvedValue);
+            if (sanitizedDesc !== resolvedValue) {
+                blockedFields[fullKey] = `Rejected custom.generated_description proposal containing disallowed links that alter approved content.`;
+                continue;
             }
+            resolvedValue = sanitizedDesc;
         }
-        
+
         if (key === "seo_title") {
-            if (currentNativeSeoTitle !== resolvedValue) {
-                nativeInput.seo = nativeInput.seo || {};
-                nativeInput.seo.title = resolvedValue;
-                doNativeUpdate = true;
-                proposedChanges["native_seo_title"] = { from: currentNativeSeoTitle, to: resolvedValue };
-                attemptedDestinations.push("native_seo_title");
-            } else {
-                unchanged.push("native_seo_title");
+            if (resolvedValue !== valStr) {
+                blockedFields[fullKey] = `Rejected custom.seo_title proposal containing warning prefixes that alter approved content.`;
+                continue;
+            }
+            if (resolvedValue.length > 70) {
+                blockedFields[fullKey] = `Value exceeds 70 characters limit for custom.seo_title.`;
+                continue;
             }
         }
 
@@ -2252,6 +2409,11 @@ export const action = async ({ request }) => {
             return;
         }
 
+        if (!hasMetafieldsBaseline) {
+            blockedFields[fullKey] = "Product metafields baseline could not be loaded from Shopify; reload product data before deleting.";
+            return;
+        }
+
         if (currentMetafields[fullKey] !== undefined) {
            deleteFromShopify.push({ ownerId: productGid, namespace: ns, key: key });
            proposedChanges[fullKey] = { from: currentMetafields[fullKey], to: null };
@@ -2339,7 +2501,7 @@ export const action = async ({ request }) => {
           );
           const nativeJson = await nativeResponse.json();
           if (nativeJson?.data?.productUpdate?.userErrors?.length) {
-            allErrors.push(...nativeJson.data.productUpdate.userErrors);
+            allErrors.push(...attachNativeDestinationToUserErrors(nativeJson.data.productUpdate.userErrors, nativeInput));
           } else {
             nativeWriteSucceeded = true;
           }
@@ -2365,14 +2527,14 @@ export const action = async ({ request }) => {
           const priceJson = await priceResponse.json();
           const bulkData = priceJson?.data?.productVariantsBulkUpdate;
           if (bulkData?.userErrors?.length) {
-            allErrors.push(...bulkData.userErrors);
+            allErrors.push(...bulkData.userErrors.map(uErr => ({ ...uErr, destination: "price" })));
           } else if (!bulkData?.productVariants || !bulkData.productVariants.some(v => v.id === priceVariantGid)) {
-            allErrors.push({ message: "Price update accepted by API but variant was not returned in success payload." });
+            allErrors.push({ destination: "price", message: "Price update accepted by API but variant was not returned in success payload." });
           } else {
             priceWriteSucceeded = true;
           }
         } catch (priceErr) {
-          allErrors.push({ message: `API Error on Price Update: ${priceErr.message}` });
+          allErrors.push({ destination: "price", message: `API Error on Price Update: ${priceErr.message}` });
         }
       }
       
@@ -2392,12 +2554,12 @@ export const action = async ({ request }) => {
             const swJson = await swResponse.json();
             const swData = swJson?.data?.inventoryItemUpdate;
             if (swData?.userErrors?.length) {
-               allErrors.push(...swData.userErrors);
+               allErrors.push(...swData.userErrors.map(uErr => ({ ...uErr, destination: "native_shipping_weight" })));
             } else {
                shippingWeightSucceeded = true;
             }
          } catch (swErr) {
-            allErrors.push({ message: `API Error on Shipping Weight Update: ${swErr.message}` });
+            allErrors.push({ destination: "native_shipping_weight", message: `API Error on Shipping Weight Update: ${swErr.message}` });
          }
       }
 
@@ -2497,14 +2659,25 @@ export const action = async ({ request }) => {
 
       const hasTitleReadBack = hasProductReadBack && typeof readBackProductNode.title === "string";
       const hasBodyReadBack = hasProductReadBack && typeof readBackProductNode.descriptionHtml === "string";
-      const hasSeoReadBack = hasProductReadBack && readBackProductNode.seo !== null && typeof readBackProductNode.seo === "object";
+      const hasSeoReadBack =
+        hasProductReadBack &&
+        readBackProductNode.seo !== null &&
+        readBackProductNode.seo !== undefined &&
+        typeof readBackProductNode.seo === "object" &&
+        !Array.isArray(readBackProductNode.seo) &&
+        Object.prototype.hasOwnProperty.call(readBackProductNode.seo, "title") &&
+        Object.prototype.hasOwnProperty.call(readBackProductNode.seo, "description");
       const hasMediaReadBack = hasProductReadBack && Array.isArray(readBackProductNode.media?.edges);
       const hasMetafieldsReadBack = hasProductReadBack && Array.isArray(readBackProductNode.metafields?.edges);
 
       const actualTitle = hasTitleReadBack ? readBackProductNode.title : undefined;
       const actualBodyHtml = hasBodyReadBack ? readBackProductNode.descriptionHtml : undefined;
-      const actualSeoTitle = hasSeoReadBack && typeof readBackProductNode.seo.title === "string" ? readBackProductNode.seo.title : undefined;
-      const actualSeoDescription = hasSeoReadBack && typeof readBackProductNode.seo.description === "string" ? readBackProductNode.seo.description : undefined;
+      const actualSeoTitle = hasSeoReadBack && (typeof readBackProductNode.seo.title === "string" || readBackProductNode.seo.title === null)
+        ? (readBackProductNode.seo.title ?? "")
+        : undefined;
+      const actualSeoDescription = hasSeoReadBack && (typeof readBackProductNode.seo.description === "string" || readBackProductNode.seo.description === null)
+        ? (readBackProductNode.seo.description ?? "")
+        : undefined;
       const actualMedia = hasMediaReadBack
         ? readBackProductNode.media.edges.filter(e => e && e.node && e.node.id)
         : [];
@@ -2745,11 +2918,21 @@ export const action = async ({ request }) => {
       const verifiedSetCount = setToShopify.filter(m => verifiedDestinations.includes(`${m.namespace}.${m.key}`)).length;
       const verifiedImageAltCount = imageAltInputs.filter(img => verifiedDestinations.includes(`native_image_alts_${img.id}`)).length;
       const verifiedNativeTitleCount = verifiedDestinations.includes("native_title") ? 1 : 0;
+      const verifiedNativeDescCount = verifiedDestinations.includes("native_description") ? 1 : 0;
+      const verifiedNativeSeoTitleCount = verifiedDestinations.includes("native_seo_title") ? 1 : 0;
       const verifiedNativeSeoDescCount = verifiedDestinations.includes("native_seo_description") ? 1 : 0;
       const verifiedShippingWeightCount = verifiedDestinations.includes("native_shipping_weight") ? 1 : 0;
-      const totalFieldsUpdated = verifiedSetCount + (priceReadBackVerified ? 1 : 0) + verifiedNativeTitleCount + verifiedNativeSeoDescCount + verifiedShippingWeightCount + verifiedImageAltCount;
+      const totalFieldsUpdated =
+        verifiedSetCount +
+        (priceReadBackVerified ? 1 : 0) +
+        verifiedNativeTitleCount +
+        verifiedNativeDescCount +
+        verifiedNativeSeoTitleCount +
+        verifiedNativeSeoDescCount +
+        verifiedShippingWeightCount +
+        verifiedImageAltCount;
 
-      const hasUnresolved = Object.keys(unresolvedChanges).length > 0;
+      const hasUnresolved = Object.keys(unresolvedChanges).length > 0 || Object.keys(conflicts).length > 0;
       const hasExcluded = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
       
       let finalStatus = "REPAIRED";
@@ -2757,7 +2940,7 @@ export const action = async ({ request }) => {
 
       if (hasUnresolved || hasExcluded) {
           finalStatus = "PARTIAL_SUCCESS";
-          if (hasUnresolved) finalSuccess = false;
+          finalSuccess = false;
       }
 
       const diagnosticMsg = finalStatus === "PARTIAL_SUCCESS" 

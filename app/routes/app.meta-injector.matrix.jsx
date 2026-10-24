@@ -6,6 +6,7 @@ import { useFetcher } from "react-router";
 import {
   DEV_SHOW_ALL_TEMPLATE_FIELDS,
   PRODUCT_TEMPLATE_GROUPS,
+  COMPATIBILITY_ADAPTER_FIELDS,
   computeTemplateAuditCounts
 } from "../utils/meta-injector.constants.jsx";
 import {
@@ -28,8 +29,10 @@ import {
   STATUS,
   NATIVE_FIELDS,
   NATIVE_ALIAS_MAP,
+  DESTINATION_SPECIFIC_APPROVAL_KEYS,
   RETIRED_KEYS,
   FILTER_OPTIONS,
+  resolveApprovalStorageKey,
   resolveConfigFieldDestination,
   getDynamicSections,
   getStatusTone,
@@ -78,6 +81,13 @@ const RAW_COMPANION_LOOKUP_KEYS = Object.freeze({
   "custom.is_one_of_a_kind": ["custom.is_ooak", "is_ooak"],
   "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"],
   "custom.cut_and_shape": ["custom.cut_type", "cut_type"]
+});
+
+const SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS = Object.freeze({
+  "custom.generated_description": ["native_description", "custom.generated_description"],
+  "native_description": ["native_description", "custom.generated_description"],
+  "custom.seo_title": ["native_seo_title", "custom.seo_title"],
+  "native_seo_title": ["native_seo_title", "custom.seo_title"]
 });
 
 const isExactProductGid = (val) =>
@@ -272,11 +282,13 @@ function inspectRawStoredFieldBaseline(key, data) {
       };
     }
     return {
-      rawEvidenceAvailable: Boolean(nativeTargets?.seo),
+      rawEvidenceAvailable: Boolean(nativeTargets?.seo && Object.prototype.hasOwnProperty.call(nativeTargets.seo, "title")),
       rawStoredExists: false,
       rawStoredValue: null,
       rawSourceKey: "nativeTargets.seo.title",
-      rawNote: nativeTargets?.seo ? null : "nativeTargets.seo not present on manifest."
+      rawNote: nativeTargets?.seo && Object.prototype.hasOwnProperty.call(nativeTargets.seo, "title")
+        ? null
+        : "nativeTargets.seo.title not present on manifest."
     };
   }
 
@@ -292,11 +304,13 @@ function inspectRawStoredFieldBaseline(key, data) {
       };
     }
     return {
-      rawEvidenceAvailable: Boolean(nativeTargets?.seo),
+      rawEvidenceAvailable: Boolean(nativeTargets?.seo && Object.prototype.hasOwnProperty.call(nativeTargets.seo, "description")),
       rawStoredExists: false,
       rawStoredValue: null,
       rawSourceKey: "nativeTargets.seo.description",
-      rawNote: nativeTargets?.seo ? null : "nativeTargets.seo not present on manifest."
+      rawNote: nativeTargets?.seo && Object.prototype.hasOwnProperty.call(nativeTargets.seo, "description")
+        ? null
+        : "nativeTargets.seo.description not present on manifest."
     };
   }
 
@@ -730,6 +744,8 @@ function buildPureLiveBenchPayload({
       sectionConfigFields.length > 0 ? sectionConfigFields : allConfigFields
     );
     const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    const approvalStorageKey = resolveApprovalStorageKey(key);
+    const isDestSpecificApproval = DESTINATION_SPECIFIC_APPROVAL_KEYS.has(approvalStorageKey);
     const rawBaseline = inspectRawStoredFieldBaseline(key, safeData);
     const isManualEdited = Boolean(
       productManualEdits[key] === true || productManualEdits[targetKey] === true
@@ -759,7 +775,7 @@ function buildPureLiveBenchPayload({
     const wasSubmittedInLastSave = Boolean(
       lastSubmitted &&
         (Object.prototype.hasOwnProperty.call(lastSubmitted, key) ||
-          Object.prototype.hasOwnProperty.call(lastSubmitted, targetKey))
+          (!isDestSpecificApproval && Object.prototype.hasOwnProperty.call(lastSubmitted, targetKey)))
     );
     const lastSubmittedValue = wasSubmittedInLastSave
       ? redactRecognizableCredentialStrings(
@@ -774,6 +790,7 @@ function buildPureLiveBenchPayload({
     return {
       key,
       targetKey,
+      approvalKey: approvalStorageKey,
       section: sectionHeading,
       label: meta.label,
       type: meta.type,
@@ -811,6 +828,7 @@ function buildPureLiveBenchPayload({
       statusAndHolds: {
         fieldStatus: meta.fieldStatus,
         isSupported: Boolean(meta.isSupported),
+        hasLoadedBaseline: Boolean(meta.hasLoadedBaseline),
         isBlockedAction: Boolean(meta.isBlockedAction),
         hasTechnicalBlock: Boolean(meta.hasTechnicalBlock),
         isActualBlockedProposal: Boolean(meta.isActualBlockedProposal),
@@ -1620,13 +1638,35 @@ export function OperationsMatrixTab({ products }) {
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
-    const targetKey = NATIVE_ALIAS_MAP[key] || key;
-    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates" || targetKey === "native_image_alt") return;
-    const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
-    const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
+    if (typeof key !== "string" || !key.trim()) return;
 
-    if (isVerifiedStandardizedDestination(targetKey)) {
-      const stdEval = getStandardizedEvaluationForField(pieceId, targetKey);
+    const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
+    const approvalStorageKey = resolveApprovalStorageKey(key);
+    if (
+      !approvalStorageKey ||
+      targetKeyForProposal === "standardized_candidates" ||
+      targetKeyForProposal === "custom.standardized_candidates" ||
+      targetKeyForProposal === "native_image_alt" ||
+      approvalStorageKey === "native_image_alt"
+    ) {
+      return;
+    }
+
+    const allConfigFields = [
+      ...PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []),
+      ...(COMPATIBILITY_ADAPTER_FIELDS || [])
+    ];
+    const matchedConfig = allConfigFields.find(
+      f =>
+        resolveConfigFieldDestination(f) === approvalStorageKey ||
+        resolveConfigFieldDestination(f) === key ||
+        resolveConfigFieldDestination(f) === targetKeyForProposal ||
+        f?.registryIdentity === approvalStorageKey ||
+        f?.registryIdentity === key
+    );
+
+    if (isVerifiedStandardizedDestination(targetKeyForProposal)) {
+      const stdEval = getStandardizedEvaluationForField(pieceId, targetKeyForProposal);
       const valCheck = validateProposedStandardizedGidList(propVal, stdEval);
       if (!valCheck.valid) return;
     } else if (
@@ -1635,19 +1675,26 @@ export function OperationsMatrixTab({ products }) {
       matchedConfig?.writerVerified === false ||
       matchedConfig?.producerAlignmentPending === true ||
       matchedConfig?.owner === "variant_metafield" ||
-      targetKey === "mm-google-shopping.custom_product"
+      targetKeyForProposal === "mm-google-shopping.custom_product" ||
+      approvalStorageKey === "mm-google-shopping.custom_product"
     ) {
       return;
     }
 
     setApprovals(prev => {
       const next = { ...prev };
-      if (!next[pieceId]) next[pieceId] = {};
+      const prodApp = { ...(next[pieceId] || {}) };
       if (isChecked) {
-        next[pieceId][targetKey] = propVal;
+        if (propVal === undefined || propVal === null || String(propVal).trim() === "") {
+          return prev;
+        }
+        // Store approval strictly under the destination-specific approval key (e.g. native_description stays native_description,
+        // never auto-approving custom.generated_description or vice versa).
+        prodApp[approvalStorageKey] = String(propVal);
       } else {
-        delete next[pieceId][targetKey];
+        delete prodApp[approvalStorageKey];
       }
+      next[pieceId] = prodApp;
       return next;
     });
   }, [getStandardizedEvaluationForField, manifestData]);
@@ -2356,13 +2403,34 @@ export function OperationsMatrixTab({ products }) {
 
   const handleRepairPlanChange = (key, value) => {
     if (!selectedBenchId || !isExactProductGid(selectedBenchId) || !manifestData[selectedBenchId]) return;
-    const targetKey = NATIVE_ALIAS_MAP[key] || key;
-    if (targetKey === "standardized_candidates" || targetKey === "custom.standardized_candidates" || targetKey === "native_image_alt") return;
-    const allConfigFields = PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []);
-    const matchedConfig = allConfigFields.find(f => resolveConfigFieldDestination(f) === targetKey || resolveConfigFieldDestination(f) === key);
+    if (typeof key !== "string" || !key.trim()) return;
 
-    if (isVerifiedStandardizedDestination(targetKey)) {
-      const stdEval = getStandardizedEvaluationForField(selectedBenchId, targetKey);
+    const targetKeyForProposal = NATIVE_ALIAS_MAP[key] || key;
+    const approvalStorageKey = resolveApprovalStorageKey(key);
+    if (
+      targetKeyForProposal === "standardized_candidates" ||
+      targetKeyForProposal === "custom.standardized_candidates" ||
+      targetKeyForProposal === "native_image_alt" ||
+      approvalStorageKey === "native_image_alt"
+    ) {
+      return;
+    }
+
+    const allConfigFields = [
+      ...PRODUCT_TEMPLATE_GROUPS.flatMap(g => g.fields || []),
+      ...(COMPATIBILITY_ADAPTER_FIELDS || [])
+    ];
+    const matchedConfig = allConfigFields.find(
+      f =>
+        resolveConfigFieldDestination(f) === approvalStorageKey ||
+        resolveConfigFieldDestination(f) === key ||
+        resolveConfigFieldDestination(f) === targetKeyForProposal ||
+        f?.registryIdentity === approvalStorageKey ||
+        f?.registryIdentity === key
+    );
+
+    if (isVerifiedStandardizedDestination(targetKeyForProposal)) {
+      const stdEval = getStandardizedEvaluationForField(selectedBenchId, targetKeyForProposal);
       const valCheck = validateProposedStandardizedGidList(value, stdEval);
       if (!valCheck.valid) return;
     } else if (
@@ -2371,37 +2439,77 @@ export function OperationsMatrixTab({ products }) {
       matchedConfig?.writerVerified === false ||
       matchedConfig?.producerAlignmentPending === true ||
       matchedConfig?.owner === "variant_metafield" ||
-      targetKey === "mm-google-shopping.custom_product"
+      targetKeyForProposal === "mm-google-shopping.custom_product" ||
+      approvalStorageKey === "mm-google-shopping.custom_product"
     ) {
       return;
     }
-    
+
+    // Record manual edit on the shared proposal-source key (so AI/load locking in execution-hook works)
+    // as well as the specific destination key when distinct, without creating disconnected proposal keys.
     setManualEdits(prev => {
-        const next = { ...prev };
-        if (!next[selectedBenchId]) next[selectedBenchId] = {};
-        next[selectedBenchId][targetKey] = true;
-        return next;
-    });
-    
-    setApprovals(prev => {
-        if (prev[selectedBenchId] && prev[selectedBenchId][targetKey] !== undefined) {
-            const next = { ...prev };
-            delete next[selectedBenchId][targetKey];
-            return next;
-        }
-        return prev;
+      const next = { ...prev };
+      const prodEdits = { ...(next[selectedBenchId] || {}) };
+      prodEdits[targetKeyForProposal] = true;
+      if (approvalStorageKey && approvalStorageKey !== targetKeyForProposal) {
+        prodEdits[approvalStorageKey] = true;
+      }
+      next[selectedBenchId] = prodEdits;
+      return next;
     });
 
-    setManifestData(prev => ({
-       ...prev,
-       [selectedBenchId]: {
-          ...prev[selectedBenchId],
-          repairPlan: {
-             ...prev[selectedBenchId].repairPlan,
-             [targetKey]: value
-          }
-       }
-    }));
+    // Invalidate approvals for all destinations whose proposal value is affected by this edit
+    const keysToInvalidate = new Set([
+      key,
+      targetKeyForProposal,
+      approvalStorageKey,
+      ...(SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS[key] || []),
+      ...(SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS[targetKeyForProposal] || []),
+      ...(SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS[approvalStorageKey] || [])
+    ].filter(Boolean));
+
+    setApprovals(prev => {
+      const prodApp = prev[selectedBenchId];
+      if (!prodApp) return prev;
+      let changed = false;
+      const nextProdApp = { ...prodApp };
+      keysToInvalidate.forEach(kToDel => {
+        if (nextProdApp[kToDel] !== undefined) {
+          delete nextProdApp[kToDel];
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      return {
+        ...prev,
+        [selectedBenchId]: nextProdApp
+      };
+    });
+
+    // Update the single canonical proposal-source entry in repairPlan and synchronize any existing
+    // destination-specific key if present so native and custom never read stale diverging proposal strings.
+    setManifestData(prev => {
+      const existingManifest = prev[selectedBenchId];
+      if (!existingManifest) return prev;
+      const nextRepairPlan = {
+        ...(existingManifest.repairPlan || {}),
+        [targetKeyForProposal]: value
+      };
+      if (
+        approvalStorageKey &&
+        approvalStorageKey !== targetKeyForProposal &&
+        Object.prototype.hasOwnProperty.call(nextRepairPlan, approvalStorageKey)
+      ) {
+        nextRepairPlan[approvalStorageKey] = value;
+      }
+      return {
+        ...prev,
+        [selectedBenchId]: {
+          ...existingManifest,
+          repairPlan: nextRepairPlan
+        }
+      };
+    });
   };
 
   const handleStandardizedEntrySelectionChange = (destinationKey, currentPropVal, stdEval, replaceOrAddGid, previousSlotGid = null) => {
