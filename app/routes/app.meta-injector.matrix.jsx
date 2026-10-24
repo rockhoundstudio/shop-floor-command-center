@@ -30,6 +30,7 @@ import {
   NATIVE_FIELDS,
   NATIVE_ALIAS_MAP,
   DESTINATION_SPECIFIC_APPROVAL_KEYS,
+  HIDDEN_CONTEXT_FIELDS,
   RETIRED_KEYS,
   FILTER_OPTIONS,
   resolveApprovalStorageKey,
@@ -441,13 +442,18 @@ function inspectRawStoredFieldBaseline(key, data) {
   };
 }
 
-function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
+function buildMeasuredUiAuditSnapshot(productId, measurementsState, options = {}) {
+  const allowUnselectedPreview = Boolean(options?.allowUnselectedPreview);
+  const isUnselectedPreviewTarget = allowUnselectedPreview && productId === null;
+
+  if (!isUnselectedPreviewTarget && (!productId || !isExactProductGid(productId))) {
+    return null;
+  }
+
   if (
-    !productId ||
-    !isExactProductGid(productId) ||
     !measurementsState ||
     typeof measurementsState !== "object" ||
-    measurementsState.productId !== productId ||
+    measurementsState.productId !== (isUnselectedPreviewTarget ? null : productId) ||
     !measurementsState.bySection ||
     typeof measurementsState.bySection !== "object"
   ) {
@@ -459,33 +465,72 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
   let measuredSectionCount = 0;
 
   for (const [secTitle, rec] of Object.entries(bySection)) {
-    if (
-      !rec ||
-      typeof rec !== "object" ||
-      typeof rec.renderedCount !== "number" ||
-      !Number.isFinite(rec.renderedCount) ||
-      !Array.isArray(rec.renderedKeys)
-    ) {
+    const rawDescCount =
+      typeof rec?.descriptorCount === "number" && Number.isFinite(rec.descriptorCount)
+        ? rec.descriptorCount
+        : typeof rec?.renderedCount === "number" && Number.isFinite(rec.renderedCount)
+          ? rec.renderedCount
+          : null;
+    const rawDescKeys = Array.isArray(rec?.descriptorKeys)
+      ? rec.descriptorKeys
+      : Array.isArray(rec?.renderedKeys)
+        ? rec.renderedKeys
+        : null;
+
+    if (!rec || typeof rec !== "object" || rawDescCount === null || !rawDescKeys) {
       continue;
     }
 
-    const safeRenderedKeys = rec.renderedKeys.filter(
+    const safeDescriptorKeys = rawDescKeys.filter(
       (k) => typeof k === "string" && k.length > 0 && k.length <= 200
     );
+    const hasMountedDomCount =
+      typeof rec.mountedDomRowCount === "number" && Number.isFinite(rec.mountedDomRowCount);
+    const safeMountedDomKeys = Array.isArray(rec.mountedDomKeys)
+      ? rec.mountedDomKeys.filter(
+          (k) => typeof k === "string" && k.length > 0 && k.length <= 200
+        )
+      : null;
 
     measuredEntries[secTitle] = {
       measurementStatus: "measured",
+      measurementKind:
+        typeof rec.measurementKind === "string"
+          ? rec.measurementKind
+          : "scoped_dom_ref_and_descriptor_audit",
+      isExpanded: typeof rec.isExpanded === "boolean" ? rec.isExpanded : null,
+      sectionDomMounted:
+        typeof rec.sectionDomMounted === "boolean" ? rec.sectionDomMounted : null,
+      rowsContainerDomMounted:
+        typeof rec.rowsContainerDomMounted === "boolean"
+          ? rec.rowsContainerDomMounted
+          : null,
       logicalCount:
         typeof rec.logicalCount === "number" && Number.isFinite(rec.logicalCount)
           ? rec.logicalCount
           : null,
-      renderedCount: rec.renderedCount,
-      renderedKeys: safeRenderedKeys,
+      renderedCount: rawDescCount,
+      renderedKeys: safeDescriptorKeys,
+      descriptorCount: rawDescCount,
+      descriptorKeys: safeDescriptorKeys,
+      mountedDomRowCount: hasMountedDomCount ? rec.mountedDomRowCount : null,
+      mountedDomKeys: safeMountedDomKeys,
       mediaControlCount:
         typeof rec.mediaControlCount === "number" && Number.isFinite(rec.mediaControlCount)
           ? rec.mediaControlCount
           : 0,
-      hasZeroImagePlaceholder: Boolean(rec.hasZeroImagePlaceholder)
+      hasZeroImagePlaceholder: Boolean(rec.hasZeroImagePlaceholder),
+      mountedDomMediaControlCount:
+        typeof rec.mountedDomMediaControlCount === "number" &&
+        Number.isFinite(rec.mountedDomMediaControlCount)
+          ? rec.mountedDomMediaControlCount
+          : null,
+      mountedDomHasZeroImagePlaceholder:
+        typeof rec.mountedDomHasZeroImagePlaceholder === "boolean"
+          ? rec.mountedDomHasZeroImagePlaceholder
+          : null,
+      cssVisibilityMeasured: Boolean(rec.cssVisibilityMeasured),
+      viewportVisibilityMeasured: Boolean(rec.viewportVisibilityMeasured)
     };
     measuredSectionCount += 1;
   }
@@ -500,27 +545,66 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
 
   const sectionsReport = {};
   const unmeasuredSectionHeadings = [];
-  let totalMeasuredRenderedRows = 0;
+  let totalMeasuredDescriptorRows = 0;
+  let totalMeasuredMountedDomRows = 0;
+  let allMeasuredHaveMountedDomCount = true;
+  let expandedSectionCount = 0;
+  let collapsedSectionCount = 0;
   let totalMeasuredMediaControls = 0;
   let anyZeroImagePlaceholder = false;
+  let totalMountedDomMediaControls = 0;
+  let anyMountedDomZeroImagePlaceholder = false;
+
+  const accumulateSectionEntry = (entry) => {
+    totalMeasuredDescriptorRows += entry.descriptorCount;
+    if (typeof entry.mountedDomRowCount === "number") {
+      totalMeasuredMountedDomRows += entry.mountedDomRowCount;
+    } else {
+      allMeasuredHaveMountedDomCount = false;
+    }
+    if (entry.isExpanded === true) {
+      expandedSectionCount += 1;
+    } else if (entry.isExpanded === false) {
+      collapsedSectionCount += 1;
+    }
+    totalMeasuredMediaControls += entry.mediaControlCount;
+    if (entry.hasZeroImagePlaceholder) {
+      anyZeroImagePlaceholder = true;
+    }
+    if (typeof entry.mountedDomMediaControlCount === "number") {
+      totalMountedDomMediaControls += entry.mountedDomMediaControlCount;
+    }
+    if (entry.mountedDomHasZeroImagePlaceholder) {
+      anyMountedDomZeroImagePlaceholder = true;
+    }
+  };
 
   for (let i = 0; i < expectedSectionHeadings.length; i += 1) {
     const heading = expectedSectionHeadings[i];
     if (Object.prototype.hasOwnProperty.call(measuredEntries, heading)) {
       const entry = measuredEntries[heading];
       sectionsReport[heading] = entry;
-      totalMeasuredRenderedRows += entry.renderedCount;
-      totalMeasuredMediaControls += entry.mediaControlCount;
-      if (entry.hasZeroImagePlaceholder) {
-        anyZeroImagePlaceholder = true;
-      }
+      accumulateSectionEntry(entry);
     } else {
       sectionsReport[heading] = {
         measurementStatus: "not_measured",
+        measurementKind: null,
+        isExpanded: null,
+        sectionDomMounted: null,
+        rowsContainerDomMounted: null,
+        logicalCount: null,
         renderedCount: null,
         renderedKeys: null,
+        descriptorCount: null,
+        descriptorKeys: null,
+        mountedDomRowCount: null,
+        mountedDomKeys: null,
         mediaControlCount: null,
-        hasZeroImagePlaceholder: null
+        hasZeroImagePlaceholder: null,
+        mountedDomMediaControlCount: null,
+        mountedDomHasZeroImagePlaceholder: null,
+        cssVisibilityMeasured: false,
+        viewportVisibilityMeasured: false
       };
       unmeasuredSectionHeadings.push(heading);
     }
@@ -529,11 +613,7 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
   for (const [secTitle, entry] of Object.entries(measuredEntries)) {
     if (!Object.prototype.hasOwnProperty.call(sectionsReport, secTitle)) {
       sectionsReport[secTitle] = entry;
-      totalMeasuredRenderedRows += entry.renderedCount;
-      totalMeasuredMediaControls += entry.mediaControlCount;
-      if (entry.hasZeroImagePlaceholder) {
-        anyZeroImagePlaceholder = true;
-      }
+      accumulateSectionEntry(entry);
     }
   }
 
@@ -544,16 +624,35 @@ function buildMeasuredUiAuditSnapshot(productId, measurementsState) {
     measuredSectionCount >= totalKnownGroups;
 
   return {
-    productId,
+    productId: isUnselectedPreviewTarget ? null : productId,
+    selectionState: isUnselectedPreviewTarget ? "unselected_preview" : "selected",
+    measurementKind: "scoped_dom_ref_and_descriptor_audit",
+    cssVisibilityMeasured: false,
+    viewportVisibilityMeasured: false,
     measurementCoverage: isComplete ? "complete" : "partial",
     measuredSectionCount,
     totalKnownTemplateGroups: totalKnownGroups,
     unmeasuredSectionCount: unmeasuredSectionHeadings.length,
     unmeasuredSections: unmeasuredSectionHeadings,
-    totalRenderedRows: isComplete ? totalMeasuredRenderedRows : null,
-    measuredRenderedRowsSubtotal: totalMeasuredRenderedRows,
+    expandedSectionCount,
+    collapsedSectionCount,
+    totalRenderedRows: isComplete ? totalMeasuredDescriptorRows : null,
+    measuredRenderedRowsSubtotal: totalMeasuredDescriptorRows,
+    totalDescriptorRows: isComplete ? totalMeasuredDescriptorRows : null,
+    measuredDescriptorRowsSubtotal: totalMeasuredDescriptorRows,
+    totalMountedDomRows:
+      isComplete && allMeasuredHaveMountedDomCount ? totalMeasuredMountedDomRows : null,
+    measuredMountedDomRowsSubtotal: allMeasuredHaveMountedDomCount
+      ? totalMeasuredMountedDomRows
+      : null,
     mediaControlCount: totalMeasuredMediaControls,
     hasZeroImagePlaceholder: anyZeroImagePlaceholder,
+    mountedDomMediaControlCount: allMeasuredHaveMountedDomCount
+      ? totalMountedDomMediaControls
+      : null,
+    mountedDomHasZeroImagePlaceholder: allMeasuredHaveMountedDomCount
+      ? anyMountedDomZeroImagePlaceholder
+      : null,
     devShowAllTemplateFieldsActive: Boolean(DEV_SHOW_ALL_TEMPLATE_FIELDS),
     sections: sectionsReport
   };
@@ -671,6 +770,261 @@ function buildSelectedUnloadedLiveBenchPayload({
     benchRevision,
     selectionState: "selected",
     productId,
+    clientStateChangedAt,
+    baselineLoadedAt: null
+  };
+
+  return { packet, liveState };
+}
+
+function buildUnselectedPreviewLiveBenchPayload({
+  benchSessionId,
+  benchRevision,
+  clientStateChangedAt,
+  getPreviewFieldMetadata
+}) {
+  const previewData = EMPTY_DEV_PREVIEW_MANIFEST;
+  const dynamicSections = getDynamicSections(previewData);
+  const allConfigFields = dynamicSections.flatMap((sec) => sec.configFields || []);
+  const runIdentity = "unselected_blank_template_preview";
+  const runTimestamp = "Read-only blank template preview (no product selected)";
+
+  const serializePreviewFieldRow = (key, sectionHeading, sectionConfigFields = []) => {
+    const meta = getPreviewFieldMetadata(
+      key,
+      previewData,
+      null,
+      {},
+      sectionConfigFields.length > 0 ? sectionConfigFields : allConfigFields
+    );
+    const targetKey = NATIVE_ALIAS_MAP[key] || key;
+    const approvalStorageKey = resolveApprovalStorageKey(key);
+    const isCollectionDateDisplayNa =
+      (key === "custom.collection_date" || key === "collection_date") &&
+      meta.currentVal === "N/A";
+
+    return {
+      key,
+      targetKey,
+      approvalKey: approvalStorageKey,
+      section: sectionHeading,
+      label: meta.label,
+      type: meta.type,
+      owner: meta.owner,
+      namespace: meta.namespace,
+      metaKey: meta.metaKey,
+      control: meta.control || null,
+      rawStoredBaseline: {
+        evidenceAvailable: false,
+        exists: false,
+        value: null,
+        sourceKey: null,
+        note: "Unselected blank template preview (no product selected or loaded; not a stored Shopify baseline)."
+      },
+      evaluatedBaseline: {
+        currentExists: false,
+        value: redactRecognizableCredentialStrings(meta.currentVal ?? ""),
+        isDisplayOnlyPlaceholderOrNa: Boolean(
+          meta.isImageAltCapabilityPlaceholder || isCollectionDateDisplayNa
+        )
+      },
+      workingState: {
+        isProposed: false,
+        proposalExists: false,
+        proposalStatus: meta.proposalStatus || "Not provided",
+        proposedValue: "",
+        isManualEdit: false,
+        isApproved: false,
+        isContentPreApproved: false,
+        preApprovalReason: null,
+        contentNeedsReview: false,
+        source: "Not reported",
+        stage: "unselected_preview"
+      },
+      statusAndHolds: {
+        fieldStatus: meta.fieldStatus,
+        isSupported: Boolean(meta.isSupported),
+        hasLoadedBaseline: false,
+        isBlockedAction: true,
+        hasTechnicalBlock: Boolean(meta.hasTechnicalBlock),
+        isActualBlockedProposal: false,
+        isManualOnly: Boolean(meta.isManualOnly),
+        isOperatorOwned: Boolean(meta.isOperatorOwned),
+        isPendingReadOnly: true,
+        isStandardizedAttribute: Boolean(meta.isStandardizedAttribute),
+        isVerifiedStdDest: Boolean(meta.isVerifiedStdDest),
+        isCategoryEligible: false,
+        hasContractOrOwnerHold: true,
+        hasExplicitStorageHold: Boolean(meta.hasExplicitStorageHold),
+        hasExplicitProducerHold: Boolean(meta.hasExplicitProducerHold),
+        isChannelFlagReadOnly: Boolean(meta.isChannelFlagReadOnly),
+        isVariantMetafieldHold: Boolean(meta.isVariantMetafieldHold),
+        isImageAltCapabilityPlaceholder: Boolean(meta.isImageAltCapabilityPlaceholder),
+        imageAltPlaceholderReason: meta.imageAltPlaceholderReason || null,
+        applicability: meta.applicabilityState || null,
+        reasons: Array.isArray(meta.reasons)
+          ? meta.reasons.map((r) => redactRecognizableCredentialStrings(String(r)))
+          : []
+      },
+      conflictsAndSaveEvidence: {
+        conflictData: null,
+        nativeDescConflictData: null,
+        wasSubmittedInLastRepair: false,
+        lastSubmittedValue: null
+      }
+    };
+  };
+
+  const fieldsByKey = {};
+  const sectionOrder = [];
+
+  for (let i = 0; i < dynamicSections.length; i += 1) {
+    const sec = dynamicSections[i];
+    const rawKeys = Array.isArray(sec.keys) ? sec.keys : [];
+    // Keep excluded source context (custom.origin_story) and compatibility custom.generated_description
+    // out of normal preview template rows, matching ManifestSectionCard's exact filter.
+    const secKeys = rawKeys.filter(
+      (k) => !HIDDEN_CONTEXT_FIELDS.includes(k) && k !== "custom.generated_description"
+    );
+    sectionOrder.push({
+      sectionTitle: sec.title,
+      fieldKeys: secKeys
+    });
+    for (let j = 0; j < secKeys.length; j += 1) {
+      const k = secKeys[j];
+      fieldsByKey[k] = serializePreviewFieldRow(k, sec.title, sec.configFields || []);
+    }
+  }
+
+  const allPreviewFieldKeys = Object.keys(fieldsByKey);
+  let requiredMissingCount = 0;
+  let optionalBlanksCount = 0;
+  for (let i = 0; i < allPreviewFieldKeys.length; i += 1) {
+    const fRow = fieldsByKey[allPreviewFieldKeys[i]];
+    if (fRow?.statusAndHolds?.fieldStatus === "Required missing") {
+      requiredMissingCount += 1;
+    } else {
+      optionalBlanksCount += 1;
+    }
+  }
+
+  const structuredPayload = {
+    schemaVersion: 1,
+    stateKind: LIVE_BENCH_MODE,
+    benchSessionId,
+    benchRevision,
+    selectionState: "unselected_preview",
+    productId: null,
+    productTitle: null,
+    clientStateChangedAt,
+    baselineLoadedAt: null,
+    baselineEventKind: "unselected_blank_preview",
+    baselineState: "unselected_blank_preview",
+    manifestLoaded: false,
+    baselineSource: "unselected_blank_preview",
+    workingState: "read_only_template_preview",
+    productQueueStatus: null,
+    dataAuthorityNote:
+      "Read-only unselected blank template preview (DEV_SHOW_ALL_TEMPLATE_FIELDS=true, selectionState=\"unselected_preview\", productId=null). No product is selected or loaded. All 10 canonical template drawers and 62 canonical field slots (including the read-only zero-image native_image_alt placeholder and native_description audit mirror) are exposed in read-only preview mode. Preview values are never treated as saved Shopify baselines.",
+    runIdentity,
+    runTimestamp,
+    systemStatus: {
+      shopifyReadStatus: "Unselected Preview (No Product Loaded)",
+      geminiStatus: "Not called",
+      visionStatus: "Not called",
+      geoLibraryStatus: "Not called",
+      readBackStatus: "Not called",
+      currentStage: "unselected_preview",
+      finalStageDisplay: "Read-Only Blank Template Preview",
+      fetcherStateDisplay: "idle",
+      loadingStateDisplay: "Idle",
+      errorMessageDisplay: "None"
+    },
+    diagnosticsStats: {
+      proposed: 0,
+      blocked: 0,
+      degraded: 0,
+      conflicts: 0,
+      unverified: 0,
+      optionalBlanks: optionalBlanksCount,
+      requiredMissing: requiredMissingCount,
+      approvedWrite: 0,
+      total: allPreviewFieldKeys.length,
+      filled: 0,
+      blank: allPreviewFieldKeys.length,
+      manualOnly: 0,
+      unchangedFlagged: 0
+    },
+    manualEditedKeys: [],
+    explicitlyApprovedKeys: [],
+    standardizedReferenceState: {
+      readinessState: "unselected_preview",
+      readinessReason:
+        "No product is selected; standardized attributes are displayed in read-only template preview mode.",
+      stagedCandidateCount: 0,
+      stagedCandidates: {},
+      eligibleDestinationKeys: [],
+      blockedDestinationKeys: [],
+      lastMatchRequestId: null,
+      lastMatchedAt: null,
+      lastMatchSuccess: null,
+      lastMatchIsComplete: null,
+      productCategory: null
+    },
+    saveVerificationEvidence: {
+      hasRepairAttemptInSession: false,
+      lastRepairCompletedAt: null,
+      lastRepairStatus: null,
+      lastRepairSuccess: null,
+      readBackVerified: null,
+      fieldsUpdatedCount: null,
+      verifiedDestinations: [],
+      attemptedDestinations: [],
+      blockedFields: {},
+      conflicts: {},
+      unresolvedChanges: {},
+      note: "Unselected blank template preview is strictly read-only; no product is selected and no writes can occur."
+    },
+    sectionOrder,
+    fieldsByKey
+  };
+
+  const fullText = JSON.stringify(structuredPayload);
+
+  const packet = {
+    mode: LIVE_BENCH_MODE,
+    sectionKey: LIVE_BENCH_MODE,
+    sectionLabel: "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)",
+    productId: null,
+    productTitle: null,
+    runIdentity,
+    runTimestamp,
+    capturedAt: clientStateChangedAt,
+    limitUsed: 400000,
+    fullText,
+    parts: [
+      {
+        index: 0,
+        partNumber: 1,
+        totalParts: 1,
+        label: "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)",
+        charCount: fullText.length
+      }
+    ],
+    activePartIndex: 0,
+    benchSessionId,
+    benchRevision,
+    selectionState: "unselected_preview",
+    clientStateChangedAt,
+    baselineLoadedAt: null
+  };
+
+  const liveState = {
+    mode: LIVE_BENCH_MODE,
+    benchSessionId,
+    benchRevision,
+    selectionState: "unselected_preview",
+    productId: null,
     clientStateChangedAt,
     baselineLoadedAt: null
   };
@@ -1050,6 +1404,14 @@ export function OperationsMatrixTab({ products }) {
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState(INITIAL_EXPANDED_BAYS);
 
+  const isComponentMountedRef = useRef(true);
+  useEffect(() => {
+    isComponentMountedRef.current = true;
+    return () => {
+      isComponentMountedRef.current = false;
+    };
+  }, []);
+
   const activeBenchIdRef = useRef(selectedBenchId);
   useEffect(() => {
     activeBenchIdRef.current = selectedBenchId;
@@ -1104,6 +1466,33 @@ export function OperationsMatrixTab({ products }) {
 
   const batchFetcher = useFetcher();
   const referenceMatchFetcher = useFetcher();
+
+  // Guarded no-op callbacks for unselected DEV preview mode so preview controls can never mutate state or trigger requests
+  const noopPreviewCallback = useCallback(() => {}, []);
+
+  const getPreviewFieldMetadata = useCallback((key, data, productId, currentApprovals, configFields = []) => {
+    const baseMeta = evaluateFieldMetadata({
+      key,
+      data: data || EMPTY_DEV_PREVIEW_MANIFEST,
+      productId: null,
+      currentApprovals: {},
+      configFields,
+      standardizedCandidatesByProduct: {},
+      getStandardizedEvaluationForField: null
+    });
+    return {
+      ...baseMeta,
+      isPendingReadOnly: true,
+      hasContractOrOwnerHold: true,
+      isBlockedAction: true,
+      isApproved: false,
+      isContentPreApproved: false,
+      reasons: [
+        "DEV Preview Mode (No product loaded/selected on bench — read-only template audit view)",
+        ...(Array.isArray(baseMeta.reasons) ? baseMeta.reasons : [])
+      ]
+    };
+  }, []);
 
   // Track actual baseline load and verified read-back timestamps when manifestData or repairHistory updates
   useEffect(() => {
@@ -1173,7 +1562,7 @@ export function OperationsMatrixTab({ products }) {
       lastLiveStateChangedAtRef.current = clientStateChangedAt;
       lastNotifiedSelectionClearRef.current = true;
 
-      if (!useKeepalive) {
+      if (!useKeepalive && isComponentMountedRef.current) {
         setLiveBenchSyncStatus({
           lifecycle: "pending",
           benchSessionId: sessionId,
@@ -1224,7 +1613,7 @@ export function OperationsMatrixTab({ products }) {
         signal: controller.signal
       })
         .then(async (response) => {
-          if (useKeepalive) return;
+          if (useKeepalive || !isComponentMountedRef.current) return;
           const rawText = await response.text();
           let parsed = null;
           if (rawText && rawText.trim().length > 0) {
@@ -1236,6 +1625,7 @@ export function OperationsMatrixTab({ products }) {
           }
 
           if (
+            !isComponentMountedRef.current ||
             benchSessionIdRef.current !== sessionId ||
             benchRevisionRef.current !== revision
           ) {
@@ -1314,7 +1704,7 @@ export function OperationsMatrixTab({ products }) {
           });
         })
         .catch(() => {
-          if (useKeepalive) return;
+          if (useKeepalive || !isComponentMountedRef.current) return;
           if (!timedOut && controller.signal.aborted) {
             return;
           }
@@ -1461,17 +1851,70 @@ export function OperationsMatrixTab({ products }) {
     setSectionAuditMeasurements((prev) => {
       const baseBySection = prev.productId === incomingProdId ? prev.bySection : {};
       const existing = baseBySection[payload.sectionTitle];
-      const nextKeys = Array.isArray(payload.renderedKeys) ? payload.renderedKeys : [];
+      const nextDescriptorKeys = Array.isArray(payload.descriptorKeys)
+        ? payload.descriptorKeys
+        : Array.isArray(payload.renderedKeys)
+          ? payload.renderedKeys
+          : [];
+      const nextDescriptorCount =
+        typeof payload.descriptorCount === "number" && Number.isFinite(payload.descriptorCount)
+          ? payload.descriptorCount
+          : typeof payload.renderedCount === "number" && Number.isFinite(payload.renderedCount)
+            ? payload.renderedCount
+            : nextDescriptorKeys.length;
+      const nextMountedDomKeys = Array.isArray(payload.mountedDomKeys)
+        ? payload.mountedDomKeys
+        : [];
+      const nextMountedDomRowCount =
+        typeof payload.mountedDomRowCount === "number" && Number.isFinite(payload.mountedDomRowCount)
+          ? payload.mountedDomRowCount
+          : null;
+      const nextIsExpanded =
+        typeof payload.isExpanded === "boolean" ? payload.isExpanded : null;
+      const nextSectionDomMounted =
+        typeof payload.sectionDomMounted === "boolean" ? payload.sectionDomMounted : null;
+      const nextRowsContainerDomMounted =
+        typeof payload.rowsContainerDomMounted === "boolean"
+          ? payload.rowsContainerDomMounted
+          : null;
+      const nextMountedDomMediaCount =
+        typeof payload.mountedDomMediaControlCount === "number" &&
+        Number.isFinite(payload.mountedDomMediaControlCount)
+          ? payload.mountedDomMediaControlCount
+          : null;
+      const nextMountedDomHasZeroPlaceholder =
+        typeof payload.mountedDomHasZeroImagePlaceholder === "boolean"
+          ? payload.mountedDomHasZeroImagePlaceholder
+          : null;
+      const nextMeasurementKind =
+        typeof payload.measurementKind === "string"
+          ? payload.measurementKind
+          : "scoped_dom_ref_and_descriptor_audit";
+      const nextCssVisibilityMeasured = Boolean(payload.cssVisibilityMeasured);
+      const nextViewportVisibilityMeasured = Boolean(payload.viewportVisibilityMeasured);
 
       if (
         existing &&
         existing.logicalCount === payload.logicalCount &&
-        existing.renderedCount === payload.renderedCount &&
+        existing.descriptorCount === nextDescriptorCount &&
+        existing.renderedCount === nextDescriptorCount &&
+        existing.mountedDomRowCount === nextMountedDomRowCount &&
+        existing.isExpanded === nextIsExpanded &&
+        existing.sectionDomMounted === nextSectionDomMounted &&
+        existing.rowsContainerDomMounted === nextRowsContainerDomMounted &&
         existing.mediaControlCount === payload.mediaControlCount &&
         existing.hasZeroImagePlaceholder === payload.hasZeroImagePlaceholder &&
-        Array.isArray(existing.renderedKeys) &&
-        existing.renderedKeys.length === nextKeys.length &&
-        existing.renderedKeys.every((k, idx) => k === nextKeys[idx])
+        existing.mountedDomMediaControlCount === nextMountedDomMediaCount &&
+        existing.mountedDomHasZeroImagePlaceholder === nextMountedDomHasZeroPlaceholder &&
+        existing.measurementKind === nextMeasurementKind &&
+        existing.cssVisibilityMeasured === nextCssVisibilityMeasured &&
+        existing.viewportVisibilityMeasured === nextViewportVisibilityMeasured &&
+        Array.isArray(existing.descriptorKeys) &&
+        existing.descriptorKeys.length === nextDescriptorKeys.length &&
+        existing.descriptorKeys.every((k, idx) => k === nextDescriptorKeys[idx]) &&
+        Array.isArray(existing.mountedDomKeys) &&
+        existing.mountedDomKeys.length === nextMountedDomKeys.length &&
+        existing.mountedDomKeys.every((k, idx) => k === nextMountedDomKeys[idx])
       ) {
         return prev;
       }
@@ -1482,10 +1925,22 @@ export function OperationsMatrixTab({ products }) {
           ...baseBySection,
           [payload.sectionTitle]: {
             logicalCount: payload.logicalCount,
-            renderedCount: payload.renderedCount,
-            renderedKeys: nextKeys,
+            renderedCount: nextDescriptorCount,
+            renderedKeys: nextDescriptorKeys,
+            descriptorCount: nextDescriptorCount,
+            descriptorKeys: nextDescriptorKeys,
+            mountedDomRowCount: nextMountedDomRowCount,
+            mountedDomKeys: nextMountedDomKeys,
+            isExpanded: nextIsExpanded,
+            sectionDomMounted: nextSectionDomMounted,
+            rowsContainerDomMounted: nextRowsContainerDomMounted,
             mediaControlCount: payload.mediaControlCount,
-            hasZeroImagePlaceholder: payload.hasZeroImagePlaceholder
+            hasZeroImagePlaceholder: payload.hasZeroImagePlaceholder,
+            mountedDomMediaControlCount: nextMountedDomMediaCount,
+            mountedDomHasZeroImagePlaceholder: nextMountedDomHasZeroPlaceholder,
+            measurementKind: nextMeasurementKind,
+            cssVisibilityMeasured: nextCssVisibilityMeasured,
+            viewportVisibilityMeasured: nextViewportVisibilityMeasured
           }
         }
       };
@@ -2292,7 +2747,7 @@ export function OperationsMatrixTab({ products }) {
       let detailSummary = " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
       if (categoryBlockedDestinations.length > 0 || blockedDestList.length > 0) {
         const blockedDisplay = blockedDestList.length > 0 ? blockedDestList : categoryBlockedDestinations;
-        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} â€” candidate evidence and matched entries preserved).`;
+        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} — candidate evidence and matched entries preserved).`;
       }
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
@@ -2604,23 +3059,26 @@ export function OperationsMatrixTab({ products }) {
       getFieldMetadata
     });
 
-  // Automatic debounced live-bench-state synchronization (publishes both loaded and selected-unloaded states; surfaces non-aborted errors)
-  const activeProductDataForLiveSync = selectedBenchId ? manifestData[selectedBenchId] : null;
-  const activeProductApprovalsForLiveSync = selectedBenchId ? approvals[selectedBenchId] : null;
-  const activeProductManualEditsForLiveSync = selectedBenchId ? manualEdits[selectedBenchId] : null;
-  const activeProductHistoryForLiveSync = selectedBenchId ? repairHistory[selectedBenchId] : null;
-  const activeProductSubmittedForLiveSync = selectedBenchId ? submittedPayloads[selectedBenchId] : null;
-  const activeProductCandidatesForLiveSync = selectedBenchId ? standardizedCandidatesByProduct[selectedBenchId] : null;
-  const activeProductRefMatchForLiveSync = selectedBenchId ? referenceMatchResultsByProduct[selectedBenchId] : null;
-  const activeProductRefStatusForLiveSync = selectedBenchId ? referenceMatchStatusByProduct[selectedBenchId] : null;
-  const activeProductQueueStateStatus = selectedBenchId ? (productStates[selectedBenchId]?.status || null) : null;
+  // Automatic debounced live-bench-state synchronization (publishes unselected blank preview, selected-unloaded, and selected-loaded states)
+  const isSelectedBenchProductValid = Boolean(selectedBenchId && isExactProductGid(selectedBenchId));
+  const isUnselectedBlankPreviewActive = Boolean(!isSelectedBenchProductValid && DEV_SHOW_ALL_TEMPLATE_FIELDS);
+  const activeProductDataForLiveSync = isSelectedBenchProductValid ? manifestData[selectedBenchId] : null;
+  const activeProductApprovalsForLiveSync = isSelectedBenchProductValid ? approvals[selectedBenchId] : null;
+  const activeProductManualEditsForLiveSync = isSelectedBenchProductValid ? manualEdits[selectedBenchId] : null;
+  const activeProductHistoryForLiveSync = isSelectedBenchProductValid ? repairHistory[selectedBenchId] : null;
+  const activeProductSubmittedForLiveSync = isSelectedBenchProductValid ? submittedPayloads[selectedBenchId] : null;
+  const activeProductCandidatesForLiveSync = isSelectedBenchProductValid ? standardizedCandidatesByProduct[selectedBenchId] : null;
+  const activeProductRefMatchForLiveSync = isSelectedBenchProductValid ? referenceMatchResultsByProduct[selectedBenchId] : null;
+  const activeProductRefStatusForLiveSync = isSelectedBenchProductValid ? referenceMatchStatusByProduct[selectedBenchId] : null;
+  const activeProductQueueStateStatus = isSelectedBenchProductValid ? (productStates[selectedBenchId]?.status || null) : null;
+  const targetMeasurementProductId = isSelectedBenchProductValid ? selectedBenchId : null;
   const activeMeasurementsForLiveSync =
-    sectionAuditMeasurements.productId === selectedBenchId
+    sectionAuditMeasurements.productId === targetMeasurementProductId
       ? sectionAuditMeasurements
       : null;
 
   useEffect(() => {
-    if (!selectedBenchId || !isExactProductGid(selectedBenchId)) {
+    if (!isSelectedBenchProductValid && !isUnselectedBlankPreviewActive) {
       if (!lastNotifiedSelectionClearRef.current) {
         sendLiveBenchSelectionClear();
       }
@@ -2631,14 +3089,25 @@ export function OperationsMatrixTab({ products }) {
       return;
     }
 
-    const isManifestLoadedForSelected = Boolean(activeProductDataForLiveSync);
-    const measuredUiAudit = isManifestLoadedForSelected
-      ? buildMeasuredUiAuditSnapshot(selectedBenchId, activeMeasurementsForLiveSync)
-      : null;
+    const effectiveSelectionState = isSelectedBenchProductValid
+      ? "selected"
+      : "unselected_preview";
+    const effectiveProductId = isSelectedBenchProductValid ? selectedBenchId : null;
+    const isManifestLoadedForSelected = Boolean(
+      isSelectedBenchProductValid && activeProductDataForLiveSync
+    );
+
+    const measuredUiAudit =
+      isManifestLoadedForSelected || isUnselectedBlankPreviewActive
+        ? buildMeasuredUiAuditSnapshot(effectiveProductId, activeMeasurementsForLiveSync, {
+            allowUnselectedPreview: isUnselectedBlankPreviewActive
+          })
+        : null;
 
     const contentChangeDigest = computeQuickTextDigest(
       JSON.stringify({
-        productId: selectedBenchId,
+        selectionState: effectiveSelectionState,
+        productId: effectiveProductId,
         manifestLoaded: isManifestLoadedForSelected,
         queueStatus: activeProductQueueStateStatus,
         currentMetafields: activeProductDataForLiveSync?.currentMetafields || null,
@@ -2688,8 +3157,8 @@ export function OperationsMatrixTab({ products }) {
       lifecycle: "pending",
       benchSessionId: currentSessionId,
       benchRevision: stateRevision,
-      selectionState: "selected",
-      productId: selectedBenchId,
+      selectionState: effectiveSelectionState,
+      productId: effectiveProductId,
       reportId: null,
       clientStateChangedAt,
       baselineLoadedAt: candidateBaselineLoadedAt,
@@ -2703,33 +3172,50 @@ export function OperationsMatrixTab({ products }) {
       liveSyncDebounceTimerRef.current = null;
     }
 
-    const targetProductId = selectedBenchId;
+    const targetProductId = effectiveProductId;
+    const targetSelectionState = effectiveSelectionState;
     const targetRevision = stateRevision;
     const targetChangedAt = clientStateChangedAt;
     const targetDigest = contentChangeDigest;
 
     liveSyncDebounceTimerRef.current = setTimeout(() => {
       liveSyncDebounceTimerRef.current = null;
+      const currentActiveBenchId = activeBenchIdRef.current || null;
       if (
-        activeBenchIdRef.current !== targetProductId ||
+        !isComponentMountedRef.current ||
+        currentActiveBenchId !== targetProductId ||
         benchSessionIdRef.current !== currentSessionId ||
         benchRevisionRef.current !== targetRevision
       ) {
         return;
       }
 
-      const productRecord = safeProducts.find((p) => p.id === targetProductId) || {};
-      const productTitle =
-        productRecord.title ||
-        activeProductDataForLiveSync?.nativeTargets?.productTitle ||
-        "Not recorded";
-
       let packet;
       let liveState;
       let latestUiAudit = null;
       let effectiveBaselineLoadedAt = null;
 
-      if (activeProductDataForLiveSync) {
+      if (targetSelectionState === "unselected_preview") {
+        const builtPreview = buildUnselectedPreviewLiveBenchPayload({
+          benchSessionId: currentSessionId,
+          benchRevision: targetRevision,
+          clientStateChangedAt: targetChangedAt,
+          getPreviewFieldMetadata
+        });
+        packet = builtPreview.packet;
+        liveState = builtPreview.liveState;
+        latestUiAudit = buildMeasuredUiAuditSnapshot(
+          null,
+          sectionAuditMeasurementsRef.current,
+          { allowUnselectedPreview: true }
+        );
+        effectiveBaselineLoadedAt = null;
+      } else if (activeProductDataForLiveSync) {
+        const productRecord = safeProducts.find((p) => p.id === targetProductId) || {};
+        const productTitle =
+          productRecord.title ||
+          activeProductDataForLiveSync?.nativeTargets?.productTitle ||
+          "Not recorded";
         const baselineInfo = baselineMetaByProductRef.current[targetProductId] || null;
         const baselineLoadedAt = baselineInfo?.loadedAt || null;
         const baselineEventKind = baselineInfo?.eventKind || "last_loaded_manifest";
@@ -2763,6 +3249,8 @@ export function OperationsMatrixTab({ products }) {
           sectionAuditMeasurementsRef.current
         );
       } else {
+        const productRecord = safeProducts.find((p) => p.id === targetProductId) || {};
+        const productTitle = productRecord.title || "Not recorded";
         const builtUnloaded = buildSelectedUnloadedLiveBenchPayload({
           benchSessionId: currentSessionId,
           benchRevision: targetRevision,
@@ -2825,8 +3313,10 @@ export function OperationsMatrixTab({ products }) {
             }
           }
 
+          const latestActiveBenchId = activeBenchIdRef.current || null;
           if (
-            activeBenchIdRef.current !== targetProductId ||
+            !isComponentMountedRef.current ||
+            latestActiveBenchId !== targetProductId ||
             benchSessionIdRef.current !== currentSessionId ||
             benchRevisionRef.current !== targetRevision
           ) {
@@ -2850,10 +3340,10 @@ export function OperationsMatrixTab({ products }) {
             returnedReport &&
             typeof returnedReport.reportId === "string" &&
             returnedReport.reportId.trim().length > 0 &&
-            returnedReport.productId === targetProductId &&
+            (returnedReport.productId ?? null) === targetProductId &&
             returnedReport.benchSessionId === currentSessionId &&
             returnedReport.benchRevision === targetRevision &&
-            returnedReport.selectionState === "selected"
+            returnedReport.selectionState === targetSelectionState
           ) {
             lastLiveSyncedDigestRef.current = targetDigest;
             setLiveBenchSyncStatus({
@@ -2861,7 +3351,7 @@ export function OperationsMatrixTab({ products }) {
               benchSessionId: returnedReport.benchSessionId,
               benchRevision: returnedReport.benchRevision,
               selectionState: returnedReport.selectionState,
-              productId: returnedReport.productId,
+              productId: returnedReport.productId ?? null,
               reportId: returnedReport.reportId.trim(),
               clientStateChangedAt:
                 typeof returnedReport.clientStateChangedAt === "string"
@@ -2898,7 +3388,7 @@ export function OperationsMatrixTab({ products }) {
               lifecycle: "error",
               benchSessionId: currentSessionId,
               benchRevision: targetRevision,
-              selectionState: "selected",
+              selectionState: targetSelectionState,
               productId: targetProductId,
               reportId: null,
               clientStateChangedAt: targetChangedAt,
@@ -2926,7 +3416,7 @@ export function OperationsMatrixTab({ products }) {
             lifecycle: "error",
             benchSessionId: currentSessionId,
             benchRevision: targetRevision,
-            selectionState: "selected",
+            selectionState: targetSelectionState,
             productId: targetProductId,
             reportId: null,
             clientStateChangedAt: targetChangedAt,
@@ -2946,8 +3436,10 @@ export function OperationsMatrixTab({ products }) {
           if (!timedOut && controller.signal.aborted) {
             return;
           }
+          const latestActiveBenchId = activeBenchIdRef.current || null;
           if (
-            activeBenchIdRef.current !== targetProductId ||
+            !isComponentMountedRef.current ||
+            latestActiveBenchId !== targetProductId ||
             benchSessionIdRef.current !== currentSessionId ||
             benchRevisionRef.current !== targetRevision
           ) {
@@ -2961,7 +3453,7 @@ export function OperationsMatrixTab({ products }) {
             lifecycle: "error",
             benchSessionId: currentSessionId,
             benchRevision: targetRevision,
-            selectionState: "selected",
+            selectionState: targetSelectionState,
             productId: targetProductId,
             reportId: null,
             clientStateChangedAt: targetChangedAt,
@@ -2993,6 +3485,8 @@ export function OperationsMatrixTab({ products }) {
       }
     };
   }, [
+    isSelectedBenchProductValid,
+    isUnselectedBlankPreviewActive,
     selectedBenchId,
     isLoadingData,
     activeProductQueueStateStatus,
@@ -3006,7 +3500,8 @@ export function OperationsMatrixTab({ products }) {
     activeProductRefStatusForLiveSync,
     activeMeasurementsForLiveSync,
     nextBenchRevision,
-    sendLiveBenchSelectionClear
+    sendLiveBenchSelectionClear,
+    getPreviewFieldMetadata
   ]);
 
   const publishCapturedPacketToSidekickCache = useCallback((capturedPacket, expectedProductId) => {
@@ -3078,7 +3573,7 @@ export function OperationsMatrixTab({ products }) {
       }
     }, TELEMETRY_PUBLISH_TIMEOUT_MS);
 
-    if (activeBenchIdRef.current === expectedProductId) {
+    if (isComponentMountedRef.current && activeBenchIdRef.current === expectedProductId) {
       setTelemetryPublishNotice({
         source: "manual_capture",
         productId: expectedProductId,
@@ -3129,7 +3624,7 @@ export function OperationsMatrixTab({ products }) {
 
         if (isVerifiedStored) {
           dedupMap.set(captureSignature, "stored");
-          if (activeBenchIdRef.current === expectedProductId) {
+          if (isComponentMountedRef.current && activeBenchIdRef.current === expectedProductId) {
             const confirmedReportId = returnedReport.reportId.trim();
             const auditStateLabel =
               returnedReport.uiAuditState === "measured"
@@ -3148,7 +3643,7 @@ export function OperationsMatrixTab({ products }) {
         }
 
         dedupMap.delete(captureSignature);
-        if (activeBenchIdRef.current === expectedProductId) {
+        if (isComponentMountedRef.current && activeBenchIdRef.current === expectedProductId) {
           const backendCode =
             parsed && typeof parsed.code === "string" && parsed.code.trim()
               ? parsed.code.trim()
@@ -3170,7 +3665,7 @@ export function OperationsMatrixTab({ products }) {
         if (!timedOut && controller.signal.aborted) {
           return;
         }
-        if (activeBenchIdRef.current === expectedProductId) {
+        if (isComponentMountedRef.current && activeBenchIdRef.current === expectedProductId) {
           const errSummary = timedOut
             ? `Request timed out after ${TELEMETRY_PUBLISH_TIMEOUT_MS}ms.`
             : "Network or authentication error while contacting /api/meta-injector-telemetry.";
@@ -3210,7 +3705,7 @@ export function OperationsMatrixTab({ products }) {
     const isFreshManualCapture = !hasExplicitPartRequest && !safeOptions.existingPacket;
 
     const commitCapturedPacket = (candidatePacket) => {
-      if (!candidatePacket) return;
+      if (!candidatePacket || !isComponentMountedRef.current) return;
       // Guard against a late callback from a previous product overwriting the current bench product's packet
       if (activeBenchIdRef.current !== captureBenchId) return;
       if (!isValidTelemetryPacketForProduct(candidatePacket, captureBenchId)) return;
@@ -3251,7 +3746,9 @@ export function OperationsMatrixTab({ products }) {
             }
           })
           .catch((err) => {
-            setSafetyError(`Failed to capture telemetry report: ${err?.message || "Unknown telemetry error"}`);
+            if (isComponentMountedRef.current) {
+              setSafetyError(`Failed to capture telemetry report: ${err?.message || "Unknown telemetry error"}`);
+            }
           });
         return maybeResult;
       }
@@ -3363,7 +3860,9 @@ export function OperationsMatrixTab({ products }) {
   const activeApprovedWriteCount = typeof activeBenchStats?.approvedWrite === "number" ? activeBenchStats.approvedWrite : 0;
 
   let unsavedWorkingChangesWord = "Not available";
-  let unsavedWorkingChangesDetail = "No baseline loaded";
+  let unsavedWorkingChangesDetail = isUnselectedBlankPreviewActive
+    ? "Read-only blank template preview (no product selected)"
+    : "No baseline loaded";
   if (isBaselineLoadedBool && activeBenchStats) {
     const hasUnsavedWorking =
       activeProposedCount > 0 ||
@@ -3374,7 +3873,11 @@ export function OperationsMatrixTab({ products }) {
   }
 
   let verifiedSavedWord = "No";
-  let verifiedSavedDetail = isBenchSelectedBool ? "No repair executed in session" : "No product selected";
+  let verifiedSavedDetail = isBenchSelectedBool
+    ? "No repair executed in session"
+    : isUnselectedBlankPreviewActive
+      ? "Read-only blank template preview (writes disabled)"
+      : "No product selected";
   if (isBenchSelectedBool && activeBenchHistory) {
     const verifiedDestCount = validArray(activeBenchHistory.verifiedDestinations).length;
     const attemptedDestCount = validArray(activeBenchHistory.attemptedDestinations).length;
@@ -3413,8 +3916,20 @@ export function OperationsMatrixTab({ products }) {
     lastLiveSyncedDigestRef.current === lastLiveStateDigestRef.current
   );
 
+  const isUnselectedPreviewAckSynced = Boolean(
+    isUnselectedBlankPreviewActive &&
+    liveBenchSyncStatus.lifecycle === "acknowledged" &&
+    liveBenchSyncStatus.selectionState === "unselected_preview" &&
+    liveBenchSyncStatus.productId === null &&
+    liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
+    liveBenchSyncStatus.benchRevision === lastLiveStateRevisionRef.current &&
+    lastLiveStateDigestRef.current !== "" &&
+    lastLiveSyncedDigestRef.current === lastLiveStateDigestRef.current
+  );
+
   const isClearedAckSynced = Boolean(
     !isBenchSelectedBool &&
+    !isUnselectedBlankPreviewActive &&
     liveBenchSyncStatus.lifecycle === "cleared" &&
     liveBenchSyncStatus.selectionState === "none" &&
     liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
@@ -3428,7 +3943,11 @@ export function OperationsMatrixTab({ products }) {
   if (isCurrentProductAckSynced) {
     sidekickLiveSyncWord = "Yes";
     sidekickLiveSyncTone = "success";
-    sidekickLiveSyncLifecycleLabel = "acknowledged";
+    sidekickLiveSyncLifecycleLabel = "acknowledged (selected product)";
+  } else if (isUnselectedPreviewAckSynced) {
+    sidekickLiveSyncWord = "Yes";
+    sidekickLiveSyncTone = "success";
+    sidekickLiveSyncLifecycleLabel = "acknowledged (unselected blank preview)";
   } else if (isClearedAckSynced) {
     sidekickLiveSyncWord = "No";
     sidekickLiveSyncTone = "info";
@@ -3458,33 +3977,6 @@ export function OperationsMatrixTab({ products }) {
     ? getFieldMetadata("custom.generated_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
     : null;
 
-  // Guarded no-op callbacks for unselected DEV preview mode so preview controls can never mutate state or trigger requests
-  const noopPreviewCallback = useCallback(() => {}, []);
-
-  const getPreviewFieldMetadata = useCallback((key, data, productId, currentApprovals, configFields = []) => {
-    const baseMeta = evaluateFieldMetadata({
-      key,
-      data: data || EMPTY_DEV_PREVIEW_MANIFEST,
-      productId: null,
-      currentApprovals: {},
-      configFields,
-      standardizedCandidatesByProduct: {},
-      getStandardizedEvaluationForField: null
-    });
-    return {
-      ...baseMeta,
-      isPendingReadOnly: true,
-      hasContractOrOwnerHold: true,
-      isBlockedAction: true,
-      isApproved: false,
-      isContentPreApproved: false,
-      reasons: [
-        "DEV Preview Mode (No product loaded/selected on bench â€” read-only template audit view)",
-        ...(Array.isArray(baseMeta.reasons) ? baseMeta.reasons : [])
-      ]
-    };
-  }, []);
-
   // Build audit count summary strictly from reported section measurements for the current product (or null in preview)
   const currentAuditOwnerId = isDevUnselectedPreview ? null : (selectedBenchId || null);
   const activeSectionMeasurementsMap =
@@ -3494,8 +3986,13 @@ export function OperationsMatrixTab({ products }) {
 
   const renderedKeysByGroupForAudit = {};
   Object.entries(activeSectionMeasurementsMap).forEach(([secTitle, rec]) => {
-    if (rec && Array.isArray(rec.renderedKeys)) {
-      renderedKeysByGroupForAudit[secTitle] = rec.renderedKeys;
+    const descKeys = Array.isArray(rec?.descriptorKeys)
+      ? rec.descriptorKeys
+      : Array.isArray(rec?.renderedKeys)
+        ? rec.renderedKeys
+        : null;
+    if (descKeys) {
+      renderedKeysByGroupForAudit[secTitle] = descKeys;
     }
   });
 
@@ -3510,7 +4007,7 @@ export function OperationsMatrixTab({ products }) {
     <BlockStack gap="600">
       <BlockStack gap="200">
         <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub â€” Accessible Diagnostic View</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — Accessible Diagnostic View</Text>
       </BlockStack>
 
       <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: "24px", alignItems: "start", boxSizing: "border-box", maxWidth: "100%" }}>
@@ -3550,7 +4047,7 @@ export function OperationsMatrixTab({ products }) {
                 <Text as="p" variant="bodyLg" fontWeight="medium">{safetyError}</Text>
               </Banner>
             )}
-            {telemetryPublishNotice && telemetryPublishNotice.productId === selectedBenchId && (
+            {telemetryPublishNotice && (telemetryPublishNotice.productId ?? null) === (selectedBenchId ?? null) && (
               <Banner
                 tone={telemetryPublishNotice.tone || "info"}
                 onDismiss={() => setTelemetryPublishNotice(null)}
@@ -3644,7 +4141,12 @@ export function OperationsMatrixTab({ products }) {
 
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px 16px", fontSize: "13px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
                       <div>
-                        <strong>Bench Selected:</strong> {isBenchSelectedBool ? "Yes" : "No"} ({isBenchSelectedBool ? selectedBenchId : "None"})
+                        <strong>Bench Selected:</strong>{" "}
+                        {isBenchSelectedBool
+                          ? `Yes (${selectedBenchId})`
+                          : isUnselectedBlankPreviewActive
+                            ? "No (Unselected Blank Template Preview)"
+                            : "No (None)"}
                       </div>
                       <div>
                         <strong>Baseline Loaded:</strong> {isBaselineLoadedBool ? "Yes" : "No"} ({activeBaselineMeta?.loadedAt || "Not available"})
@@ -3658,7 +4160,7 @@ export function OperationsMatrixTab({ products }) {
                     </div>
 
                     <Text as="p" variant="bodySm" tone="subdued">
-                      <strong>Session:</strong> {liveBenchSyncStatus.benchSessionId || benchSessionIdRef.current || "Not available"} | <strong>Revision:</strong> {liveBenchSyncStatus.benchRevision !== null ? liveBenchSyncStatus.benchRevision : "Not available"} | <strong>Selection State:</strong> {liveBenchSyncStatus.selectionState || "Not available"} | <strong>Synced Product:</strong> {liveBenchSyncStatus.productId || "Not available"} | <strong>Report ID:</strong> {liveBenchSyncStatus.reportId || "Not available"}
+                      <strong>Session:</strong> {liveBenchSyncStatus.benchSessionId || benchSessionIdRef.current || "Not available"} | <strong>Revision:</strong> {liveBenchSyncStatus.benchRevision !== null ? liveBenchSyncStatus.benchRevision : "Not available"} | <strong>Selection State:</strong> {liveBenchSyncStatus.selectionState || "Not available"} | <strong>Synced Product:</strong> {liveBenchSyncStatus.productId || (liveBenchSyncStatus.selectionState === "unselected_preview" ? "None (Unselected Preview)" : "Not available")} | <strong>Report ID:</strong> {liveBenchSyncStatus.reportId || "Not available"}
                     </Text>
                     <Text as="p" variant="bodySm" tone="subdued">
                       <strong>Client State Changed:</strong> {liveBenchSyncStatus.clientStateChangedAt || "Not available"} | <strong>Baseline Loaded At:</strong> {liveBenchSyncStatus.baselineLoadedAt || activeBaselineMeta?.loadedAt || "Not available"} | <strong>Server Received At:</strong> {liveBenchSyncStatus.serverReceivedAt || "Not available"}
@@ -3687,7 +4189,7 @@ export function OperationsMatrixTab({ products }) {
                   </InlineStack>
 
                   <Text as="p" variant="bodySm" tone="subdued">
-                    <strong>Scope:</strong> Counts below measure only canonical template rows rendered inside the 10 <code>ManifestSectionCard</code> groups (excluding hidden <code>custom.origin_story</code> diagnostic context, compatibility adapters, and separate top-level cards/buttons). In DEV mode, all groups default open and status/applicability filters are bypassed so zero canonical capabilities can disappear.
+                    <strong>Scope:</strong> Counts below distinguish logical capabilities, filtered row descriptors, bay expansion state, and scoped post-commit mounted DOM row elements inside the 10 <code>ManifestSectionCard</code> groups (excluding hidden <code>custom.origin_story</code> diagnostic context and compatibility adapters). CSS/viewport visibility is not claimed.
                   </Text>
 
                   <div style={{ overflowX: "auto" }}>
@@ -3697,25 +4199,40 @@ export function OperationsMatrixTab({ products }) {
                           <th style={{ padding: "8px 10px" }}>Template Group</th>
                           <th style={{ padding: "8px 10px" }}>Logical Capabilities</th>
                           <th style={{ padding: "8px 10px" }}>Running Logical Subtotal</th>
-                          <th style={{ padding: "8px 10px" }}>Measured Rendered Template Rows</th>
-                          <th style={{ padding: "8px 10px" }}>Running Rendered Subtotal</th>
+                          <th style={{ padding: "8px 10px" }}>Descriptor Rows</th>
+                          <th style={{ padding: "8px 10px" }}>Bay State</th>
+                          <th style={{ padding: "8px 10px" }}>Mounted DOM Rows</th>
+                          <th style={{ padding: "8px 10px" }}>Running Mounted DOM Subtotal</th>
                           <th style={{ padding: "8px 10px" }}>Notes / Media Expansion</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(() => {
                           let runningLogical = 0;
-                          let runningRendered = 0;
-                          let allMeasuredSoFar = true;
+                          let runningMountedDom = 0;
+                          let allDomMeasuredSoFar = true;
 
                           return templateAuditSummary.groupSubtotals.map((grp) => {
                             runningLogical += grp.logicalCount;
+                            const rawSecRec = activeSectionMeasurementsMap[grp.heading] || null;
                             const isGrpMeasured = grp.measurementStatus === "measured" && typeof grp.renderedCount === "number";
-                            if (isGrpMeasured) {
-                              runningRendered += grp.renderedCount;
+                            const hasDomCount =
+                              rawSecRec &&
+                              typeof rawSecRec.mountedDomRowCount === "number" &&
+                              Number.isFinite(rawSecRec.mountedDomRowCount);
+
+                            if (isGrpMeasured && hasDomCount) {
+                              runningMountedDom += rawSecRec.mountedDomRowCount;
                             } else {
-                              allMeasuredSoFar = false;
+                              allDomMeasuredSoFar = false;
                             }
+
+                            const bayStateLabel =
+                              !isGrpMeasured || typeof rawSecRec?.isExpanded !== "boolean"
+                                ? "Not measured"
+                                : rawSecRec.isExpanded
+                                  ? "Expanded"
+                                  : "Collapsed";
 
                             let rowNote = "1:1 canonical rows";
                             if (!isGrpMeasured) {
@@ -3738,8 +4255,14 @@ export function OperationsMatrixTab({ products }) {
                                 <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
                                   {isGrpMeasured ? grp.renderedCount : "Not measured"}
                                 </td>
+                                <td style={{ padding: "6px 10px", color: "#475569" }}>
+                                  {bayStateLabel}
+                                </td>
+                                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
+                                  {isGrpMeasured && hasDomCount ? rawSecRec.mountedDomRowCount : "Not measured"}
+                                </td>
                                 <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>
-                                  {allMeasuredSoFar ? runningRendered : "Not measured (incomplete)"}
+                                  {allDomMeasuredSoFar ? runningMountedDom : "Not measured (incomplete)"}
                                 </td>
                                 <td style={{ padding: "6px 10px", color: "#475569" }}>{rowNote}</td>
                               </tr>
@@ -3748,26 +4271,54 @@ export function OperationsMatrixTab({ products }) {
                         })()}
                       </tbody>
                       <tfoot>
-                        <tr style={{ backgroundColor: "#e2e8f0", fontWeight: "700", borderTop: "2px solid #94a3b8" }}>
-                          <td style={{ padding: "8px 10px" }}>GRAND TOTAL ({templateAuditSummary.totalGroupCount} Groups)</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                            {templateAuditSummary.totalRenderedRows !== null
-                              ? templateAuditSummary.totalRenderedRows
-                              : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
-                          </td>
-                          <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                            {templateAuditSummary.totalRenderedRows !== null
-                              ? templateAuditSummary.totalRenderedRows
-                              : "Not measured"}
-                          </td>
-                          <td style={{ padding: "8px 10px" }}>
-                            {templateAuditSummary.mediaControlCount !== null
-                              ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}`
-                              : "Media breakdown: Not measured"}
-                          </td>
-                        </tr>
+                        {(() => {
+                          let totalMountedDom = 0;
+                          let allGroupsHaveDomCount =
+                            templateAuditSummary.measurementStatus === "complete" &&
+                            templateAuditSummary.totalGroupCount > 0;
+                          if (allGroupsHaveDomCount) {
+                            for (let i = 0; i < templateAuditSummary.groupSubtotals.length; i += 1) {
+                              const gHeading = templateAuditSummary.groupSubtotals[i].heading;
+                              const secRec = activeSectionMeasurementsMap[gHeading];
+                              if (
+                                secRec &&
+                                typeof secRec.mountedDomRowCount === "number" &&
+                                Number.isFinite(secRec.mountedDomRowCount)
+                              ) {
+                                totalMountedDom += secRec.mountedDomRowCount;
+                              } else {
+                                allGroupsHaveDomCount = false;
+                                break;
+                              }
+                            }
+                          }
+                          return (
+                            <tr style={{ backgroundColor: "#e2e8f0", fontWeight: "700", borderTop: "2px solid #94a3b8" }}>
+                              <td style={{ padding: "8px 10px" }}>GRAND TOTAL ({templateAuditSummary.totalGroupCount} Groups)</td>
+                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
+                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                                {templateAuditSummary.totalRenderedRows !== null
+                                  ? templateAuditSummary.totalRenderedRows
+                                  : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
+                              </td>
+                              <td style={{ padding: "8px 10px" }}>
+                                {templateAuditSummary.measurementStatus === "complete" ? "Measured" : "Incomplete"}
+                              </td>
+                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                                {allGroupsHaveDomCount ? totalMountedDom : "Not measured"}
+                              </td>
+                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
+                                {allGroupsHaveDomCount ? totalMountedDom : "Not measured"}
+                              </td>
+                              <td style={{ padding: "8px 10px" }}>
+                                {templateAuditSummary.mediaControlCount !== null
+                                  ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}`
+                                  : "Media breakdown: Not measured"}
+                              </td>
+                            </tr>
+                          );
+                        })()}
                       </tfoot>
                     </table>
                   </div>
@@ -3874,7 +4425,7 @@ export function OperationsMatrixTab({ products }) {
                     </InlineStack>
                     {DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter !== "All" && (
                       <Text as="p" variant="bodySm" tone="caution">
-                        DEV: Show All Template Fields override is active â€” filter selection (<code>{activeFilter}</code>) is bypassed so no canonical template rows or sections are hidden during audit.
+                        DEV: Show All Template Fields override is active — filter selection (<code>{activeFilter}</code>) is bypassed so no canonical template rows or sections are hidden during audit.
                       </Text>
                     )}
                   </BlockStack>

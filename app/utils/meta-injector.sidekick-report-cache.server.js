@@ -1096,7 +1096,9 @@ function formatRecordMetadata(record) {
     base.baselineSource = record.baselineSource;
     base.workingState = record.workingState;
     base.freshnessNote =
-      "Snapshot reflects browser working state at clientStateChangedAt over last-loaded baseline (baselineLoadedAt). Server receipt time (serverReceivedAt) does not prove a fresh Shopify GraphQL read or currently active screen.";
+      record.selectionState === "unselected_preview"
+        ? "Snapshot reflects read-only unselected blank template preview at clientStateChangedAt (no product selected or loaded; productId is null). Server receipt time (serverReceivedAt) does not prove a Shopify GraphQL read or saved baseline."
+        : "Snapshot reflects browser working state at clientStateChangedAt over last-loaded baseline (baselineLoadedAt). Server receipt time (serverReceivedAt) does not prove a fresh Shopify GraphQL read or currently active screen.";
   }
 
   return base;
@@ -1184,11 +1186,16 @@ function validateAndExtractLiveBenchMetadata(packet, rawLiveState) {
   const benchRevision = rawRevision;
 
   const rawSelectionState = pickField("selectionState") ?? "selected";
-  if (rawSelectionState !== "selected" && rawSelectionState !== "none") {
+  if (
+    rawSelectionState !== "selected" &&
+    rawSelectionState !== "none" &&
+    rawSelectionState !== "unselected_preview"
+  ) {
     return {
       ok: false,
       code: "invalid_selection_state",
-      message: 'selectionState must be either "selected" or "none".',
+      message:
+        'selectionState must be "selected", "unselected_preview", or "none".',
     };
   }
   const selectionState = rawSelectionState;
@@ -1232,6 +1239,13 @@ function validateAndExtractLiveBenchMetadata(packet, rawLiveState) {
   const rawBaselineLoadedAt = pickField("baselineLoadedAt");
   let baselineLoadedAt = null;
   if (rawBaselineLoadedAt !== null && rawBaselineLoadedAt !== undefined && rawBaselineLoadedAt !== "") {
+    if (selectionState === "unselected_preview") {
+      return {
+        ok: false,
+        code: "inconsistent_preview_baseline_loaded_at",
+        message: 'When selectionState is "unselected_preview", baselineLoadedAt must be null.',
+      };
+    }
     const parsedBaseline = parseStrictIsoTimestamp(rawBaselineLoadedAt);
     if (!parsedBaseline) {
       return {
@@ -1316,7 +1330,7 @@ function storeLiveBenchStateInternal({
   const compositeKey = buildLiveSessionCompositeKey(shop, benchSessionId);
   const existingSession = state.liveSessionsByKey.get(compositeKey);
 
-  // Monotonic high-water revision guard across product switches and deselections
+  // Monotonic high-water revision guard across product switches, previews, and deselections
   if (existingSession && benchRevision <= existingSession.highestRevision) {
     if (
       benchRevision === existingSession.highestRevision &&
@@ -1335,11 +1349,16 @@ function storeLiveBenchStateInternal({
         ? state.recordsById.get(existingSession.activeReportId)
         : null;
       const incomingProdId =
-        typeof packet?.productId === "string" ? packet.productId.trim() : null;
+        selectionState === "unselected_preview"
+          ? null
+          : typeof packet?.productId === "string"
+            ? packet.productId.trim()
+            : null;
       if (
         existingRec &&
         !isRecordSuperseded(state, existingRec) &&
-        existingRec.productId === incomingProdId
+        existingRec.productId === incomingProdId &&
+        existingRec.selectionState === selectionState
       ) {
         return finalizeResponse({
           ok: true,
@@ -1452,50 +1471,124 @@ function storeLiveBenchStateInternal({
     });
   }
 
-  // selectionState === "selected"
+  // selectionState === "selected" or selectionState === "unselected_preview"
+  const isUnselectedPreview = selectionState === "unselected_preview";
+
   if (!isPlainObject(packet)) {
     return finalizeResponse({
       ok: false,
       status: "invalid_request",
       code: "invalid_packet",
-      message: 'A valid packet object is required when selectionState is "selected".',
+      message: `A valid packet object is required when selectionState is "${selectionState}".`,
     });
   }
 
-  const productId = typeof packet.productId === "string" ? packet.productId.trim() : "";
-  if (!PRODUCT_GID_REGEX.test(productId)) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "invalid_product_id",
-      message: "packet.productId must match gid://shopify/Product/<digits>.",
-    });
-  }
+  let productId = null;
+  if (isUnselectedPreview) {
+    if (packet.productId !== null && packet.productId !== undefined) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_preview_product_id",
+        message: 'When selectionState is "unselected_preview", packet.productId must be null.',
+      });
+    }
+    if (
+      isPlainObject(liveState) &&
+      liveState.productId !== null &&
+      liveState.productId !== undefined
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_preview_product_id",
+        message: 'When selectionState is "unselected_preview", liveState.productId must be null.',
+      });
+    }
+    if (
+      parsedFullTextObj &&
+      parsedFullTextObj.productId !== null &&
+      parsedFullTextObj.productId !== undefined
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_preview_product_id",
+        message:
+          'When selectionState is "unselected_preview", productId inside serialized fullText JSON must be null.',
+      });
+    }
+    if (
+      isPlainObject(uiAudit) &&
+      uiAudit.productId !== null &&
+      uiAudit.productId !== undefined
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_ui_audit_product_id",
+        message: 'When selectionState is "unselected_preview", uiAudit.productId must be null.',
+      });
+    }
+    if (parsedFullTextObj && parsedFullTextObj.manifestLoaded === true) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_preview_manifest_loaded",
+        message:
+          'When selectionState is "unselected_preview", manifestLoaded inside serialized fullText JSON must be false.',
+      });
+    }
+  } else {
+    const rawProductId = typeof packet.productId === "string" ? packet.productId.trim() : "";
+    if (!PRODUCT_GID_REGEX.test(rawProductId)) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "invalid_product_id",
+        message: "packet.productId must match gid://shopify/Product/<digits>.",
+      });
+    }
+    productId = rawProductId;
 
-  if (
-    parsedFullTextObj &&
-    parsedFullTextObj.productId !== undefined &&
-    String(parsedFullTextObj.productId).trim() !== productId
-  ) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "inconsistent_product_id",
-      message: "packet.productId does not match productId inside serialized fullText JSON.",
-    });
-  }
+    if (
+      isPlainObject(liveState) &&
+      liveState.productId !== undefined &&
+      (typeof liveState.productId !== "string" || liveState.productId.trim() !== productId)
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_product_id",
+        message: "packet.productId and liveState.productId must match.",
+      });
+    }
 
-  if (
-    isPlainObject(uiAudit) &&
-    uiAudit.productId !== undefined &&
-    String(uiAudit.productId).trim() !== productId
-  ) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "inconsistent_ui_audit_product_id",
-      message: "uiAudit.productId does not match packet.productId.",
-    });
+    if (
+      parsedFullTextObj &&
+      parsedFullTextObj.productId !== undefined &&
+      String(parsedFullTextObj.productId ?? "").trim() !== productId
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_product_id",
+        message: "packet.productId does not match productId inside serialized fullText JSON.",
+      });
+    }
+
+    if (
+      isPlainObject(uiAudit) &&
+      uiAudit.productId !== undefined &&
+      String(uiAudit.productId ?? "").trim() !== productId
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "inconsistent_ui_audit_product_id",
+        message: "uiAudit.productId does not match packet.productId.",
+      });
+    }
   }
 
   if (typeof packet.fullText !== "string" || packet.fullText.trim().length === 0) {
@@ -1541,7 +1634,10 @@ function storeLiveBenchStateInternal({
     120
   );
   const sectionLabelCheck = sanitizeOptionalShortString(
-    packet.sectionLabel ?? "LIVE BENCH FIELD STATE",
+    packet.sectionLabel ??
+      (isUnselectedPreview
+        ? "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)"
+        : "LIVE BENCH FIELD STATE"),
     200
   );
   const productTitleCheck = sanitizeOptionalShortString(packet.productTitle, 300);
@@ -1594,7 +1690,9 @@ function storeLiveBenchStateInternal({
   const sectionLabel =
     typeof sectionLabelCheck === "string" && sectionLabelCheck.trim()
       ? sectionLabelCheck.trim()
-      : "LIVE BENCH FIELD STATE";
+      : isUnselectedPreview
+        ? "LIVE BENCH BLANK TEMPLATE PREVIEW (NO PRODUCT SELECTED)"
+        : "LIVE BENCH FIELD STATE";
   const productTitle =
     typeof productTitleCheck === "string" && productTitleCheck.trim()
       ? productTitleCheck.trim()
@@ -1635,14 +1733,14 @@ function storeLiveBenchStateInternal({
     uiAuditCanonicalJson: auditResult.canonicalJson,
     benchSessionId,
     benchRevision,
-    selectionState: "selected",
+    selectionState,
     baselineLoadedAt,
   });
 
   const metadataOverheadBytes =
     640 +
     utf8ByteLength(shop) +
-    utf8ByteLength(productId) +
+    utf8ByteLength(productId || "") +
     utf8ByteLength(benchSessionId) +
     utf8ByteLength(sectionKey) +
     utf8ByteLength(sectionLabel) +
@@ -1703,12 +1801,14 @@ function storeLiveBenchStateInternal({
   const expiresAtMs = clientTime.ms + TTL_MS;
   const expiresAtIso = new Date(expiresAtMs).toISOString();
 
-  const effectiveBaselineSource =
-    parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
+  const effectiveBaselineSource = isUnselectedPreview
+    ? "unselected_blank_preview"
+    : parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
       ? "manifest_not_loaded"
       : "last_loaded_manifest";
-  const effectiveWorkingState =
-    parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
+  const effectiveWorkingState = isUnselectedPreview
+    ? "read_only_template_preview"
+    : parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
       ? "unavailable_not_loaded"
       : "unsaved_browser_bench";
 
@@ -1743,7 +1843,7 @@ function storeLiveBenchStateInternal({
     isLiveBenchState: true,
     benchSessionId,
     benchRevision,
-    selectionState: "selected",
+    selectionState,
     baselineLoadedAt,
     baselineSource: effectiveBaselineSource,
     workingState: effectiveWorkingState,
@@ -1753,7 +1853,7 @@ function storeLiveBenchStateInternal({
     shop,
     benchSessionId,
     highestRevision: benchRevision,
-    selectionState: "selected",
+    selectionState,
     activeReportId: reportId,
     activeProductId: productId,
     previousProductId:
@@ -2261,6 +2361,7 @@ export function listTelemetryReports(options = {}) {
       if (isRecordSuperseded(state, rec)) {
         continue;
       }
+      // Product-filtered lists must never match or substitute a product-free preview (productId === null)
       if (normalizedProductId && rec.productId !== normalizedProductId) {
         continue;
       }
@@ -2303,6 +2404,9 @@ export function listTelemetryReports(options = {}) {
     const allSessionsDeselected =
       liveSessions.length > 0 &&
       liveSessions.every((s) => s.selectionState === "none");
+    const hasUnselectedPreviewSession =
+      liveSessions.length > 0 &&
+      liveSessions.some((s) => s.selectionState === "unselected_preview");
 
     let unavailableReason = hadPriorShopActivity
       ? "no_matching_active_reports_in_memory"
@@ -2314,6 +2418,14 @@ export function listTelemetryReports(options = {}) {
       unavailableReason = "bench_selection_cleared";
       unavailableMessage =
         "Active browser session has selectionState=\"none\" (no product currently selected on the bench). Do not substitute a previous product.";
+    } else if (
+      normalizedProductId &&
+      hasUnselectedPreviewSession &&
+      !liveSessions.some((s) => s.selectionState === "selected")
+    ) {
+      unavailableReason = "unselected_preview_active_no_product_selected";
+      unavailableMessage =
+        "No matching report for the requested productId. Active browser session is in read-only unselected blank template preview mode (selectionState=\"unselected_preview\", productId=null); never substitute the blank preview for a specific product.";
     } else if (
       normalizedProductId &&
       liveSessions.some(
@@ -2698,21 +2810,34 @@ function evaluateFieldAttentionFlags(key, fieldObj, saveEvidence) {
   };
 }
 
-function buildOrderedDrawersList(snapshot) {
+function isUnselectedPreviewSnapshot(snapshot, record = null) {
+  return Boolean(
+    (snapshot && snapshot.selectionState === "unselected_preview") ||
+      (record && record.selectionState === "unselected_preview")
+  );
+}
+
+function buildOrderedDrawersList(snapshot, record = null) {
   const fieldsByKey = isPlainObject(snapshot?.fieldsByKey) ? snapshot.fieldsByKey : {};
   const sectionOrder = Array.isArray(snapshot?.sectionOrder) ? snapshot.sectionOrder : [];
   const drawers = [];
   const seenDrawerTitles = new Set();
+  const isPreview = isUnselectedPreviewSnapshot(snapshot, record);
 
-  const descKeys = DESCRIPTION_REVIEW_KEYS.filter((k) =>
-    Object.prototype.hasOwnProperty.call(fieldsByKey, k)
-  );
-  if (descKeys.length > 0) {
-    drawers.push({
-      drawer: DESCRIPTION_REVIEW_DRAWER_TITLE,
-      fieldKeys: descKeys,
-    });
-    seenDrawerTitles.add(DESCRIPTION_REVIEW_DRAWER_TITLE);
+  // In unselected blank-template preview mode, preserve the exact 10 canonical template groups
+  // without prepending a separate Description Review bay (native_description is already inside
+  // Native and Staging Roles, and DescriptionReviewSection is not mounted when no product is loaded).
+  if (!isPreview) {
+    const descKeys = DESCRIPTION_REVIEW_KEYS.filter((k) =>
+      Object.prototype.hasOwnProperty.call(fieldsByKey, k)
+    );
+    if (descKeys.length > 0) {
+      drawers.push({
+        drawer: DESCRIPTION_REVIEW_DRAWER_TITLE,
+        fieldKeys: descKeys,
+      });
+      seenDrawerTitles.add(DESCRIPTION_REVIEW_DRAWER_TITLE);
+    }
   }
 
   for (let i = 0; i < sectionOrder.length; i += 1) {
@@ -2749,12 +2874,56 @@ function buildOrderedDrawersList(snapshot) {
   return drawers;
 }
 
+function extractCompactUiAuditSummary(record) {
+  if (!record || record.uiAuditState !== "measured" || !record.uiAuditCanonicalJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(record.uiAuditCanonicalJson);
+    if (!isPlainObject(parsed)) {
+      return null;
+    }
+    return {
+      measurementCoverage: parsed.measurementCoverage ?? null,
+      measuredSectionCount:
+        typeof parsed.measuredSectionCount === "number" ? parsed.measuredSectionCount : null,
+      totalKnownTemplateGroups:
+        typeof parsed.totalKnownTemplateGroups === "number"
+          ? parsed.totalKnownTemplateGroups
+          : null,
+      unmeasuredSectionCount:
+        typeof parsed.unmeasuredSectionCount === "number" ? parsed.unmeasuredSectionCount : null,
+      expandedSectionCount:
+        typeof parsed.expandedSectionCount === "number" ? parsed.expandedSectionCount : null,
+      collapsedSectionCount:
+        typeof parsed.collapsedSectionCount === "number" ? parsed.collapsedSectionCount : null,
+      totalDescriptorRows:
+        typeof parsed.totalRenderedRows === "number" ? parsed.totalRenderedRows : null,
+      totalMountedDomRows:
+        typeof parsed.totalMountedDomRows === "number" ? parsed.totalMountedDomRows : null,
+      mediaControlCount:
+        typeof parsed.mediaControlCount === "number" ? parsed.mediaControlCount : null,
+      hasZeroImagePlaceholder:
+        typeof parsed.hasZeroImagePlaceholder === "boolean"
+          ? parsed.hasZeroImagePlaceholder
+          : null,
+      devShowAllTemplateFieldsActive:
+        typeof parsed.devShowAllTemplateFieldsActive === "boolean"
+          ? parsed.devShowAllTemplateFieldsActive
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildIndexViewData(record, snapshot) {
   const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
   const saveEvidence = isPlainObject(snapshot.saveVerificationEvidence)
     ? snapshot.saveVerificationEvidence
     : {};
-  const orderedDrawers = buildOrderedDrawersList(snapshot);
+  const orderedDrawers = buildOrderedDrawersList(snapshot, record);
+  const compactAuditSummary = extractCompactUiAuditSummary(record);
 
   const drawerSummaries = orderedDrawers.map((d) => {
     let proposed = 0;
@@ -2820,12 +2989,14 @@ function buildIndexViewData(record, snapshot) {
   return {
     schemaVersion: snapshot.schemaVersion,
     stateKind: snapshot.stateKind,
+    selectionState: snapshot.selectionState || record.selectionState || "selected",
     manifestLoaded: Boolean(snapshot.manifestLoaded),
     baselineState: snapshot.baselineState || null,
     baselineEventKind: snapshot.baselineEventKind || null,
     productQueueStatus: snapshot.productQueueStatus || null,
     uiAuditState: record.uiAuditState,
     uiAuditChunkCount: record.uiAuditChunks.length,
+    ...(compactAuditSummary ? { uiAuditSummary: compactAuditSummary } : {}),
     totalFieldsInMap: allFieldKeys.length,
     totals: {
       drawers: drawerSummaries.length,
@@ -2848,6 +3019,7 @@ function buildHeaderViewData(record, snapshot) {
   const stagedCandidatesObj = isPlainObject(stdState?.stagedCandidates)
     ? stdState.stagedCandidates
     : {};
+  const compactAuditSummary = extractCompactUiAuditSummary(record);
 
   const compactStdState = stdState
     ? {
@@ -2875,6 +3047,7 @@ function buildHeaderViewData(record, snapshot) {
   return {
     schemaVersion: snapshot.schemaVersion,
     stateKind: snapshot.stateKind,
+    selectionState: snapshot.selectionState || record.selectionState || "selected",
     manifestLoaded: Boolean(snapshot.manifestLoaded),
     baselineState: snapshot.baselineState || null,
     baselineEventKind: snapshot.baselineEventKind || null,
@@ -2884,6 +3057,7 @@ function buildHeaderViewData(record, snapshot) {
     runTimestamp: snapshot.runTimestamp ?? record.runTimestamp ?? null,
     uiAuditState: record.uiAuditState,
     uiAuditChunkCount: record.uiAuditChunks.length,
+    ...(compactAuditSummary ? { uiAuditSummary: compactAuditSummary } : {}),
     systemStatus: snapshot.systemStatus || null,
     diagnosticsStats: snapshot.diagnosticsStats || null,
     manualEditedKeys: Array.isArray(snapshot.manualEditedKeys)
@@ -2897,12 +3071,12 @@ function buildHeaderViewData(record, snapshot) {
   };
 }
 
-function buildReviewViewData(snapshot) {
+function buildReviewViewData(snapshot, record = null) {
   const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
   const saveEvidence = isPlainObject(snapshot.saveVerificationEvidence)
     ? snapshot.saveVerificationEvidence
     : {};
-  const orderedDrawers = buildOrderedDrawersList(snapshot);
+  const orderedDrawers = buildOrderedDrawersList(snapshot, record);
 
   const keyToDrawersMap = new Map();
   for (let i = 0; i < orderedDrawers.length; i += 1) {
@@ -3037,6 +3211,7 @@ function buildReviewViewData(snapshot) {
   }
 
   return {
+    selectionState: snapshot.selectionState || record?.selectionState || "selected",
     manifestLoaded: Boolean(snapshot.manifestLoaded),
     baselineState: snapshot.baselineState || null,
     summaryCounts: {
@@ -3079,9 +3254,9 @@ function buildReviewViewData(snapshot) {
   };
 }
 
-function resolveDrawerTarget(snapshot, rawDrawerTitle) {
+function resolveDrawerTarget(snapshot, rawDrawerTitle, record = null) {
   const requested = typeof rawDrawerTitle === "string" ? rawDrawerTitle.trim() : "";
-  const orderedDrawers = buildOrderedDrawersList(snapshot);
+  const orderedDrawers = buildOrderedDrawersList(snapshot, record);
   const availableDrawers = orderedDrawers.map((d) => d.drawer);
 
   if (!requested) {
@@ -3097,9 +3272,10 @@ function resolveDrawerTarget(snapshot, rawDrawerTitle) {
   if (!matched) {
     const lowerReq = requested.toLowerCase();
     if (
-      lowerReq === "description review" ||
-      lowerReq === "description_review" ||
-      lowerReq === "description"
+      !isUnselectedPreviewSnapshot(snapshot, record) &&
+      (lowerReq === "description review" ||
+        lowerReq === "description_review" ||
+        lowerReq === "description")
     ) {
       matched = orderedDrawers.find(
         (d) => d.drawer === DESCRIPTION_REVIEW_DRAWER_TITLE
@@ -3111,6 +3287,7 @@ function resolveDrawerTarget(snapshot, rawDrawerTitle) {
 
   if (!matched) {
     if (
+      !isUnselectedPreviewSnapshot(snapshot, record) &&
       snapshot.manifestLoaded === false &&
       (requested === DESCRIPTION_REVIEW_DRAWER_TITLE ||
         requested.toLowerCase() === "description review" ||
@@ -3149,7 +3326,7 @@ function resolveDrawerTarget(snapshot, rawDrawerTitle) {
   };
 }
 
-function resolveFieldTarget(snapshot, rawFieldKey) {
+function resolveFieldTarget(snapshot, rawFieldKey, record = null) {
   const requested = typeof rawFieldKey === "string" ? rawFieldKey.trim() : "";
   const fieldsByKey = isPlainObject(snapshot.fieldsByKey) ? snapshot.fieldsByKey : {};
 
@@ -3186,11 +3363,15 @@ function resolveFieldTarget(snapshot, rawFieldKey) {
     }
   }
 
+  const isPreview = isUnselectedPreviewSnapshot(snapshot, record);
   return {
     ok: false,
-    code: snapshot.manifestLoaded === false ? "manifest_not_loaded_for_field" : "field_not_found",
+    code:
+      !isPreview && snapshot.manifestLoaded === false
+        ? "manifest_not_loaded_for_field"
+        : "field_not_found",
     message:
-      snapshot.manifestLoaded === false
+      !isPreview && snapshot.manifestLoaded === false
         ? `Field "${requested}" is unavailable because manifestLoaded=false for this selected product.`
         : `Field "${requested}" was not found in snapshot fieldsByKey.`,
   };
@@ -3675,7 +3856,7 @@ export function readTelemetryReport(options = {}) {
     }
 
     if (view === "review") {
-      const reviewPayload = buildReviewViewData(snapshot);
+      const reviewPayload = buildReviewViewData(snapshot, record);
       return buildBoundedOrganizedViewEnvelope({
         record,
         snapshot,
@@ -3688,7 +3869,7 @@ export function readTelemetryReport(options = {}) {
     }
 
     if (view === "drawer") {
-      const drawerRes = resolveDrawerTarget(snapshot, trimmedDrawer);
+      const drawerRes = resolveDrawerTarget(snapshot, trimmedDrawer, record);
       if (!drawerRes.ok) {
         return finalizeResponse({
           ok: false,
@@ -3707,6 +3888,7 @@ export function readTelemetryReport(options = {}) {
 
       const drawerPayload = {
         drawer: drawerRes.drawerTitle,
+        selectionState: snapshot.selectionState || record.selectionState || "selected",
         manifestLoaded: Boolean(snapshot.manifestLoaded),
         fieldCount: drawerRes.fieldKeys.length,
         fieldKeys: drawerRes.fieldKeys,
@@ -3726,7 +3908,7 @@ export function readTelemetryReport(options = {}) {
     }
 
     if (view === "field") {
-      const fieldRes = resolveFieldTarget(snapshot, trimmedFieldKey);
+      const fieldRes = resolveFieldTarget(snapshot, trimmedFieldKey, record);
       if (!fieldRes.ok) {
         return finalizeResponse({
           ok: false,
@@ -3745,6 +3927,7 @@ export function readTelemetryReport(options = {}) {
       const fieldPayload = {
         fieldKey: fieldRes.fieldKey,
         ...(fieldRes.requestedAlias ? { requestedAlias: fieldRes.requestedAlias } : {}),
+        selectionState: snapshot.selectionState || record.selectionState || "selected",
         manifestLoaded: Boolean(snapshot.manifestLoaded),
         field: fieldRes.field,
       };
@@ -3808,8 +3991,8 @@ export function readTelemetryReport(options = {}) {
     runTimestamp: record.runTimestamp,
     ...liveMetaFields,
     limitUsed: record.limitUsed,
-    clipboardPartCount: record.clipboardPartCount,
-    activePartIndex: record.activePartIndex,
+    clipboardPartCount: partsCheck.partCount,
+    activePartIndex: partsCheck.activePartIndex,
     chunkIndex,
     chunkCount: chunks.length,
     chunkUtf8Bytes: utf8ByteLength(chunkText),
