@@ -2,32 +2,28 @@
   {
     "$schema": "https://extensions.shopifycdn.com/shopifycloud/schemas/v1/tool.json",
     "name": "list_meta_injector_reports",
-    "description": "Lists already captured temporary Meta Injector telemetry reports in volatile server memory, returning product/run/capture identities, pagination, and measured UI-audit availability. Unavailable reports are not successful tests and do not establish absence of errors.",
+    "description": "Lists captured temporary Meta Injector reports with product, session, revision, capture identity, pagination and UI-audit availability. Use mode='live_bench_state' for bench snapshots. Unavailable reports do not prove successful tests or absence of errors.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "productId": {
           "type": "string",
-          "pattern": "^gid://shopify/Product/\\d+$",
-          "description": "Optional Shopify Product GID filter matching gid://shopify/Product/<digits>."
+          "pattern": "^gid://shopify/Product/\\d+$"
         },
         "mode": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 120,
-          "description": "Optional nonempty capture mode filter (up to 120 characters)."
+          "maxLength": 120
         },
         "limit": {
           "type": "integer",
           "minimum": 1,
           "maximum": 5,
-          "default": 3,
-          "description": "Optional maximum number of report metadata entries to return (integer 1-5, default 3)."
+          "default": 3
         },
         "afterReportId": {
           "type": "string",
-          "minLength": 1,
-          "description": "Optional pagination cursor (reportId) to return reports after."
+          "minLength": 1
         }
       },
       "required": [],
@@ -37,12 +33,10 @@
       "type": "object",
       "properties": {
         "ok": {
-          "type": "boolean",
-          "description": "Whether the list operation completed without a request or server error."
+          "type": "boolean"
         },
         "status": {
-          "type": "string",
-          "description": "Response status such as ok, unavailable, invalid_request, invalid_cursor, or error."
+          "type": "string"
         }
       },
       "required": ["ok", "status"],
@@ -52,44 +46,38 @@
   {
     "$schema": "https://extensions.shopifycdn.com/shopifycloud/schemas/v1/tool.json",
     "name": "read_meta_injector_report",
-    "description": "Reads bounded views or lossless UTF-8 server chunks of a captured Meta Injector report by reportId. For live_bench_state reports, prefer organized views (view='index' for drawer/field directory and counts, 'header' for diagnostics and save verification, 'review' for actionable changes/conflicts/holds, 'drawer' for one drawer including 'Description Review', or 'field' for one complete field) instead of downloading all raw chunks. Follow hasMoreChunks and nextChunkIndex when a view or report spans multiple chunks. UI-audit data is measured only when section='ui_audit' is recorded.",
+    "description": "Reads an exact reportId. For live_bench_state use view=index, header, review, drawer or field. Drawer requires drawer; field requires fieldKey. Description Review is a separate drawer. Omit unused drawer/fieldKey. For ui_audit use chunk or omit view. Follow nextChunkIndex while hasMoreChunks, keeping reportId, section, view, drawer and fieldKey unchanged. Never mix snapshots or treat proposals as saved.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "reportId": {
           "type": "string",
-          "minLength": 1,
-          "description": "Required identifier of the captured report (e.g., srep_<sha256>)."
+          "minLength": 1
         },
         "section": {
           "type": "string",
           "enum": ["report", "ui_audit"],
-          "default": "report",
-          "description": "Optional section to read: 'report' or 'ui_audit' (default 'report'). When section is 'ui_audit', view must be 'chunk' or omitted."
+          "default": "report"
         },
         "view": {
           "type": "string",
           "enum": ["chunk", "index", "header", "review", "drawer", "field"],
-          "default": "chunk",
-          "description": "Optional read mode for section='report' (default 'chunk' for raw report chunks). Organized views ('index', 'header', 'review', 'drawer', 'field') require a live_bench_state snapshot."
+          "default": "chunk"
         },
         "drawer": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 200,
-          "description": "Required when view='drawer' (and omitted for other views): exact drawer title from index (e.g., 'Description Review' or a manifest section heading)."
+          "maxLength": 200
         },
         "fieldKey": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 200,
-          "description": "Required when view='field' (and omitted for other views): exact field key, targetKey, or approvalKey (e.g., 'native_description', 'custom.generated_description')."
+          "maxLength": 200
         },
         "chunkIndex": {
           "type": "integer",
           "minimum": 0,
-          "default": 0,
-          "description": "Optional 0-based server chunk index to read (nonnegative integer, default 0). Used for raw report/ui_audit chunks and any organized view where hasMoreChunks is true."
+          "default": 0
         }
       },
       "required": ["reportId"],
@@ -99,12 +87,10 @@
       "type": "object",
       "properties": {
         "ok": {
-          "type": "boolean",
-          "description": "Whether the read operation completed without a request, not_found, or server error."
+          "type": "boolean"
         },
         "status": {
-          "type": "string",
-          "description": "Response status such as ok, not_measured, not_found, invalid_request, or error."
+          "type": "string"
         }
       },
       "required": ["ok", "status"],
