@@ -9,6 +9,7 @@ import {
   PROTECTED_DATA_ENTRIES
 } from "./meta-injector.constants.jsx";
 import {
+  isExactMetaobjectGid,
   isVerifiedStandardizedDestination,
   validateProposedStandardizedGidList
 } from "./meta-injector.standardized.jsx";
@@ -100,6 +101,34 @@ export const resolveApprovalStorageKey = (key) => {
 const isExactProductGidString = (val) =>
   typeof val === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(val.trim());
 
+const parseStrictExactMetaobjectGidJsonArray = (rawVal) => {
+  if (typeof rawVal !== "string") return null;
+  const trimmed = rawVal.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (e) {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const seen = new Set();
+  const gids = [];
+  for (let i = 0; i < parsed.length; i += 1) {
+    const item = parsed[i];
+    if (typeof item !== "string" || !isExactMetaobjectGid(item)) {
+      return null;
+    }
+    const cleanGid = item.trim();
+    if (seen.has(cleanGid)) {
+      return null;
+    }
+    seen.add(cleanGid);
+    gids.push(cleanGid);
+  }
+  return gids;
+};
+
 export const hasVerifiedLoadedDestinationBaseline = (destKey, data, expectedProductId) => {
   if (!data || typeof data !== "object") return false;
   if (!isExactProductGidString(expectedProductId)) return false;
@@ -168,7 +197,7 @@ export const hasVerifiedLoadedDestinationBaseline = (destKey, data, expectedProd
 };
 
 const CANONICAL_READ_COMPANIONS = Object.freeze({
-  "custom.material": ["custom.stone_family", "stone_family", "custom.primary_medium", "primary_medium"],
+  "custom.material": ["custom.primary_medium", "primary_medium"],
   "custom.is_one_of_a_kind": ["custom.is_ooak", "is_ooak"],
   "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"],
   "custom.cut_and_shape": ["custom.cut_type", "cut_type"]
@@ -324,7 +353,7 @@ const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field"
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â")
+    lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -1492,6 +1521,17 @@ export const evaluateFieldMetadata = ({
         return Number(w.value) === propNum && w.unit === "OUNCES";
       }
     }
+    if (isStandardizedAttribute || expectedType === "list.metaobject_reference") {
+      if (isVerifiedStdDest) {
+        const propCheck = validateProposedStandardizedGidList(propVal, stdEvaluation);
+        if (!propCheck.valid) return false;
+      }
+      const strictCurrGids = parseStrictExactMetaobjectGidJsonArray(currentVal);
+      const strictPropGids = parseStrictExactMetaobjectGidJsonArray(propVal);
+      if (!strictCurrGids || !strictPropGids) return false;
+      if (strictCurrGids.length !== strictPropGids.length) return false;
+      return strictCurrGids.every((gid, idx) => gid === strictPropGids[idx]);
+    }
     return currentVal === propVal;
   })();
 
@@ -1628,15 +1668,16 @@ export const evaluateFieldMetadata = ({
   let hasTechnicalBlock = false;
   let contentNeedsReview = false;
 
-  // Require explicit exact-value operator approval for native_description, custom.generated_description,
-  // custom.jewelry_type, custom.wire_material, and native_seo_description proposals (including blank destinations).
+  // Require explicit exact-value operator approval for changed proposals on native_description, custom.generated_description,
+  // custom.jewelry_type, custom.wire_material, and native_seo_description (including blank destinations).
   if (
     !isParkedExcluded &&
     (isDescriptionDestination ||
       targetKeyForProposal === "custom.jewelry_type" ||
       targetKeyForProposal === "custom.wire_material" ||
       key === "native_seo_description") &&
-    proposalExists
+    proposalExists &&
+    !isEqualToCurrent
   ) {
       contentNeedsReview = true;
   }
@@ -1684,8 +1725,8 @@ export const evaluateFieldMetadata = ({
           if (!propValidation.valid) {
               hasTechnicalBlock = true;
               reasons.push(propValidation.reason);
-          } else {
-              // Require explicit exact-value approval for all standardized reference proposals
+          } else if (!isEqualToCurrent) {
+              // Require explicit exact-value approval for changed standardized reference proposals
               contentNeedsReview = true;
           }
       }

@@ -14,7 +14,8 @@ export const LIFECYCLE_BADGE_LABEL_MAP = {
   completed: "Completed",
   incomplete: "Incomplete (Partial)",
   failed: "Failed",
-  discarded_stale: "Discarded Stale Response"
+  discarded_stale: "Discarded Stale Response",
+  cancelled: "Cancelled"
 };
 
 export const deriveStandardizedLifecycle = ({
@@ -137,11 +138,31 @@ export function StandardizedSectionBanner({
     }
   }
 
-  const isRetryLabel =
-    validRefMatchResult ||
+  const isRetryState =
     derivedLifecycleState === "failed" ||
     derivedLifecycleState === "incomplete" ||
-    derivedLifecycleState === "discarded_stale";
+    derivedLifecycleState === "discarded_stale" ||
+    derivedLifecycleState === "cancelled" ||
+    Boolean(
+      validRefMatchResult &&
+        (!validRefMatchResult.isComplete ||
+          !validRefMatchResult.success ||
+          (Array.isArray(validRefMatchResult.errors) && validRefMatchResult.errors.length > 0))
+    );
+
+  const isCompletedCleanMatch = Boolean(
+    !isRetryState &&
+      validRefMatchResult &&
+      validRefMatchResult.isComplete === true &&
+      validRefMatchResult.success === true &&
+      derivedLifecycleState === "completed"
+  );
+
+  const matchActionButtonLabel = isRetryState
+    ? "Match Reference Choices (Retry)"
+    : isCompletedCleanMatch
+      ? "Re-run Match Reference Choices"
+      : "Match Reference Choices";
 
   return (
     <Box padding="300" background="bg-surface-secondary" borderColor="border" borderWidth="1" borderRadius="200">
@@ -186,7 +207,7 @@ export function StandardizedSectionBanner({
               disabled={isMatchButtonDisabled}
               loading={isMatchButtonLoading}
             >
-              {isRetryLabel ? "Match Reference Choices (Retry)" : "Match Reference Choices"}
+              {matchActionButtonLabel}
             </Button>
 
             {pendingReferenceMatch !== null && (
@@ -579,23 +600,59 @@ export function StandardizedRowDiagnostics({
           ? fieldResolution.status
           : "Not reported");
 
+  const hasCandidateLabels = Boolean(
+    visionCandidateEntry &&
+    Array.isArray(visionCandidateEntry.labels) &&
+    visionCandidateEntry.labels.length > 0
+  );
+
   const labelEvaluationsList = Array.isArray(meta.stdEvaluation?.labelEvaluations)
     ? meta.stdEvaluation.labelEvaluations
     : [];
+
+  const hasMissingEntryFailure =
+    entryMatchStatus === "missing_entry" ||
+    labelEvaluationsList.some((ev) => ev.status === "missing_entry");
+  const hasExplicitBlockedFailure =
+    entryMatchStatus === "blocked" ||
+    labelEvaluationsList.some((ev) => ev.status === "blocked" || !ev.selectedEntry);
+  const hasUnresolvedAmbiguousFailure =
+    labelEvaluationsList.some((ev) => ev.status === "ambiguous_blocked");
+
   const allLabelsMatched =
-    labelEvaluationsList.length > 0 &&
+    hasCandidateLabels &&
+    labelEvaluationsList.length === visionCandidateEntry.labels.length &&
+    !hasMissingEntryFailure &&
+    !hasExplicitBlockedFailure &&
+    !hasUnresolvedAmbiguousFailure &&
     labelEvaluationsList.every(
       (ev) =>
         Boolean(ev.selectedEntry) &&
-        (ev.status === "unique" || ev.status === "equivalent_existing" || ev.status === "equivalent_lowest_new")
+        (ev.status === "unique" ||
+          ev.status === "equivalent_existing" ||
+          ev.status === "equivalent_lowest_new")
     );
-  const hasEntryMatchError =
-    entryMatchStatus === "missing_entry" ||
-    entryMatchStatus === "ambiguous" ||
-    entryMatchStatus === "blocked" ||
+
+  // Only treat raw backend `entryMatchStatus === "ambiguous"` as an unresolved error when
+  // authoritative per-label equivalence resolution did NOT resolve all candidate labels.
+  const isRawAmbiguousResolvedByEquivalence =
+    entryMatchStatus === "ambiguous" &&
+    allLabelsMatched &&
     labelEvaluationsList.some(
-      (ev) => ev.status === "missing_entry" || ev.status === "ambiguous_blocked" || ev.status === "blocked"
+      (ev) => ev.status === "equivalent_existing" || ev.status === "equivalent_lowest_new"
     );
+
+  const hasEntryMatchError =
+    hasMissingEntryFailure ||
+    hasExplicitBlockedFailure ||
+    hasUnresolvedAmbiguousFailure ||
+    (entryMatchStatus === "ambiguous" && !isRawAmbiguousResolvedByEquivalence);
+
+  const effectiveDiagEntryMatchLabel = isRawAmbiguousResolvedByEquivalence
+    ? labelEvaluationsList.every((ev) => ev.status === "equivalent_existing")
+      ? "equivalent_existing (resolved)"
+      : "equivalent (resolved)"
+    : entryMatchStatus;
 
   const availableEntriesList = Array.isArray(fieldResolution?.availableEntries) ? fieldResolution.availableEntries : [];
   const formattedLabelResolutions =
@@ -606,11 +663,6 @@ export function StandardizedRowDiagnostics({
     fieldResolution && fieldResolution.continuation !== undefined && fieldResolution.continuation !== null
       ? formatStructuredDiagValue(fieldResolution.continuation)
       : "";
-
-  const hasCandidateLabels =
-    visionCandidateEntry &&
-    Array.isArray(visionCandidateEntry.labels) &&
-    visionCandidateEntry.labels.length > 0;
 
   // Derive distinct Header Badge state (Never show green "Matched" unless BOTH reference matched AND category eligible)
   let headerBadgeTone = derivedLifecycleTone;
@@ -625,15 +677,21 @@ export function StandardizedRowDiagnostics({
       headerBadgeLabel = !isCatCheckComplete ? "Eligibility Incomplete" : "Incomplete";
     } else if (actualReadErrors.length > 0 || hasEntryMatchError) {
       headerBadgeTone = "critical";
-      headerBadgeLabel =
-        entryMatchStatus === "missing_entry"
-          ? "Missing Entry"
-          : entryMatchStatus === "ambiguous"
-            ? "Ambiguous Match"
-            : "Blocked";
-    } else if (isCatEligible && (entryMatchStatus === "matched" || allLabelsMatched)) {
+      headerBadgeLabel = hasMissingEntryFailure
+        ? "Missing Entry"
+        : (hasUnresolvedAmbiguousFailure || (entryMatchStatus === "ambiguous" && !isRawAmbiguousResolvedByEquivalence))
+          ? "Ambiguous Match"
+          : "Blocked";
+    } else if (
+      isCatEligible &&
+      meta.stdEvaluation?.isTechnicallyEligible === true &&
+      (entryMatchStatus === "matched" || allLabelsMatched)
+    ) {
       headerBadgeTone = "success";
       headerBadgeLabel = "Matched & Category Eligible";
+    } else if (meta.stdEvaluation?.blockReason) {
+      headerBadgeTone = "critical";
+      headerBadgeLabel = "Blocked";
     } else {
       headerBadgeTone = "warning";
       headerBadgeLabel = "Needs Review";
@@ -793,15 +851,20 @@ export function StandardizedRowDiagnostics({
                 <strong>Reference Entry Match:</strong>{" "}
                 <Badge
                   tone={
-                    entryMatchStatus === "matched" || allLabelsMatched
+                    !hasEntryMatchError && (entryMatchStatus === "matched" || allLabelsMatched)
                       ? "success"
                       : hasEntryMatchError
                         ? "critical"
                         : "warning"
                   }
                 >
-                  {entryMatchStatus}
+                  {effectiveDiagEntryMatchLabel}
                 </Badge>{" "}
+                {isRawAmbiguousResolvedByEquivalence && (
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {`(raw backend status: ${entryMatchStatus} → resolved by strict definition & taxonomy equivalence)`}
+                  </Text>
+                )}{" "}
                 | <strong>Category Eligibility:</strong>{" "}
                 <Badge
                   tone={

@@ -26,8 +26,6 @@ const SENSITIVE_DIAG_KEY_REGEX = /token|secret|password|authorization|cookie|hea
 const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 
 const CANONICAL_INCOMING_ALIAS_MAP = Object.freeze({
-  stone_family: "custom.material",
-  "custom.stone_family": "custom.material",
   primary_medium: "custom.material",
   "custom.primary_medium": "custom.material",
   is_ooak: "custom.is_one_of_a_kind",
@@ -41,7 +39,7 @@ const CANONICAL_INCOMING_ALIAS_MAP = Object.freeze({
 });
 
 const ALIAS_COMPANION_LOOKUP = Object.freeze({
-  "custom.material": ["stone_family", "custom.stone_family", "primary_medium", "custom.primary_medium"],
+  "custom.material": ["primary_medium", "custom.primary_medium"],
   "custom.is_one_of_a_kind": ["is_ooak", "custom.is_ooak"],
   "custom.origin_page_handle": ["origin_handle", "custom.origin_page_handle"],
   "shopify_title": ["native_title", "canonical_title", "product_title"],
@@ -91,7 +89,7 @@ const classifyFoundObjectPolarityClient = (rawVal) => {
     lower.startsWith("no ") ||
     lower.startsWith("no—") ||
     lower.startsWith("no -") ||
-    lower.startsWith("no â€”") ||
+    lower.startsWith("no Ã¢â‚¬â€") ||
     /\b(purchased|bought)\b/i.test(lower)
   ) {
     return "purchased";
@@ -103,7 +101,7 @@ const classifyFoundObjectPolarityClient = (rawVal) => {
     lower.startsWith("yes ") ||
     lower.startsWith("yes—") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes â€”") ||
+    lower.startsWith("yes Ã¢â‚¬â€") ||
     /\bfound in the wild\b/i.test(lower)
   ) {
     return "wild_found";
@@ -153,7 +151,7 @@ const normalizeOoakEquivalentValue = (rawVal, expectedType = "single_line_text_f
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes â€”")
+    lower.startsWith("yes Ã¢â‚¬â€")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -573,10 +571,11 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
 
   Object.entries(incomingPlan).forEach(([rawKey, rawVal]) => {
     if (rawKey === "standardized_candidates" || rawKey === "custom.standardized_candidates") return;
+    if (rawKey === "stone_family" || rawKey === "custom.stone_family") return;
     if (isEffectiveRetiredKey(rawKey)) return;
 
     const canonicalKey = normalizeIncomingTargetKey(rawKey);
-    if (!canonicalKey || isEffectiveRetiredKey(canonicalKey)) return;
+    if (!canonicalKey || canonicalKey === "custom.stone_family" || isEffectiveRetiredKey(canonicalKey)) return;
 
     const isDirectCanonical = rawKey === canonicalKey;
     if (!canonicalCandidatesFromPlan[canonicalKey]) {
@@ -1486,8 +1485,13 @@ export function useMetaInjectorExecution({
             if (key === "canonical_title" || key === "custom.canonical_title" || key === "product_title") return;
             if (key.includes(".") && !key.startsWith("custom.")) return;
 
-            const canonicalTarget = normalizeIncomingTargetKey(key);
-            const factKey = canonicalTarget.startsWith("custom.") ? canonicalTarget.slice(7) : (key.startsWith("custom.") ? key.slice(7) : key);
+            const isStoneFamilyKey = key === "stone_family" || key === "custom.stone_family";
+            const canonicalTarget = isStoneFamilyKey ? "custom.stone_family" : normalizeIncomingTargetKey(key);
+            const factKey = isStoneFamilyKey
+              ? "stone_family"
+              : canonicalTarget.startsWith("custom.")
+                ? canonicalTarget.slice(7)
+                : (key.startsWith("custom.") ? key.slice(7) : key);
             if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates", "shopify_title", "operator_locked_fields", "passive_stored_fields"].includes(factKey)) return;
 
             if (value !== undefined && value !== null && typeof value !== "object" && String(value).trim() !== "") {
@@ -1517,7 +1521,7 @@ export function useMetaInjectorExecution({
               if (isAuthoritative || !hasNonBlankValue(descriptionFacts[factKey])) {
                 descriptionFacts[factKey] = cleanVal;
               }
-              if (factKey === "material" && (isAuthoritative || !hasNonBlankValue(descriptionFacts.stone_family))) {
+              if (factKey === "material" && !hasNonBlankValue(descriptionFacts.stone_family)) {
                 descriptionFacts.stone_family = cleanVal;
               }
               if (factKey === "material" && (isAuthoritative || !hasNonBlankValue(descriptionFacts.primary_medium))) {
@@ -1546,7 +1550,9 @@ export function useMetaInjectorExecution({
             if (!hasNonBlankValue(value)) return;
             descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(value ?? ""), manifest.nativeTargets?.productTitle || product.title) : value;
             if (fk === "material") {
-              descriptionFacts.stone_family = value;
+              if (!hasNonBlankValue(descriptionFacts.stone_family)) {
+                descriptionFacts.stone_family = value;
+              }
               descriptionFacts.primary_medium = value;
             }
           }
@@ -1566,7 +1572,9 @@ export function useMetaInjectorExecution({
             if (!hasNonBlankValue(editVal)) return;
             descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(editVal ?? ""), manifest.nativeTargets?.productTitle || product.title) : editVal;
             if (fk === "material") {
-              descriptionFacts.stone_family = editVal;
+              if (!hasNonBlankValue(descriptionFacts.stone_family)) {
+                descriptionFacts.stone_family = editVal;
+              }
               descriptionFacts.primary_medium = editVal;
             }
           }
@@ -2666,6 +2674,7 @@ export function useMetaInjectorExecution({
                 const safeApply = (rawKeyName, rawAiValue, sourceMeta = { source: "Gemini", stage: "AI_PIPELINE" }) => {
                   if (!hasNonBlankValue(rawAiValue)) return;
                   if (rawKeyName === "origin_story" || rawKeyName === "custom.origin_story") return;
+                  if (rawKeyName === "stone_family" || rawKeyName === "custom.stone_family") return;
                   if (rawKeyName === "standardized_candidates" || rawKeyName === "custom.standardized_candidates") return;
                   if (rawKeyName === "operator_locked_fields" || rawKeyName === "passive_stored_fields" || rawKeyName === "custom.operator_locked_fields" || rawKeyName === "custom.passive_stored_fields") return;
                   if (rawKeyName.startsWith("custom.std_") || rawKeyName.startsWith("std_")) return;
@@ -2675,7 +2684,7 @@ export function useMetaInjectorExecution({
 
                   const targetKey = normalizeIncomingTargetKey(rawKeyName);
                   if (!targetKey || isEffectiveRetiredKey(targetKey) || isEffectiveRetiredKey(rawKeyName)) return;
-                  if (targetKey === "custom.origin_story" || targetKey === "shopify_title" || targetKey === "native_title") return;
+                  if (targetKey === "custom.origin_story" || targetKey === "custom.stone_family" || targetKey === "shopify_title" || targetKey === "native_title") return;
                   if (targetKey === "custom.operator_locked_fields" || targetKey === "custom.passive_stored_fields") return;
                   if (targetKey.startsWith("shopify.") && !isVerifiedStandardizedDestination(targetKey)) return;
 
