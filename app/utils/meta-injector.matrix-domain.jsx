@@ -324,7 +324,7 @@ const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field"
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes Ã¢â‚¬â€")
+    lower.startsWith("yes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -1111,6 +1111,7 @@ export const evaluateFieldMetadata = ({
   productId,
   currentApprovals,
   currentKeepOriginal = {},
+  currentManualEdits = {},
   configFields = [],
   standardizedCandidatesByProduct = {},
   getStandardizedEvaluationForField,
@@ -1287,6 +1288,27 @@ export const evaluateFieldMetadata = ({
     safeData,
     productId,
     templateConfig
+  );
+
+  // Resolve owner-specific manual edit state without cross-product leakage
+  const ownerManualEditsMap =
+    effectiveApprovalLookupId &&
+    currentManualEdits &&
+    typeof currentManualEdits === "object" &&
+    !Array.isArray(currentManualEdits) &&
+    currentManualEdits[effectiveApprovalLookupId] &&
+    typeof currentManualEdits[effectiveApprovalLookupId] === "object" &&
+    !Array.isArray(currentManualEdits[effectiveApprovalLookupId])
+      ? currentManualEdits[effectiveApprovalLookupId]
+      : null;
+
+  const isManuallyEdited = Boolean(
+    !isParkedExcluded &&
+    !isImageAltCapabilityPlaceholder &&
+    ownerManualEditsMap &&
+    (ownerManualEditsMap[key] === true ||
+      ownerManualEditsMap[targetKeyForProposal] === true ||
+      (approvalStorageKey && ownerManualEditsMap[approvalStorageKey] === true))
   );
 
   let currentVal = "";
@@ -1586,6 +1608,7 @@ export const evaluateFieldMetadata = ({
       return {
         currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage,
         isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false,
+        isManuallyEdited: false, isTemporarilyClearedManualEdit: false,
         isKeepOriginalSelected: false, keepOriginalDecision: null, canKeepOriginal: false,
         isParkedExcluded: true, registryRole: templateConfig?.registryRole || "EXCLUDED_INPUT",
         registryOwner: templateConfig?.registryOwner || "PRODUCT",
@@ -1938,10 +1961,23 @@ export const evaluateFieldMetadata = ({
     isBlockedAction && 
     !isManualOnly && 
     !isImageAltCapabilityPlaceholder &&
-    (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
+     (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
     (!isStandardizedAttribute || isVerifiedStdDest) &&
     !treatAsHiddenContext && 
     ((proposalExists && !isEqualToCurrent) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
+
+  // True only when an editable working field has been manually edited by the operator on the active product/draft
+  // and its input value is currently empty (!proposalExists), so it stays mounted in "Needs review" mid-edit
+  // without changing proposalExists, approval, or buildRepairPayload semantics.
+  const isTemporarilyClearedManualEdit = Boolean(
+    isManuallyEdited &&
+    !proposalExists &&
+    !isParkedExcluded &&
+    !isImageAltCapabilityPlaceholder &&
+    !hasContractOrOwnerHold &&
+    !isManualOnly &&
+    isKnownKey
+  );
 
   // Only report Applicable/Inapplicable when explicit existing evidence (e.g. category eligibility) proves it; never infer from blank/false/zero
   const applicabilityState = isParkedExcluded
@@ -1971,6 +2007,8 @@ export const evaluateFieldMetadata = ({
   return { 
     currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
     isBlockedAction, reasons, currentExists, proposalExists, isApproved,
+    isManuallyEdited,
+    isTemporarilyClearedManualEdit,
     isKeepOriginalSelected,
     keepOriginalDecision: isKeepOriginalSelected ? rawKeepOriginalDecision : null,
     canKeepOriginal,

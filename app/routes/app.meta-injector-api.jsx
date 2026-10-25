@@ -69,6 +69,7 @@ const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.collection_date": "single_line_text_field",
   "custom.cut_type": "single_line_text_field",
   "custom.secondary_colors": "single_line_text_field",
+  "custom.color_pattern": "single_line_text_field",
   "custom.wire_material": "single_line_text_field",
   "custom.jewelry_type": "single_line_text_field",
   "custom.seo_title": "single_line_text_field",
@@ -94,7 +95,7 @@ const MASTER_TYPE_MAP = {
   chain_material: "single_line_text_field", seo_title: "single_line_text_field", secondary_medium: "single_line_text_field",
   treated: "single_line_text_field", weight_grams: "number_decimal", shipping_weight_oz: "number_decimal", price: "number_decimal",
   origin_story: "multi_line_text_field", honest_flaws: "single_line_text_field", honest_flaws_and_character: "multi_line_text_field",
-  generated_description: "multi_line_text_field", color_pattern: "list.metaobject_reference", "color-pattern": "list.metaobject_reference",
+  generated_description: "multi_line_text_field", color_pattern: "single_line_text_field", "color-pattern": "list.metaobject_reference",
   material: "metaobject_reference", jewelry_material: "metaobject_reference", "jewelry-material": "metaobject_reference",
   age_group: "metaobject_reference", "age-group": "metaobject_reference", jewelry_type: "single_line_text_field",
   "jewelry-type": "metaobject_reference", target_gender: "metaobject_reference", "target-gender": "metaobject_reference",
@@ -114,7 +115,7 @@ const MASTER_TYPE_MAP = {
 };
 
 const EXPLICIT_METAOBJECT_KEYS = [
-  "material", "color-pattern", "color_pattern", "jewelry-material", "jewelry_material",
+  "material", "color-pattern", "jewelry-material", "jewelry_material",
   "target-gender", "age-group", "age_group", "condition", "rarity", 
   "authenticity", "jewelry-type", "necklace-design", "necklace_design", 
   "crystal-system", "geological-era", "geological_era", 
@@ -281,6 +282,138 @@ function sanitizeDescription(html) {
     safeHtml = safeHtml.replace(regexEscaped, "");
   }
   return safeHtml;
+}
+
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp"]);
+
+function normalizeBareAmpersandsInOrdinaryText(textSegment) {
+  return textSegment.replace(/&(?!(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#[xX][0-9a-fA-F]+);)/g, "&amp;");
+}
+
+function canonicalizeDescriptionHtmlForReadBack(html) {
+  if (typeof html !== "string") return null;
+  let out = "";
+  let i = 0;
+  const len = html.length;
+  let rawTextTag = null;
+
+  while (i < len) {
+    if (rawTextTag !== null) {
+      const rest = html.slice(i);
+      const closeRe = new RegExp(`^<\\/${rawTextTag}(?=[\\t\\n\\f\\r />])`, "i");
+      const m = closeRe.exec(rest);
+      if (m) {
+        let j = i + m[0].length;
+        while (j < len && html[j] !== ">") {
+          if (html[j] === "<" || html[j] === '"' || html[j] === "'") return null;
+          j++;
+        }
+        if (j >= len) return null;
+        out += html.slice(i, j + 1);
+        rawTextTag = null;
+        i = j + 1;
+        continue;
+      }
+      const nextLt = html.indexOf("<", i + 1);
+      if (nextLt === -1) {
+        out += html.slice(i);
+        break;
+      }
+      out += html.slice(i, nextLt);
+      i = nextLt;
+      continue;
+    }
+
+    const lt = html.indexOf("<", i);
+    if (lt === -1) {
+      out += normalizeBareAmpersandsInOrdinaryText(html.slice(i));
+      break;
+    }
+
+    if (lt > i) {
+      out += normalizeBareAmpersandsInOrdinaryText(html.slice(i, lt));
+      i = lt;
+    }
+
+    if (html.startsWith("<!--", i)) {
+      const endComment = html.indexOf("-->", i + 4);
+      if (endComment === -1) return null;
+      out += html.slice(i, endComment + 3);
+      i = endComment + 3;
+      continue;
+    }
+
+    if (html.startsWith("<![CDATA[", i)) {
+      const endCdata = html.indexOf("]]>", i + 9);
+      if (endCdata === -1) return null;
+      out += html.slice(i, endCdata + 3);
+      i = endCdata + 3;
+      continue;
+    }
+
+    if (/^<![a-zA-Z]/.test(html.slice(i, i + 3)) || html.startsWith("<?", i)) {
+      let j = i + 2;
+      let quote = null;
+      while (j < len) {
+        const ch = html[j];
+        if (quote) {
+          if (ch === quote) quote = null;
+        } else {
+          if (ch === '"' || ch === "'") quote = ch;
+          else if (ch === ">") break;
+        }
+        j++;
+      }
+      if (j >= len) return null;
+      out += html.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+
+    const tagMatch = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?=[\t\n\f\r />])/.exec(html.slice(i));
+    if (!tagMatch) {
+      return null;
+    }
+
+    const isClosing = tagMatch[1] === "/";
+    const tagNameLower = tagMatch[2].toLowerCase();
+    let j = i + tagMatch[0].length;
+    let quote = null;
+    while (j < len) {
+      const ch = html[j];
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else {
+        if (ch === '"' || ch === "'") quote = ch;
+        else if (ch === "<") return null;
+        else if (ch === ">") break;
+      }
+      j++;
+    }
+    if (j >= len) return null;
+
+    const fullTag = html.slice(i, j + 1);
+    const isSelfClosing = !isClosing && /\/\s*>$/.test(fullTag);
+    out += fullTag;
+    i = j + 1;
+
+    if (!isClosing && !isSelfClosing && RAW_TEXT_ELEMENTS.has(tagNameLower)) {
+      rawTextTag = tagNameLower;
+    }
+  }
+
+  if (rawTextTag !== null) return null;
+  return out;
+}
+
+function areDescriptionHtmlEquivalentOnReadBack(expectedHtml, actualHtml) {
+  if (typeof expectedHtml !== "string" || typeof actualHtml !== "string") return false;
+  if (expectedHtml === actualHtml) return true;
+  const canonExpected = canonicalizeDescriptionHtmlForReadBack(expectedHtml);
+  if (canonExpected === null) return false;
+  const canonActual = canonicalizeDescriptionHtmlForReadBack(actualHtml);
+  if (canonActual === null) return false;
+  return canonExpected === canonActual;
 }
 
 function normalizeTaxonomyCategoryCode(rawVal) {
@@ -2773,7 +2906,7 @@ export const action = async ({ request }) => {
                      readBackVerified = false;
                      unresolvedChanges["native_description"] = { reason: "Unverified native read-back (descriptionHtml missing)", expected: nativeInput.descriptionHtml, actual: "Unverified" };
                      conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: "Unverified (missing from read-back)" };
-                 } else if (nativeInput.descriptionHtml !== actualBodyHtml) {
+                 } else if (!areDescriptionHtmlEquivalentOnReadBack(nativeInput.descriptionHtml, actualBodyHtml)) {
                      readBackVerified = false;
                      unresolvedChanges["native_description"] = { reason: "Read-back mismatch", expected: nativeInput.descriptionHtml, actual: actualBodyHtml };
                      conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: actualBodyHtml };

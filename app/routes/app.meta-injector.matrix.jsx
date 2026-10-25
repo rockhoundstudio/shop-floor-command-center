@@ -222,6 +222,7 @@ export function OperationsMatrixTab({ products }) {
             productId: pid,
             currentApprovals: approvals,
             currentKeepOriginal: prev,
+            currentManualEdits: manualEdits,
             configFields: allConfigFields,
             standardizedCandidatesByProduct,
             getStandardizedEvaluationForField: null,
@@ -245,7 +246,7 @@ export function OperationsMatrixTab({ products }) {
 
       return anyMutated ? next : prev;
     });
-  }, [manifestData, approvals, standardizedCandidatesByProduct]);
+  }, [manifestData, approvals, manualEdits, standardizedCandidatesByProduct]);
 
   const getStandardizedEvaluationForField = useCallback((productId, targetKey, dataOverride = null) => {
     if (!productId || typeof targetKey !== "string" || !targetKey.startsWith("shopify.")) return null;
@@ -301,6 +302,7 @@ export function OperationsMatrixTab({ products }) {
       productId,
       currentApprovals,
       currentKeepOriginal: keepOriginalDecisions,
+      currentManualEdits: manualEdits,
       configFields,
       standardizedCandidatesByProduct,
       getStandardizedEvaluationForField,
@@ -824,6 +826,7 @@ export function OperationsMatrixTab({ products }) {
       productId: pieceId,
       currentApprovals: approvals,
       currentKeepOriginal: keepOriginalDecisions,
+      currentManualEdits: manualEdits,
       configFields: allConfigFields,
       standardizedCandidatesByProduct,
       getStandardizedEvaluationForField,
@@ -869,6 +872,7 @@ export function OperationsMatrixTab({ products }) {
     manifestData,
     approvals,
     keepOriginalDecisions,
+    manualEdits,
     standardizedCandidatesByProduct,
     getStandardizedEvaluationForField
   ]);
@@ -2186,6 +2190,11 @@ export function OperationsMatrixTab({ products }) {
         return false;
       }
 
+      // Retain an actively edited field whose input was temporarily cleared mid-edit so the row does not vanish
+      if (m.isTemporarilyClearedManualEdit) {
+        return true;
+      }
+
       // Actionable blocked proposals, over-limit fields, unverified proposals, and unapproved review-required proposals stay in Needs review
       if (
         m.isActualBlockedProposal ||
@@ -2288,6 +2297,7 @@ export function OperationsMatrixTab({ products }) {
     safeProducts,
     approvals,
     keepOriginalDecisions,
+    manualEdits,
     submittedPayloads,
     standardizedCandidatesByProduct,
     referenceMatchResultsByProduct,

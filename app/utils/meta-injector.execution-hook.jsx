@@ -68,6 +68,69 @@ const CLASSIFICATION_PRECEDENCE_KEYS = new Set([
   "necklace_design"
 ]);
 
+const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
+  "origin_location",
+  "origin_handle",
+  "origin_page_handle",
+  "collection_location",
+  "seo_title",
+  "poetic_hook"
+]);
+
+// Client-side mirror of found_object polarity & river-collection claim guards (no server imports)
+const classifyFoundObjectPolarityClient = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return "unknown";
+  if (typeof rawVal === "boolean") return rawVal ? "wild_found" : "purchased";
+  const str = String(rawVal).trim();
+  if (!str) return "unknown";
+  const lower = str.toLowerCase();
+  if (
+    lower === "false" ||
+    lower === "no" ||
+    lower === "0" ||
+    lower.startsWith("no ") ||
+    lower.startsWith("no—") ||
+    lower.startsWith("no -") ||
+    lower.startsWith("no â€”") ||
+    /\b(purchased|bought)\b/i.test(lower)
+  ) {
+    return "purchased";
+  }
+  if (
+    lower === "true" ||
+    lower === "yes" ||
+    lower === "1" ||
+    lower.startsWith("yes ") ||
+    lower.startsWith("yes—") ||
+    lower.startsWith("yes -") ||
+    lower.startsWith("yes â€”") ||
+    /\bfound in the wild\b/i.test(lower)
+  ) {
+    return "wild_found";
+  }
+  return "unknown";
+};
+
+const hasRiverOrFieldCollectionClaimClient = (text) => {
+  if (typeof text !== "string" || !text.trim()) return false;
+  return /\b(found at|found in|found on|found along|river[- ]collected|field[- ]collected|collected at|collected from|collected along|pulled from|picked up on the river|spokane river|yakima river)\b/i.test(text);
+};
+
+const buildSafePurchasedSeoTitleClient = (stoneFamily, productFormat = "") => {
+  const cleanFam = String(stoneFamily || "").trim();
+  const cleanFmt = String(productFormat || "").trim();
+  if (!cleanFam) return "";
+  const candidateWithFmt =
+    cleanFmt &&
+    !/^(n\/a|none|unknown)$/i.test(cleanFmt) &&
+    !cleanFam.toLowerCase().includes(cleanFmt.toLowerCase())
+      ? `${cleanFam} ${cleanFmt} — Rockhound Studio`
+      : `${cleanFam} — Rockhound Studio`;
+  if (candidateWithFmt.length <= 70) return candidateWithFmt;
+  const fallback = `${cleanFam} — Rockhound Studio`;
+  return fallback.length <= 70 ? fallback : fallback.slice(0, 70).trim();
+};
+
 const isEffectiveRetiredKey = (key) => {
   if (key === "wire_material" || key === "custom.wire_material") return false;
   return RETIRED_KEYS.includes(key);
@@ -339,6 +402,151 @@ const resolveLockedProposalFromApprovals = (canonicalKey, productApprovals = {})
     return productApprovals["native_seo_title"];
   }
   return undefined;
+};
+
+// Resolves provenance & bench facts for a product, strictly separating human/operator-locked
+// values (manual edits or explicit approvals) from passive stored metafield values.
+// Only emits bare keys accepted by ALLOWED_PROVENANCE_FIELD_KEYS in meta-injector.autofill.server.jsx.
+const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, productApprovals = {}) => {
+  const safeMan = validObj(manifest);
+  const edits = validObj(productManualEdits);
+  const apps = validObj(productApprovals);
+
+  const inspectableKeys = [
+    "bail_included", "secondary_medium", "jewelry_finding_type",
+    "primary_use", "jewelry_type", "setting_ready",
+    "chain_material", "chain_link_type", "wire_material", "character_marks",
+    "primary_color", "secondary_colors", "color_pattern", "cut_type", "surface_finish",
+    "treatment_status", "treated", "necklace_design",
+    "found_object", "origin_location", "origin_page_handle",
+    "collection_name", "collection_location", "collection_date",
+    "is_one_of_a_kind", "seo_title"
+  ];
+
+  const operatorLockedKeys = [];
+  const passiveStoredKeys = [];
+  const valuesByBareKey = {};
+
+  inspectableKeys.forEach((k) => {
+    const fullKey = `custom.${k}`;
+    const companionAliases = ALIAS_COMPANION_LOOKUP[fullKey] || [];
+
+    const hasManualEditFlag =
+      edits[fullKey] === true ||
+      edits[k] === true ||
+      companionAliases.some((ak) => edits[ak] === true);
+
+    let manualPlanVal =
+      safeMan.repairPlan?.[fullKey] !== undefined
+        ? safeMan.repairPlan[fullKey]
+        : safeMan.repairPlan?.[k];
+    if (manualPlanVal === undefined) {
+      for (const ak of companionAliases) {
+        if (safeMan.repairPlan?.[ak] !== undefined) {
+          manualPlanVal = safeMan.repairPlan[ak];
+          break;
+        }
+      }
+    }
+
+    let approvalVal =
+      apps[fullKey] !== undefined
+        ? apps[fullKey]
+        : apps[k];
+    if (approvalVal === undefined) {
+      for (const ak of companionAliases) {
+        if (apps[ak] !== undefined) {
+          approvalVal = apps[ak];
+          break;
+        }
+      }
+    }
+
+    let storedVal = safeMan.currentMetafields?.[fullKey];
+    if (!hasNonBlankValue(storedVal)) {
+      for (const ak of companionAliases) {
+        const fullAk = ak.includes(".") ? ak : `custom.${ak}`;
+        const cand = safeMan.currentMetafields?.[fullAk] ?? safeMan.currentMetafields?.[ak];
+        if (hasNonBlankValue(cand)) {
+          storedVal = cand;
+          break;
+        }
+      }
+    }
+    if (k === "seo_title" && !hasNonBlankValue(storedVal)) {
+      if (hasNonBlankValue(safeMan.nativeTargets?.seo?.title)) {
+        storedVal = safeMan.nativeTargets.seo.title;
+      }
+    }
+
+    let val = "";
+    let chosenSource = null;
+
+    if (hasManualEditFlag && manualPlanVal !== undefined) {
+      val = manualPlanVal;
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        chosenSource = "operator_locked";
+      }
+    } else if (approvalVal !== undefined) {
+      val = approvalVal;
+      if (val !== undefined && val !== null && String(val).trim() !== "") {
+        chosenSource = "operator_locked";
+      }
+    } else if (storedVal !== undefined && storedVal !== null && String(storedVal).trim() !== "") {
+      val = storedVal;
+      chosenSource = (hasManualEditFlag || approvalVal !== undefined)
+        ? "operator_locked"
+        : "passive_stored";
+    }
+
+    if (val !== undefined && val !== null && String(val).trim() !== "") {
+      const strVal = String(val).trim();
+      valuesByBareKey[k] = strVal;
+      if (chosenSource === "operator_locked") {
+        if (!operatorLockedKeys.includes(k)) operatorLockedKeys.push(k);
+        if (k === "origin_page_handle" && !operatorLockedKeys.includes("origin_handle")) {
+          operatorLockedKeys.push("origin_handle");
+          valuesByBareKey.origin_handle = strVal;
+        }
+      } else if (chosenSource === "passive_stored") {
+        if (!passiveStoredKeys.includes(k)) passiveStoredKeys.push(k);
+        if (k === "origin_page_handle" && !passiveStoredKeys.includes("origin_handle")) {
+          passiveStoredKeys.push("origin_handle");
+          valuesByBareKey.origin_handle = strVal;
+        }
+      }
+    }
+  });
+
+  // Also check native_seo_description (mapped to poetic_hook in server ALLOWED_PROVENANCE_FIELD_KEYS)
+  const hasSeoDescManualEdit = edits.native_seo_description === true;
+  const seoDescManualVal = safeMan.repairPlan?.native_seo_description;
+  const seoDescApprovalVal = apps.native_seo_description;
+  const seoDescStoredVal = safeMan.nativeTargets?.seo?.description;
+
+  if (hasSeoDescManualEdit && seoDescManualVal !== undefined && String(seoDescManualVal).trim() !== "") {
+    valuesByBareKey.poetic_hook = String(seoDescManualVal).trim();
+    if (!operatorLockedKeys.includes("poetic_hook")) operatorLockedKeys.push("poetic_hook");
+  } else if (seoDescApprovalVal !== undefined && String(seoDescApprovalVal).trim() !== "") {
+    valuesByBareKey.poetic_hook = String(seoDescApprovalVal).trim();
+    if (!operatorLockedKeys.includes("poetic_hook")) operatorLockedKeys.push("poetic_hook");
+  } else if (seoDescStoredVal !== undefined && seoDescStoredVal !== null && String(seoDescStoredVal).trim() !== "") {
+    valuesByBareKey.poetic_hook = String(seoDescStoredVal).trim();
+    if (!passiveStoredKeys.includes("poetic_hook")) passiveStoredKeys.push("poetic_hook");
+  }
+
+  const foundObjectPolarity = classifyFoundObjectPolarityClient(valuesByBareKey.found_object);
+  const isPurchasedProvenance = foundObjectPolarity === "purchased";
+  const isOriginOperatorLocked = operatorLockedKeys.includes("origin_location") && Boolean(valuesByBareKey.origin_location);
+
+  return {
+    operatorLockedKeys,
+    passiveStoredKeys,
+    valuesByBareKey,
+    foundObjectPolarity,
+    isPurchasedProvenance,
+    isOriginOperatorLocked
+  };
 };
 
 const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualProductEdits = {}, productApprovals = {}, allConfigFields = []) => {
@@ -1097,6 +1305,11 @@ export function useMetaInjectorExecution({
     }
     else if (executionMode === "AI_BATCH_PIPELINE" || executionMode === "AI_SINGLE_PIPELINE") {
       const pieceAi = aiData[currentId] || {};
+      const provenancePacket = buildProductBenchProvenancePacket(
+        manifest,
+        manualEdits[currentId] || {},
+        approvals[currentId] || {}
+      );
 
       if (aiStep === 1 && !pieceAi.titleParseRequested) {
         setAiData(prev => ({ ...prev, [currentId]: { ...pieceAi, titleParseRequested: true } }));
@@ -1112,6 +1325,36 @@ export function useMetaInjectorExecution({
         fd.append("intent", "titleParse");
         fd.append("pieceName", titleToParse);
         fd.append("pieceId", currentId);
+
+        // Pass explicit/operator-locked provenance and found_object polarity into Stage 1 so titleParse
+        // never overrides purchased material or operator-locked origin_location with a title segment.
+        if (provenancePacket.valuesByBareKey.found_object !== undefined) {
+          fd.append("found_object", provenancePacket.valuesByBareKey.found_object);
+        }
+        if (
+          provenancePacket.isOriginOperatorLocked &&
+          provenancePacket.valuesByBareKey.origin_location !== undefined
+        ) {
+          fd.append("origin_location", provenancePacket.valuesByBareKey.origin_location);
+        } else if (
+          !provenancePacket.isPurchasedProvenance &&
+          provenancePacket.valuesByBareKey.origin_location !== undefined &&
+          !provenancePacket.passiveStoredKeys.includes("origin_location")
+        ) {
+          fd.append("origin_location", provenancePacket.valuesByBareKey.origin_location);
+        }
+        if (provenancePacket.valuesByBareKey.origin_page_handle !== undefined) {
+          fd.append("origin_page_handle", provenancePacket.valuesByBareKey.origin_page_handle);
+        }
+        if (provenancePacket.valuesByBareKey.collection_name !== undefined) {
+          fd.append("collection_name", provenancePacket.valuesByBareKey.collection_name);
+        }
+        if (provenancePacket.valuesByBareKey.is_one_of_a_kind !== undefined) {
+          fd.append("is_one_of_a_kind", provenancePacket.valuesByBareKey.is_one_of_a_kind);
+        }
+        fd.append("operator_locked_fields", JSON.stringify(provenancePacket.operatorLockedKeys));
+        fd.append("passive_stored_fields", JSON.stringify(provenancePacket.passiveStoredKeys));
+
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 2 && !pieceAi.fullRescanRequested) {
@@ -1190,66 +1433,14 @@ export function useMetaInjectorExecution({
           }
         });
 
-        const hardwareKeys = [
-          "bail_included", "secondary_medium", "jewelry_finding_type",
-          "primary_use", "jewelry_type", "setting_ready",
-          "chain_material", "chain_link_type", "wire_material", "character_marks",
-          "primary_color", "secondary_colors", "color_pattern", "cut_type", "surface_finish",
-          "treatment_status", "treated", "necklace_design"
-        ];
-        const operatorLockedKeys = [];
-        const passiveStoredKeys = [];
-
-        hardwareKeys.forEach(k => {
-          const fullKey = `custom.${k}`;
-          let val = "";
-          let chosenSource = null;
-
-          const hasManualEditFlag =
-            manualEdits[currentId]?.[fullKey] === true ||
-            manualEdits[currentId]?.[k] === true;
-          const manualPlanVal =
-            manifest.repairPlan?.[fullKey] !== undefined
-              ? manifest.repairPlan[fullKey]
-              : manifest.repairPlan?.[k];
-
-          const approvalVal =
-            approvals[currentId]?.[fullKey] !== undefined
-              ? approvals[currentId][fullKey]
-              : approvals[currentId]?.[k];
-
-          if (hasManualEditFlag && manualPlanVal !== undefined) {
-            val = manualPlanVal;
-            if (val !== undefined && val !== null && String(val).trim() !== "") {
-              chosenSource = "operator_locked";
-            }
-          } else if (approvalVal !== undefined) {
-            val = approvalVal;
-            if (val !== undefined && val !== null && String(val).trim() !== "") {
-              chosenSource = "operator_locked";
-            }
-          } else if (manifest.currentMetafields?.[fullKey] !== undefined) {
-            val = manifest.currentMetafields[fullKey];
-            if (val !== undefined && val !== null && String(val).trim() !== "") {
-              // If an unusable manual edit marker or approval marker exists without a usable value, keep conservative operator lock rather than marking passive
-              chosenSource = (hasManualEditFlag || approvalVal !== undefined)
-                ? "operator_locked"
-                : "passive_stored";
-            }
-          }
-
-          if (val !== undefined && val !== null && String(val).trim() !== "") {
-            fd.set(k, String(val));
-            if (chosenSource === "operator_locked") {
-              operatorLockedKeys.push(k);
-            } else if (chosenSource === "passive_stored") {
-              passiveStoredKeys.push(k);
-            }
+        Object.entries(provenancePacket.valuesByBareKey).forEach(([bareKey, strVal]) => {
+          if (strVal !== undefined && strVal !== null && String(strVal).trim() !== "") {
+            fd.set(bareKey, String(strVal));
           }
         });
 
-        fd.append("operator_locked_fields", JSON.stringify(operatorLockedKeys));
-        fd.append("passive_stored_fields", JSON.stringify(passiveStoredKeys));
+        fd.append("operator_locked_fields", JSON.stringify(provenancePacket.operatorLockedKeys));
+        fd.append("passive_stored_fields", JSON.stringify(provenancePacket.passiveStoredKeys));
 
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
@@ -1265,6 +1456,7 @@ export function useMetaInjectorExecution({
         const tab3DataObj = validObj(pieceAi.tab3Data);
 
         const isFactKeyOperatorLocked = (factKey) => {
+          if (provenancePacket.operatorLockedKeys.includes(factKey)) return true;
           const fullKey = `custom.${factKey}`;
           if (manualEdits[currentId]?.[fullKey] === true && manifest.repairPlan?.[fullKey] !== undefined && hasNonBlankValue(manifest.repairPlan[fullKey])) {
             return true;
@@ -1312,6 +1504,16 @@ export function useMetaInjectorExecution({
               ) {
                 return;
               }
+              // When purchased provenance is active, do not let passive stored AI provenance/SEO fields
+              // (such as an earlier AI river origin_location or collection_location) override purchased provenance
+              if (
+                isPassiveStoredSource &&
+                provenancePacket.isPurchasedProvenance &&
+                PASSIVE_PROVENANCE_AND_SEO_KEYS.has(factKey) &&
+                !isFactKeyOperatorLocked(factKey)
+              ) {
+                return;
+              }
               if (isAuthoritative || !hasNonBlankValue(descriptionFacts[factKey])) {
                 descriptionFacts[factKey] = cleanVal;
               }
@@ -1327,6 +1529,7 @@ export function useMetaInjectorExecution({
 
         // Merge in order so stored merchant facts and explicit edits/approvals take precedence over AI draft outputs,
         // while preserving freshly evidenced tab3Data classification values over passive stored classification labels
+        // and preventing passive stored river origins from overriding purchased provenance.
         mergeDescriptionFacts(pieceAi.titleParse, false, false);
         mergeDescriptionFacts(pieceAi.tab3Data, false, false);
         mergeDescriptionFacts(manifest.currentMetafields, true, true);
@@ -1369,10 +1572,19 @@ export function useMetaInjectorExecution({
           }
         });
 
+        // If purchased provenance is established and origin_location was not operator-locked,
+        // ensure an unconfirmed titleParse river origin does not leak into generateDescription.
+        const effectiveDescFoundPolarity = classifyFoundObjectPolarityClient(descriptionFacts.found_object);
+        if (effectiveDescFoundPolarity === "purchased" && !isFactKeyOperatorLocked("origin_location")) {
+          const tab3Origin = tab3DataObj.origin_location ?? tab3DataObj["custom.origin_location"] ?? "";
+          descriptionFacts.origin_location = hasNonBlankValue(tab3Origin) ? String(tab3Origin).trim() : "";
+        }
+
         descriptionFacts.pieceId = currentId;
         fd.append("sharedFields", JSON.stringify({
           stone_family: descriptionFacts.material || descriptionFacts.stone_family || "",
-          origin_location: descriptionFacts.origin_location || ""
+          origin_location: descriptionFacts.origin_location || "",
+          ...(descriptionFacts.found_object !== undefined ? { found_object: descriptionFacts.found_object } : {})
         }));
         fd.append("pieceData", JSON.stringify(descriptionFacts));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
@@ -2359,6 +2571,24 @@ export function useMetaInjectorExecution({
                 const descData = updatedPieceAi.generated_description || "";
                 const rawVerifiedGeo = validObj(updatedPieceAi.verifiedGeoValues);
 
+                const mergeProvenancePacket = buildProductBenchProvenancePacket(
+                  existing,
+                  manualEdits[targetId] || {},
+                  approvals[targetId] || {}
+                );
+                const effectiveFoundPolarityForMerge = (() => {
+                  const lockedOrCurrent = mergeProvenancePacket.foundObjectPolarity;
+                  if (lockedOrCurrent !== "unknown") return lockedOrCurrent;
+                  const visPol = classifyFoundObjectPolarityClient(
+                    visionData.found_object ?? visionData["custom.found_object"]
+                  );
+                  if (visPol !== "unknown") return visPol;
+                  return classifyFoundObjectPolarityClient(
+                    titleData.found_object ?? titleData["custom.found_object"]
+                  );
+                })();
+                const isPurchasedForMerge = effectiveFoundPolarityForMerge === "purchased";
+
                 const geoSourceName = titleData?.geoSource || visionData?.geoSource || null;
                 const isVerifiedDbOrLibraryGeo =
                   geoSourceName === "library" || geoSourceName === "database" || geoSourceName === "cache";
@@ -2466,6 +2696,12 @@ export function useMetaInjectorExecution({
 
                   // Never allow generated drafts to overwrite existing merchant measurements, price, or shipping weights
                   if (OPERATOR_AUTHORITATIVE_DESTINATIONS.has(targetKey) && hasExistingMerchantValue(targetKey)) {
+                    return;
+                  }
+
+                  // Preserve actual stored found_object type & polarity when already present in Shopify
+                  if (targetKey === "custom.found_object" && hasExistingMerchantValue("custom.found_object")) {
+                    newPlan["custom.found_object"] = String(existing.currentMetafields["custom.found_object"]);
                     return;
                   }
 
@@ -2624,17 +2860,43 @@ export function useMetaInjectorExecution({
                   ) {
                     if (k.startsWith("std_") || k.startsWith("custom.std_") || k.startsWith("shopify.")) return;
                     const targetKey = normalizeIncomingTargetKey(k);
+                    // When purchased provenance is active and origin_location / collection_location were not operator-locked,
+                    // do not let titleParse backfill river/title-derived origin or collection_location into repairPlan.
+                    if (
+                      isPurchasedForMerge &&
+                      (targetKey === "custom.origin_location" ||
+                        targetKey === "custom.origin_page_handle" ||
+                        targetKey === "custom.collection_location") &&
+                      !isLockedByOperator(targetKey)
+                    ) {
+                      return;
+                    }
                     if (stagedByCanonicalInThisPass[targetKey] === undefined) {
                       safeApply(k, titleData[k], resolveFieldSourceMeta(k, "Gemini", "titleParse"));
                     }
                   }
                 });
 
-                const enrichedSeo = visionData.seo_title || visionData["custom.seo_title"] || titleData.seo_title || "";
-                if (enrichedSeo.trim() !== "") {
-                  safeApply("custom.seo_title", enrichedSeo.trim(), {
-                    source: visionData.seo_title || visionData["custom.seo_title"] ? "Vision" : "Gemini",
-                    stage: visionData.seo_title || visionData["custom.seo_title"] ? "tab3FullRescan" : "titleParse"
+                const rawVisionSeo = (visionData.seo_title || visionData["custom.seo_title"] || "").trim();
+                const rawTitleSeo = (titleData.seo_title || "").trim();
+                let enrichedSeo = rawVisionSeo || rawTitleSeo;
+                let enrichedSeoFromVision = Boolean(rawVisionSeo);
+
+                if (isPurchasedForMerge && enrichedSeo && hasRiverOrFieldCollectionClaimClient(enrichedSeo)) {
+                  const fallbackStoneFam =
+                    newPlan["custom.material"] ||
+                    existing.currentMetafields?.["custom.material"] ||
+                    visionData.stone_family ||
+                    titleData.stone_family ||
+                    "";
+                  const fallbackFormat = visionData.product_format || "";
+                  enrichedSeo = buildSafePurchasedSeoTitleClient(fallbackStoneFam, fallbackFormat);
+                }
+
+                if (enrichedSeo !== "") {
+                  safeApply("custom.seo_title", enrichedSeo, {
+                    source: enrichedSeoFromVision ? "Vision" : "Gemini",
+                    stage: enrichedSeoFromVision ? "tab3FullRescan" : "titleParse"
                   });
                 }
                 if (descData) {
@@ -2644,7 +2906,10 @@ export function useMetaInjectorExecution({
                   });
                 }
 
-                if (visionData.poetic_hook) {
+                if (
+                  visionData.poetic_hook &&
+                  !(isPurchasedForMerge && hasRiverOrFieldCollectionClaimClient(String(visionData.poetic_hook)))
+                ) {
                   safeApply("native_seo_description", visionData.poetic_hook, {
                     source: "Vision",
                     stage: "tab3FullRescan"
