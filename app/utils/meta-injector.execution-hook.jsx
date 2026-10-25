@@ -75,6 +75,11 @@ const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
   "poetic_hook"
 ]);
 
+const isGenericBareStoneToken = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return false;
+  return String(rawVal).trim().toLowerCase() === "stone";
+};
+
 // Client-side mirror of found_object polarity & river-collection claim guards (no server imports)
 const classifyFoundObjectPolarityClient = (rawVal) => {
   if (rawVal === undefined || rawVal === null) return "unknown";
@@ -411,6 +416,7 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
   const apps = validObj(productApprovals);
 
   const inspectableKeys = [
+    "material", "primary_medium", "stone_family",
     "bail_included", "secondary_medium", "jewelry_finding_type",
     "primary_use", "jewelry_type", "setting_ready",
     "chain_material", "chain_link_type", "wire_material", "character_marks",
@@ -427,7 +433,10 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
 
   inspectableKeys.forEach((k) => {
     const fullKey = `custom.${k}`;
-    const companionAliases = ALIAS_COMPANION_LOOKUP[fullKey] || [];
+    const companionAliases =
+      k === "primary_medium"
+        ? ["material", "custom.material"]
+        : (ALIAS_COMPANION_LOOKUP[fullKey] || []);
 
     const hasManualEditFlag =
       edits[fullKey] === true ||
@@ -506,11 +515,27 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
           operatorLockedKeys.push("origin_handle");
           valuesByBareKey.origin_handle = strVal;
         }
+        if (k === "material" && !operatorLockedKeys.includes("primary_medium")) {
+          operatorLockedKeys.push("primary_medium");
+          if (!hasNonBlankValue(valuesByBareKey.primary_medium)) {
+            valuesByBareKey.primary_medium = strVal;
+          }
+        }
       } else if (chosenSource === "passive_stored") {
         if (!passiveStoredKeys.includes(k)) passiveStoredKeys.push(k);
         if (k === "origin_page_handle" && !passiveStoredKeys.includes("origin_handle")) {
           passiveStoredKeys.push("origin_handle");
           valuesByBareKey.origin_handle = strVal;
+        }
+        if (
+          k === "material" &&
+          !operatorLockedKeys.includes("primary_medium") &&
+          !passiveStoredKeys.includes("primary_medium")
+        ) {
+          passiveStoredKeys.push("primary_medium");
+          if (!hasNonBlankValue(valuesByBareKey.primary_medium)) {
+            valuesByBareKey.primary_medium = strVal;
+          }
         }
       }
     }
@@ -576,6 +601,15 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
 
     const canonicalKey = normalizeIncomingTargetKey(rawKey);
     if (!canonicalKey || canonicalKey === "custom.stone_family" || isEffectiveRetiredKey(canonicalKey)) return;
+
+    // Prevent an unlocked AI/load generic "Stone" proposal from staging into custom.material
+    if (
+      canonicalKey === "custom.material" &&
+      isGenericBareStoneToken(rawVal) &&
+      !isKeyManuallyLocked("custom.material")
+    ) {
+      return;
+    }
 
     const isDirectCanonical = rawKey === canonicalKey;
     if (!canonicalCandidatesFromPlan[canonicalKey]) {
@@ -1384,14 +1418,16 @@ export function useMetaInjectorExecution({
           fd.append("imageUrl", imageUrl);
         }
 
+        // Preserve explicit stone_family (family/mineral identity) before falling back to titleParse family or material
         const resolvedStoneFamily =
+          provenancePacket.valuesByBareKey.stone_family ||
+          manifest.currentMetafields?.["custom.stone_family"] ||
+          pieceAi.titleParse?.stone_family ||
           (manualEdits[currentId]?.["custom.material"] === true ? manifest.repairPlan?.["custom.material"] : undefined) ||
           approvals[currentId]?.["custom.material"] ||
           manifest.currentMetafields?.["custom.material"] ||
-          manifest.currentMetafields?.["custom.stone_family"] ||
           manifest.currentMetafields?.["custom.primary_medium"] ||
           pieceAi.titleParse?.material ||
-          pieceAi.titleParse?.stone_family ||
           pieceAi.titleParse?.primary_medium ||
           "";
         fd.append("stone_family", resolvedStoneFamily);
@@ -1496,6 +1532,9 @@ export function useMetaInjectorExecution({
 
             if (value !== undefined && value !== null && typeof value !== "object" && String(value).trim() !== "") {
               let cleanVal = String(value).trim();
+              if (!isAuthoritative && factKey === "material" && isGenericBareStoneToken(cleanVal)) {
+                return;
+              }
               if (factKey === "piece_name") {
                 cleanVal = extractPieceNameOnly(cleanVal, manifest.nativeTargets?.productTitle || product.title);
               }
@@ -1590,7 +1629,7 @@ export function useMetaInjectorExecution({
 
         descriptionFacts.pieceId = currentId;
         fd.append("sharedFields", JSON.stringify({
-          stone_family: descriptionFacts.material || descriptionFacts.stone_family || "",
+          stone_family: descriptionFacts.stone_family || descriptionFacts.material || "",
           origin_location: descriptionFacts.origin_location || "",
           ...(descriptionFacts.found_object !== undefined ? { found_object: descriptionFacts.found_object } : {})
         }));
@@ -2691,6 +2730,11 @@ export function useMetaInjectorExecution({
                   // Never allow generated drafts to overwrite operator manual edits or explicit approvals
                   if (isLockedByOperator(targetKey)) return;
 
+                  // Prevent trimmed case-insensitive exact "Stone" from AI/fallback material or primary_medium from staging into custom.material
+                  if (targetKey === "custom.material" && isGenericBareStoneToken(rawAiValue)) {
+                    return;
+                  }
+
                   // Never silently overwrite an unresolved canonical/alias conflict
                   if (hasStoredConflictForCanonical(targetKey)) return;
 
@@ -2762,6 +2806,10 @@ export function useMetaInjectorExecution({
                   const expectedType = getExpectedFieldType(targetKey);
                   const formattedVal = formatComparableValue(normalizedValue, expectedType, targetKey);
                   if (!formattedVal) return;
+
+                  if (targetKey === "custom.material" && isGenericBareStoneToken(formattedVal)) {
+                    return;
+                  }
 
                   const isDirectCanonicalKey =
                     rawKeyName === targetKey ||

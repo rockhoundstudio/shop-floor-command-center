@@ -139,9 +139,9 @@ async function getLiveStoreDirectory(admin) {
 function splitSegmentedTitle(val) {
   if (typeof val !== "string") return [];
   const normalized = val
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
     .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
     .replace(/Ã¢â‚¬â€/g, "—")
-    .replace(/â€”/g, "—")
     .trim();
   if (!normalized) return [];
   return normalized.split(/\s+[—–-]\s+/).map(s => s.trim()).filter(Boolean);
@@ -150,9 +150,9 @@ function splitSegmentedTitle(val) {
 function extractStoneName(title) {
   if (!title) return "Unknown";
   const normalized = String(title)
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
     .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
     .replace(/Ã¢â‚¬â€/g, "—")
-    .replace(/â€”/g, "—")
     .trim();
   const segs = splitSegmentedTitle(normalized);
   const sectionOne = segs.length >= 2 ? segs[0] : normalized.split(/[—–-]/)[0].trim();
@@ -474,6 +474,11 @@ const CLASSIFICATION_OVERRIDE_KEYS = new Set([
   "necklace_design"
 ]);
 
+function isGenericBareStoneProposal(rawVal) {
+  if (rawVal === undefined || rawVal === null) return false;
+  return String(rawVal).trim().toLowerCase() === "stone";
+}
+
 function parseProvenanceFieldSet(rawJson) {
   if (rawJson === null || rawJson === undefined || String(rawJson).trim() === "") {
     return { supplied: false, valid: true, keys: new Set() };
@@ -531,7 +536,7 @@ function resolveTab3FieldProvenance(body) {
 function sanitizeCandidateString(str) {
   if (typeof str !== "string") return "";
   if (str.includes("See Shopify")) return "";
-  return str.replace(/ÃƒÂ¢Ã¢â€šÂ¬"/g, "—").replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—").trim();
+  return str.replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"/g, "—").replace(/ÃƒÂ¢Ã¢â€šÂ¬"/g, "—").replace(/Ã¢â‚¬â€/g, "—").trim();
 }
 
 function isCleanCandidateLabel(label) {
@@ -639,7 +644,7 @@ function sanitizeObject(obj) {
   for (let key in obj) {
     if (typeof obj[key] === "string") {
       if (obj[key].includes("See Shopify")) obj[key] = "";
-      else obj[key] = obj[key].replace(/ÃƒÂ¢Ã¢â€šÂ¬"/g, "—").replace(/Ã¢â‚¬"/g, "—").replace(/â€”/g, "—");
+      else obj[key] = obj[key].replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"/g, "—").replace(/ÃƒÂ¢Ã¢â€šÂ¬"/g, "—").replace(/Ã¢â‚¬â€/g, "—");
     }
   }
   return obj;
@@ -1034,7 +1039,7 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - collection_name
 - collection_location
 - primary_use: Select from the supported dropdown vocabulary ("Wearable Art", "Pendant", "Display Piece", "Cabochon — Setting Ready", "Collector Specimen"). Keep current operator-locked value; if listed under PASSIVE STORED CLASSIFICATIONS, propose a corrected value only when supported by clear physical/visual evidence.
-- primary_medium
+- primary_medium: Evidenced stone/mineral or material variety identity (never the generic word "Stone"; do not infer variety from geography; omit when unknown).
 - secondary_medium
 - wire_material: Plain text wire material when supported by facts/visible wire wrap.
 - setting_ready
@@ -1070,7 +1075,7 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "titleParse") {
-      const pieceNameInput = (body.get("pieceName") || "").replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—").replace(/Ã¢â‚¬â€/g, "—").replace(/â€”/g, "—").trim();
+      const pieceNameInput = (body.get("pieceName") || "").replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—").replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—").replace(/Ã¢â‚¬â€/g, "—").trim();
       const segments = splitSegmentedTitle(pieceNameInput);
 
       // Only parse a segmented title when it actually contains 3 title segments.
@@ -1519,11 +1524,19 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           delete parsedVision.imageAlts;
         }
 
+        // Prevent bare generic "Stone" from becoming a material/primary_medium proposal before protected-value reconciliation
+        if (isGenericBareStoneProposal(parsedVision.primary_medium)) {
+          delete parsedVision.primary_medium;
+        }
+        if (isGenericBareStoneProposal(parsedVision.material)) {
+          delete parsedVision.material;
+        }
+
         // Preserve explicit human/stored fields field-by-field; allow fresh evidence to propose corrections ONLY for passive classification keys when valid provenance explicitly marks them passive and not operator-locked
         const protectedKeys = [
           "color_pattern", "primary_color", "dimensions_mm", "honest_flaws_and_character",
           "surface_finish", "jewelry_finding_type", "bail_included", "chain_material",
-          "wire_material", "secondary_medium", "primary_medium", "primary_use",
+          "wire_material", "secondary_medium", "primary_medium", "material", "primary_use",
           "product_format", "jewelry_type", "necklace_design", "chain_link_type",
           "character_marks", "setting_ready", "craftsmanship", "poetic_hook",
           "seo_title", "google_product_category", "treated", "treatment_status"
