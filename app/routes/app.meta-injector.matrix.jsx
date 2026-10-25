@@ -63,9 +63,13 @@ import { useMetaInjectorExecution } from "../utils/meta-injector.execution-hook.
 import {
   InventorySelectionColumn,
   BenchDiagnosticHeader,
-  DescriptionReviewSection
+  DescriptionReviewSection,
+  evaluateDescriptionReviewVisibility
 } from "../components/meta-injector.bench-chrome.jsx";
-import { ManifestSectionCard } from "../components/meta-injector.manifest-section.jsx";
+import {
+  ManifestSectionCard,
+  selectManifestSectionRowDescriptors
+} from "../components/meta-injector.manifest-section.jsx";
 import { UnselectedDraftSeedIntakeCard } from "../components/meta-injector.draft-intake.jsx";
 
 // Every drawer (including Description Review and the 11th Parked / Excluded drawer) starts collapsed (false).
@@ -82,6 +86,25 @@ const SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS = Object.freeze({
   "custom.seo_title": ["native_seo_title", "custom.seo_title"],
   "native_seo_title": ["native_seo_title", "custom.seo_title"]
 });
+
+const buildRetainedFieldKeySet = (rawKey) => {
+  if (typeof rawKey !== "string" || !rawKey.trim()) return [];
+  const trimmed = rawKey.trim();
+  const targetKey = NATIVE_ALIAS_MAP[trimmed] || trimmed;
+  const approvalKey = resolveApprovalStorageKey(trimmed);
+  return Array.from(
+    new Set(
+      [
+        trimmed,
+        targetKey,
+        approvalKey,
+        ...(SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS[trimmed] || []),
+        ...(SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS[targetKey] || []),
+        ...(SHARED_PROPOSAL_APPROVAL_INVALIDATION_GROUPS[approvalKey] || [])
+      ].filter(Boolean)
+    )
+  );
+};
 
 export function OperationsMatrixTab({ products }) {
   const safeProducts = products || [];
@@ -139,14 +162,29 @@ export function OperationsMatrixTab({ products }) {
 
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState(INITIAL_EXPANDED_BAYS);
+  const [retainedFieldEditorsByOwner, setRetainedFieldEditorsByOwner] = useState({});
 
   const isComponentMountedRef = useRef(true);
+  const blurClearTimersRef = useRef(new Map());
+
+  const clearPendingEditorBlurTimers = useCallback((ownerScopeFilter = null) => {
+    const map = blurClearTimersRef.current;
+    if (!map || map.size === 0) return;
+    for (const [timerKey, timerId] of map.entries()) {
+      if (ownerScopeFilter === null || timerKey.startsWith(`${ownerScopeFilter}::`)) {
+        clearTimeout(timerId);
+        map.delete(timerKey);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     isComponentMountedRef.current = true;
     return () => {
       isComponentMountedRef.current = false;
+      clearPendingEditorBlurTimers(null);
     };
-  }, []);
+  }, [clearPendingEditorBlurTimers]);
 
   const activeBenchIdRef = useRef(selectedBenchId);
   useEffect(() => {
@@ -185,6 +223,129 @@ export function OperationsMatrixTab({ products }) {
 
   // Guarded no-op callbacks for operations not available in unselected draft mode (e.g. reference matching, keep-original)
   const noopPreviewCallback = useCallback(() => {}, []);
+
+  const getCurrentEditorOwnerScopeKey = useCallback((benchIdOverride = undefined) => {
+    const targetBenchId =
+      benchIdOverride !== undefined ? benchIdOverride : activeBenchIdRef.current;
+    if (typeof targetBenchId === "string" && targetBenchId.trim().length > 0) {
+      return targetBenchId.trim();
+    }
+    return UNSELECTED_DRAFT_STORAGE_KEY;
+  }, []);
+
+  const releaseRetainedFieldEditorKeys = useCallback(
+    (ownerScopeKey, rawKey) => {
+      if (!ownerScopeKey || typeof rawKey !== "string" || !rawKey.trim()) return;
+      const relatedKeys = buildRetainedFieldKeySet(rawKey);
+      relatedKeys.forEach((rk) => {
+        const timerKey = `${ownerScopeKey}::${rk}`;
+        const existingTimer = blurClearTimersRef.current.get(timerKey);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          blurClearTimersRef.current.delete(timerKey);
+        }
+      });
+
+      setRetainedFieldEditorsByOwner((prev) => {
+        const ownerMap = prev?.[ownerScopeKey];
+        if (!ownerMap || typeof ownerMap !== "object") return prev;
+        let mutated = false;
+        const nextOwnerMap = { ...ownerMap };
+        relatedKeys.forEach((rk) => {
+          if (nextOwnerMap[rk] !== undefined) {
+            delete nextOwnerMap[rk];
+            mutated = true;
+          }
+        });
+        if (!mutated) return prev;
+        const next = { ...prev };
+        if (Object.keys(nextOwnerMap).length === 0) {
+          delete next[ownerScopeKey];
+        } else {
+          next[ownerScopeKey] = nextOwnerMap;
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleFieldEditorFocus = useCallback(
+    (fieldKey) => {
+      if (typeof fieldKey !== "string" || !fieldKey.trim()) return;
+      const ownerScopeKey = getCurrentEditorOwnerScopeKey();
+      const relatedKeys = buildRetainedFieldKeySet(fieldKey);
+      if (relatedKeys.length === 0) return;
+
+      relatedKeys.forEach((rk) => {
+        const timerKey = `${ownerScopeKey}::${rk}`;
+        const existingTimer = blurClearTimersRef.current.get(timerKey);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          blurClearTimersRef.current.delete(timerKey);
+        }
+      });
+
+      setRetainedFieldEditorsByOwner((prev) => {
+        const ownerMap = prev?.[ownerScopeKey] || {};
+        let needsUpdate = false;
+        for (let i = 0; i < relatedKeys.length; i += 1) {
+          if (ownerMap[relatedKeys[i]] !== true) {
+            needsUpdate = true;
+            break;
+          }
+        }
+        if (!needsUpdate) return prev;
+        const nextOwnerMap = { ...ownerMap };
+        relatedKeys.forEach((rk) => {
+          nextOwnerMap[rk] = true;
+        });
+        return {
+          ...prev,
+          [ownerScopeKey]: nextOwnerMap
+        };
+      });
+    },
+    [getCurrentEditorOwnerScopeKey]
+  );
+
+  const handleFieldEditorBlur = useCallback(
+    (fieldKey) => {
+      if (typeof fieldKey !== "string" || !fieldKey.trim()) return;
+      const ownerScopeKey = getCurrentEditorOwnerScopeKey();
+      const relatedKeys = buildRetainedFieldKeySet(fieldKey);
+      if (relatedKeys.length === 0) return;
+
+      // Defer blur release briefly so clicking an adjacent Approve or Keep-Original checkbox
+      // on the same row executes its onChange handler before any filter-driven unmount.
+      relatedKeys.forEach((rk) => {
+        const timerKey = `${ownerScopeKey}::${rk}`;
+        const existingTimer = blurClearTimersRef.current.get(timerKey);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+        const timerId = setTimeout(() => {
+          blurClearTimersRef.current.delete(timerKey);
+          if (!isComponentMountedRef.current) return;
+          setRetainedFieldEditorsByOwner((prev) => {
+            const ownerMap = prev?.[ownerScopeKey];
+            if (!ownerMap || ownerMap[rk] === undefined) return prev;
+            const nextOwnerMap = { ...ownerMap };
+            delete nextOwnerMap[rk];
+            const next = { ...prev };
+            if (Object.keys(nextOwnerMap).length === 0) {
+              delete next[ownerScopeKey];
+            } else {
+              next[ownerScopeKey] = nextOwnerMap;
+            }
+            return next;
+          });
+        }, 180);
+        blurClearTimersRef.current.set(timerKey, timerId);
+      });
+    },
+    [getCurrentEditorOwnerScopeKey]
+  );
 
   // Prune any stale keep-original decisions when a product's baseline or proposal materially changes
   useEffect(() => {
@@ -396,6 +557,8 @@ export function OperationsMatrixTab({ products }) {
     setSelectedBenchId((prevId) => {
       if (prevId !== id) {
         activeDraftSeedRequestIdRef.current = null;
+        clearPendingEditorBlurTimers(null);
+        setRetainedFieldEditorsByOwner({});
         handleLiveSyncOnProductSwitch(prevId, id);
         setExpandedBays(INITIAL_EXPANDED_BAYS);
         setTelemetryPacket(null);
@@ -404,7 +567,7 @@ export function OperationsMatrixTab({ products }) {
       }
       return id;
     });
-  }, [handleLiveSyncOnProductSwitch]);
+  }, [handleLiveSyncOnProductSwitch, clearPendingEditorBlurTimers]);
 
   // Invalidate captured telemetry snapshot when a new load, AI pipeline, or repair execution starts,
   // or when the active product's repair history or reference match result changes.
@@ -415,6 +578,8 @@ export function OperationsMatrixTab({ products }) {
     if (isLoadingData || isExecuting) {
       setTelemetryPacket(null);
       setTelemetryPublishNotice(null);
+      clearPendingEditorBlurTimers(null);
+      setRetainedFieldEditorsByOwner({});
     }
     if (isLoadingData) {
       setKeepOriginalDecisions({});
@@ -422,7 +587,13 @@ export function OperationsMatrixTab({ products }) {
     if (isLoadingData && !lastNotifiedSelectionClearRef.current) {
       sendLiveBenchSelectionClear();
     }
-  }, [isLoadingData, isExecuting, lastNotifiedSelectionClearRef, sendLiveBenchSelectionClear]);
+  }, [
+    isLoadingData,
+    isExecuting,
+    lastNotifiedSelectionClearRef,
+    sendLiveBenchSelectionClear,
+    clearPendingEditorBlurTimers
+  ]);
 
   useEffect(() => {
     setTelemetryPacket((prev) => {
@@ -605,6 +776,8 @@ export function OperationsMatrixTab({ products }) {
 
   const clearBench = useCallback(() => {
     activeDraftSeedRequestIdRef.current = null;
+    clearPendingEditorBlurTimers(null);
+    setRetainedFieldEditorsByOwner({});
     handleLiveSyncOnClearBench();
 
     if (pendingReferenceMatch) {
@@ -660,7 +833,12 @@ export function OperationsMatrixTab({ products }) {
     setPendingOperation(null);
     setSafetyMessage("Rack and Bench cleared. Repair history and draft inputs reset.");
     setSafetyError("");
-  }, [pendingReferenceMatch, referenceMatchFetcher.state, handleLiveSyncOnClearBench]);
+  }, [
+    pendingReferenceMatch,
+    referenceMatchFetcher.state,
+    handleLiveSyncOnClearBench,
+    clearPendingEditorBlurTimers
+  ]);
 
   const handleToggleApproval = useCallback((pieceId, key, propVal, isChecked) => {
     const isUnselectedDraftTarget =
@@ -726,6 +904,9 @@ export function OperationsMatrixTab({ products }) {
 
     const storageOwnerKey = isUnselectedDraftTarget ? UNSELECTED_DRAFT_STORAGE_KEY : pieceId;
 
+    // Explicit resolution releases display focus retention on this field
+    releaseRetainedFieldEditorKeys(storageOwnerKey, key);
+
     if (isChecked) {
       if (propVal === undefined || propVal === null || String(propVal).trim() === "") {
         return;
@@ -765,7 +946,13 @@ export function OperationsMatrixTab({ products }) {
       }
       return next;
     });
-  }, [getStandardizedEvaluationForField, manifestData, selectedBenchId, unselectedDraftManifest]);
+  }, [
+    getStandardizedEvaluationForField,
+    manifestData,
+    selectedBenchId,
+    unselectedDraftManifest,
+    releaseRetainedFieldEditorKeys
+  ]);
 
   const handleToggleKeepOriginal = useCallback((pieceId, key, propVal, isChecked) => {
     if (!pieceId || !isExactProductGid(pieceId) || !manifestData[pieceId]) return;
@@ -801,6 +988,9 @@ export function OperationsMatrixTab({ products }) {
     if (matchedConfig?.registryRole === "EXCLUDED_INPUT" || matchedConfig?.isParkedExcluded === true) {
       return;
     }
+
+    // Explicit resolution releases display focus retention on this field
+    releaseRetainedFieldEditorKeys(pieceId, key);
 
     if (!isChecked) {
       // Unchecking returns the destination to undecided without auto-selecting Approve
@@ -874,7 +1064,8 @@ export function OperationsMatrixTab({ products }) {
     keepOriginalDecisions,
     manualEdits,
     standardizedCandidatesByProduct,
-    getStandardizedEvaluationForField
+    getStandardizedEvaluationForField,
+    releaseRetainedFieldEditorKeys
   ]);
 
   const handleReleasePendingReferenceMatch = useCallback(() => {
@@ -2213,6 +2404,30 @@ export function OperationsMatrixTab({ products }) {
     return false;
   }, [activeFilter]);
 
+  const isFieldEditorRetainedForOwner = useCallback(
+    (ownerScopeKey, fieldKey, meta) => {
+      if (!ownerScopeKey || typeof fieldKey !== "string" || !fieldKey.trim()) return false;
+      if (meta?.isParkedExcluded || meta?.isImageAltCapabilityPlaceholder || meta?.isManualOnly) {
+        return false;
+      }
+      const ownerMap = retainedFieldEditorsByOwner?.[ownerScopeKey];
+      if (!ownerMap || typeof ownerMap !== "object") return false;
+      const relatedKeys = buildRetainedFieldKeySet(fieldKey);
+      return relatedKeys.some((rk) => ownerMap[rk] === true);
+    },
+    [retainedFieldEditorsByOwner]
+  );
+
+  const isFieldEditorRetained = useCallback(
+    (fieldKey, meta) => {
+      const ownerScopeKey = selectedBenchId
+        ? selectedBenchId
+        : UNSELECTED_DRAFT_STORAGE_KEY;
+      return isFieldEditorRetainedForOwner(ownerScopeKey, fieldKey, meta);
+    },
+    [selectedBenchId, isFieldEditorRetainedForOwner]
+  );
+
   const handleCollectTelemetry = useCallback((modeArg = "full", rawOptions = {}) => {
     const cleanMode = typeof modeArg === "string" && modeArg.trim() !== "" ? modeArg.trim() : "full";
     const safeOptions = validObj(rawOptions);
@@ -2534,8 +2749,59 @@ export function OperationsMatrixTab({ products }) {
         ? getFieldMetadata("custom.generated_description", unselectedDraftManifest, null, approvals, allDynamicConfigFields)
         : null);
 
+  // Authoritative shared selection for Description Review and all 11 ManifestSectionCard drawers
+  const currentBenchOrDraftTargetId = activeBenchData ? selectedBenchId : null;
+  const descriptionReviewVisibility = effectiveManifestForSections
+    ? evaluateDescriptionReviewVisibility({
+        data: effectiveManifestForSections,
+        meta: nativeDescriptionMeta,
+        customDescMeta: customDescriptionMeta,
+        activeFilter,
+        matchesFilter,
+        isFieldEditorRetained
+      })
+    : {
+        isVisible: false,
+        nativeMatchesFilter: false,
+        customMatchesFilter: false,
+        isEditorRetained: false,
+        isCustomOnlyReviewTask: false
+      };
+
+  const sectionSelectionEntries = effectiveManifestForSections
+    ? dynamicSections.map((sec) => ({
+        section: sec,
+        selection: selectManifestSectionRowDescriptors({
+          section: sec,
+          selectedBenchId: currentBenchOrDraftTargetId,
+          data: effectiveManifestForSections,
+          approvals,
+          activeFilter,
+          getFieldMetadata,
+          matchesFilter,
+          isFieldEditorRetained
+        })
+      }))
+    : [];
+
+  const visibleSectionCardCount = sectionSelectionEntries.filter(
+    (entry) => entry.selection.shouldRenderSectionCard
+  ).length;
+  const totalVisibleFilteredSectionRows = sectionSelectionEntries.reduce(
+    (acc, entry) => acc + entry.selection.renderedRowDescriptors.length,
+    0
+  );
+  const isNeedsReviewEmptyState = Boolean(
+    effectiveManifestForSections &&
+    activeFilter === "Needs review" &&
+    !descriptionReviewVisibility.isVisible &&
+    visibleSectionCardCount === 0 &&
+    totalVisibleFilteredSectionRows === 0
+  );
+
   // Build audit count summary from reported section measurements for the current product (or null in unselected draft),
-  // keeping full 93-slot inventory counts distinct from filtered descriptor counts and mounted DOM rows.
+  // falling back to the authoritative computed descriptor lists when a drawer is unmounted in filtered views so
+  // live telemetry / audit counts remain complete and accurate even when empty drawers are hidden.
   const currentAuditOwnerId = isDevUnselectedPreview ? null : (selectedBenchId || null);
   const activeSectionMeasurementsMap =
     sectionAuditMeasurements.productId === currentAuditOwnerId
@@ -2544,14 +2810,15 @@ export function OperationsMatrixTab({ products }) {
 
   const fullInventoryKeysByGroupForAudit = {};
   const renderedKeysByGroupForAudit = {};
+  sectionSelectionEntries.forEach(({ section: sec, selection }) => {
+    fullInventoryKeysByGroupForAudit[sec.title] = selection.allSectionRowDescriptors.map((r) => r.key);
+    renderedKeysByGroupForAudit[sec.title] = selection.renderedRowDescriptors.map((r) => r.key);
+  });
   Object.entries(activeSectionMeasurementsMap).forEach(([secTitle, rec]) => {
+    if (rec?.activeFilter && rec.activeFilter !== activeFilter) return;
     const fullKeys = Array.isArray(rec?.fullInventoryKeys)
       ? rec.fullInventoryKeys
-      : Array.isArray(rec?.descriptorKeys)
-        ? rec.descriptorKeys
-        : Array.isArray(rec?.renderedKeys)
-          ? rec.renderedKeys
-          : null;
+      : null;
     if (fullKeys) {
       fullInventoryKeysByGroupForAudit[secTitle] = fullKeys;
     }
@@ -2747,7 +3014,7 @@ export function OperationsMatrixTab({ products }) {
               </BlockStack>
             </Card>
 
-            {DEV_SHOW_ALL_TEMPLATE_FIELDS && (isDevUnselectedPreview || Boolean(activeBenchData)) && (
+            {DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter !== "Needs review" && (isDevUnselectedPreview || Boolean(activeBenchData)) && (
               <Card padding="400">
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
@@ -2986,6 +3253,21 @@ export function OperationsMatrixTab({ products }) {
                       </BlockStack>
                     </Card>
 
+                    {isNeedsReviewEmptyState && (
+                      <Card padding="400">
+                        <Banner tone="success" title="Review complete — no fields currently require review in this view">
+                          <BlockStack gap="100">
+                            <Text as="p" variant="bodyMd">
+                              All review items in this unselected draft view are currently resolved. <strong>Review complete does not mean saved to Shopify.</strong>
+                            </Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Switch Filter Fields to <code>All</code> or <code>Proposed changes</code> at any time to inspect all 93 logical slots and your staged draft values.
+                            </Text>
+                          </BlockStack>
+                        </Banner>
+                      </Card>
+                    )}
+
                     <DescriptionReviewSection
                       selectedBenchId={null}
                       data={unselectedDraftManifest}
@@ -2995,9 +3277,12 @@ export function OperationsMatrixTab({ products }) {
                       activeFilter={activeFilter}
                       expandedBays={expandedBays}
                       matchesFilter={matchesFilter}
+                      isFieldEditorRetained={isFieldEditorRetained}
                       isMultilineKey={isMultilineKey}
                       onToggleBay={toggleBay}
                       onRepairPlanChange={handleRepairPlanChange}
+                      onFieldEditorFocus={handleFieldEditorFocus}
+                      onFieldEditorBlur={handleFieldEditorBlur}
                       onToggleApproval={handleToggleApproval}
                       onToggleKeepOriginal={noopPreviewCallback}
                     />
@@ -3019,12 +3304,15 @@ export function OperationsMatrixTab({ products }) {
                         pendingReferenceMatch={null}
                         getFieldMetadata={getFieldMetadata}
                         matchesFilter={matchesFilter}
+                        isFieldEditorRetained={isFieldEditorRetained}
                         onToggleBay={toggleBay}
                         onReleasePendingReferenceMatch={noopPreviewCallback}
                         onMatchReferenceChoices={noopPreviewCallback}
                         onStandardizedEntrySelectionChange={noopPreviewCallback}
                         onToggleVerifiedStandardizedEntry={noopPreviewCallback}
                         onRepairPlanChange={handleRepairPlanChange}
+                        onFieldEditorFocus={handleFieldEditorFocus}
+                        onFieldEditorBlur={handleFieldEditorBlur}
                         onToggleApproval={handleToggleApproval}
                         onToggleKeepOriginal={noopPreviewCallback}
                         onSectionRenderedCountChange={handleSectionRenderedCountChange}
@@ -3094,6 +3382,21 @@ export function OperationsMatrixTab({ products }) {
                   </BlockStack>
                 </Card>
 
+                {isNeedsReviewEmptyState && (
+                  <Card padding="400">
+                    <Banner tone="success" title="Review complete — no fields currently require review">
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodyMd">
+                          All review items for <code>{selectedBenchId}</code> are resolved in browser state ({activeApprovedWriteCount} field{activeApprovedWriteCount === 1 ? "" : "s"} approved for write, {activeKeepOriginalCount} keep-original decision{activeKeepOriginalCount === 1 ? "" : "s"}). <strong>Review complete does not mean saved to Shopify.</strong>
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Use <strong>Execute Single Repair</strong> or <strong>EXECUTE REPAIRS (LIVE)</strong> when you are ready to write approved changes to Shopify, or switch Filter Fields to <code>All</code> or <code>Proposed changes</code> to inspect the full manifest.
+                        </Text>
+                      </BlockStack>
+                    </Banner>
+                  </Card>
+                )}
+
                 <DescriptionReviewSection
                   selectedBenchId={selectedBenchId}
                   data={activeBenchData}
@@ -3103,9 +3406,12 @@ export function OperationsMatrixTab({ products }) {
                   activeFilter={activeFilter}
                   expandedBays={expandedBays}
                   matchesFilter={matchesFilter}
+                  isFieldEditorRetained={isFieldEditorRetained}
                   isMultilineKey={isMultilineKey}
                   onToggleBay={toggleBay}
                   onRepairPlanChange={handleRepairPlanChange}
+                  onFieldEditorFocus={handleFieldEditorFocus}
+                  onFieldEditorBlur={handleFieldEditorBlur}
                   onToggleApproval={handleToggleApproval}
                   onToggleKeepOriginal={handleToggleKeepOriginal}
                 />
@@ -3127,12 +3433,15 @@ export function OperationsMatrixTab({ products }) {
                     pendingReferenceMatch={pendingReferenceMatch}
                     getFieldMetadata={getFieldMetadata}
                     matchesFilter={matchesFilter}
+                    isFieldEditorRetained={isFieldEditorRetained}
                     onToggleBay={toggleBay}
                     onReleasePendingReferenceMatch={handleReleasePendingReferenceMatch}
                     onMatchReferenceChoices={handleMatchReferenceChoices}
                     onStandardizedEntrySelectionChange={handleStandardizedEntrySelectionChange}
                     onToggleVerifiedStandardizedEntry={handleToggleVerifiedStandardizedEntry}
                     onRepairPlanChange={handleRepairPlanChange}
+                    onFieldEditorFocus={handleFieldEditorFocus}
+                    onFieldEditorBlur={handleFieldEditorBlur}
                     onToggleApproval={handleToggleApproval}
                     onToggleKeepOriginal={handleToggleKeepOriginal}
                     onSectionRenderedCountChange={handleSectionRenderedCountChange}

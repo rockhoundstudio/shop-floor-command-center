@@ -33,43 +33,28 @@ const formatCompactDiagPreview = (val, maxLen = 140) => {
   return `${singleLine.slice(0, maxLen)}… (${str.length} chars total)`;
 };
 
-export function ManifestSectionCard({
+export function selectManifestSectionRowDescriptors({
   section,
   selectedBenchId,
   data,
   approvals,
-  keepOriginal = {},
   activeFilter = "All",
-  expandedBays,
-  standardizedCandidatesByProduct,
-  referenceMatchResultsByProduct,
-  referenceMatchStatusByProduct,
-  referenceMatchFetcherState,
-  pendingReferenceMatch,
   getFieldMetadata,
   matchesFilter,
-  onReleasePendingReferenceMatch,
-  onMatchReferenceChoices,
-  onStandardizedEntrySelectionChange,
-  onToggleVerifiedStandardizedEntry,
-  onRepairPlanChange,
-  onToggleApproval,
-  onToggleKeepOriginal,
-  onToggleBay,
-  onSectionRenderedCountChange
+  isFieldEditorRetained
 }) {
-  const [openApprovalDiagnostics, setOpenApprovalDiagnostics] = useState({});
-  const lastReportedSignatureRef = useRef("");
-  const sectionCardRootRef = useRef(null);
-  const rowsContainerRef = useRef(null);
-  const rowNodeMapRef = useRef(new Map());
-
-  const hasValidSection = Boolean(data && section && Array.isArray(section.keys));
+  const hasValidSection = Boolean(
+    data &&
+    section &&
+    Array.isArray(section.keys) &&
+    typeof getFieldMetadata === "function"
+  );
   const rawSectionKeys = hasValidSection ? section.keys : [];
-  const sectionConfigFields = hasValidSection && Array.isArray(section.configFields) ? section.configFields : [];
+  const sectionConfigFields =
+    hasValidSection && Array.isArray(section.configFields) ? section.configFields : [];
   const isParkedSection = Boolean(
     hasValidSection &&
-    (section.isParkedGroup === true || section.title === TAB3_PARKED_DRAWER_HEADING)
+    (section.isParkedGroup === true || section.title === TAB3_PARKED_DRAWING_FALLBACK || section.title === TAB3_PARKED_DRAWER_HEADING)
   );
 
   // Build the complete logical inventory descriptors for this section before applying activeFilter.
@@ -126,12 +111,98 @@ export function ManifestSectionCard({
 
   // Honor explicit activeFilter / matchesFilter even when DEV_SHOW_ALL_TEMPLATE_FIELDS is true.
   // Under "All", all descriptors in the section (working or parked) remain included.
-  const renderedRowDescriptors = allSectionRowDescriptors.filter(({ meta }) => {
+  // Under "Needs review", deduplicate the read-only native_description audit mirror because
+  // both native_description and custom.generated_description decisions/errors are represented
+  // in the dedicated Description Review section above.
+  const renderedRowDescriptors = allSectionRowDescriptors.filter((descriptor) => {
+    const { key, meta, isDedicatedDescriptionMirrorRow } = descriptor;
     if (!activeFilter || activeFilter === "All") return true;
+    if (activeFilter === "Needs review" && isDedicatedDescriptionMirrorRow) {
+      return false;
+    }
+    if (
+      !isDedicatedDescriptionMirrorRow &&
+      typeof isFieldEditorRetained === "function" &&
+      isFieldEditorRetained(key, meta)
+    ) {
+      return true;
+    }
     if (typeof matchesFilter === "function") {
-      return Boolean(matchesFilter(meta));
+      return Boolean(matchesFilter(meta, key));
     }
     return true;
+  });
+
+  const shouldRenderSectionCard = Boolean(
+    hasValidSection &&
+    (renderedRowDescriptors.length > 0 ||
+      (DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter === "All" && sectionConfigFields.length > 0))
+  );
+
+  return {
+    hasValidSection,
+    rawSectionKeys,
+    sectionConfigFields,
+    isParkedSection,
+    allSectionRowDescriptors,
+    renderedRowDescriptors,
+    shouldRenderSectionCard
+  };
+}
+
+const TAB3_PARKED_DRAWING_FALLBACK = TAB3_PARKED_DRAWER_HEADING;
+
+export function ManifestSectionCard({
+  section,
+  selectedBenchId,
+  data,
+  approvals,
+  keepOriginal = {},
+  activeFilter = "All",
+  expandedBays,
+  standardizedCandidatesByProduct,
+  referenceMatchResultsByProduct,
+  referenceMatchStatusByProduct,
+  referenceMatchFetcherState,
+  pendingReferenceMatch,
+  getFieldMetadata,
+  matchesFilter,
+  isFieldEditorRetained,
+  onReleasePendingReferenceMatch,
+  onMatchReferenceChoices,
+  onStandardizedEntrySelectionChange,
+  onToggleVerifiedStandardizedEntry,
+  onRepairPlanChange,
+  onFieldEditorFocus,
+  onFieldEditorBlur,
+  onToggleApproval,
+  onToggleKeepOriginal,
+  onToggleBay,
+  onSectionRenderedCountChange
+}) {
+  const [openApprovalDiagnostics, setOpenApprovalDiagnostics] = useState({});
+  const lastReportedSignatureRef = useRef("");
+  const sectionCardRootRef = useRef(null);
+  const rowsContainerRef = useRef(null);
+  const rowNodeMapRef = useRef(new Map());
+
+  const {
+    hasValidSection,
+    rawSectionKeys,
+    sectionConfigFields,
+    isParkedSection,
+    allSectionRowDescriptors,
+    renderedRowDescriptors,
+    shouldRenderSectionCard
+  } = selectManifestSectionRowDescriptors({
+    section,
+    selectedBenchId,
+    data,
+    approvals,
+    activeFilter,
+    getFieldMetadata,
+    matchesFilter,
+    isFieldEditorRetained
   });
 
   const fullSectionKeysList = allSectionRowDescriptors.map((r) => r.key);
@@ -284,15 +355,7 @@ export function ManifestSectionCard({
     renderedHasZeroImagePlaceholder
   ]);
 
-  if (!hasValidSection) return null;
-
-  // Hide sections when filtered descriptors are empty (unless activeFilter is "All" in DEV mode with valid config fields).
-  if (
-    renderedRowDescriptors.length === 0 &&
-    (!DEV_SHOW_ALL_TEMPLATE_FIELDS || activeFilter !== "All" || sectionConfigFields.length === 0)
-  ) {
-    return null;
-  }
+  if (!shouldRenderSectionCard) return null;
 
   const groupColorTone = sectionConfigFields?.[0]?.color === "success" ? "success" : undefined;
 
@@ -749,7 +812,27 @@ export function ManifestSectionCard({
                               </div>
                           </div>
                           
-                          <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
+                          <div
+                              style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}
+                              onFocusCapture={() => {
+                                if (isEditableControl && typeof onFieldEditorFocus === "function") {
+                                  onFieldEditorFocus(key);
+                                }
+                              }}
+                              onBlurCapture={(e) => {
+                                if (
+                                  e?.currentTarget &&
+                                  e?.relatedTarget &&
+                                  typeof e.currentTarget.contains === "function" &&
+                                  e.currentTarget.contains(e.relatedTarget)
+                                ) {
+                                  return;
+                                }
+                                if (typeof onFieldEditorBlur === "function") {
+                                  onFieldEditorBlur(key);
+                                }
+                              }}
+                          >
                               <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>
                                 {isVisionCandidateRow ? "Bench Proposal Value (Readable Labels + Underlying Metaobject GIDs)" : "Bench Proposal Value"}
                               </Text>
@@ -776,8 +859,21 @@ export function ManifestSectionCard({
                                 <TextField
                                     value={meta.isSupported ? displayPropVal : "Connection pending."}
                                     onChange={(val) => {
-                                      if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly && !isParkedRow && !isZeroImagePlaceholderRow && !isDedicatedDescriptionMirrorRow) {
+                                      if (isEditableControl) {
+                                        if (typeof onFieldEditorFocus === "function") {
+                                          onFieldEditorFocus(key);
+                                        }
                                         onRepairPlanChange(key, val);
+                                      }
+                                    }}
+                                    onFocus={() => {
+                                      if (isEditableControl && typeof onFieldEditorFocus === "function") {
+                                        onFieldEditorFocus(key);
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if (typeof onFieldEditorBlur === "function") {
+                                        onFieldEditorBlur(key);
                                       }
                                     }}
                                     autoComplete="off"

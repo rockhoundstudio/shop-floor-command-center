@@ -3,6 +3,72 @@ import { BlockStack, Card, Text, Banner, TextField, Button, InlineStack, Box, Ba
 import { ClipboardIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { formatDisplayFieldValue, validArray, validObj } from "../utils/meta-injector.standardized.jsx";
 
+export function evaluateDescriptionReviewVisibility({
+  data,
+  meta,
+  customDescMeta,
+  activeFilter = "All",
+  matchesFilter,
+  isFieldEditorRetained
+}) {
+  if (!data || !meta || !customDescMeta) {
+    return {
+      isVisible: false,
+      nativeMatchesFilter: false,
+      customMatchesFilter: false,
+      isEditorRetained: false,
+      isCustomOnlyReviewTask: false
+    };
+  }
+
+  const key = "native_description";
+  const customKey = "custom.generated_description";
+
+  const isEditorRetained =
+    typeof isFieldEditorRetained === "function"
+      ? Boolean(
+          isFieldEditorRetained(key, meta) ||
+          isFieldEditorRetained(customKey, customDescMeta)
+        )
+      : false;
+
+  if (!activeFilter || activeFilter === "All") {
+    return {
+      isVisible: true,
+      nativeMatchesFilter: true,
+      customMatchesFilter: true,
+      isEditorRetained,
+      isCustomOnlyReviewTask: false
+    };
+  }
+
+  const nativeMatchesFilter =
+    typeof matchesFilter === "function"
+      ? Boolean(matchesFilter(meta, key))
+      : true;
+  const customMatchesFilter =
+    typeof matchesFilter === "function"
+      ? Boolean(matchesFilter(customDescMeta, customKey))
+      : true;
+
+  const isVisible = Boolean(
+    nativeMatchesFilter || customMatchesFilter || isEditorRetained
+  );
+  const isCustomOnlyReviewTask = Boolean(
+    activeFilter === "Needs review" &&
+      !nativeMatchesFilter &&
+      customMatchesFilter
+  );
+
+  return {
+    isVisible,
+    nativeMatchesFilter,
+    customMatchesFilter,
+    isEditorRetained,
+    isCustomOnlyReviewTask
+  };
+}
+
 export function InventorySelectionColumn({
   queueIds,
   searchQuery,
@@ -229,7 +295,7 @@ export function BenchDiagnosticHeader({
             <div style={{ minWidth: 0, wordBreak: "break-word", overflowWrap: "anywhere" }}>
               <Text as="p" variant="headingSm" tone="subdued">System Status</Text>
               <BlockStack gap="100" align="start">
-                <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
+                <Text as="p" fontWeight="bold">Shopify Read: <Badge tone={statusObj.shopifyReadStatus === "Success" ? "Success" : (statusObj.shopifyReadStatus === "Running" ? "magic" : "critical")}>{statusObj.shopifyReadStatus}</Badge></Text>
                 <Text as="p" fontWeight="bold">Gemini API: <Badge tone={statusObj.geminiStatus === "Running" ? "magic" : "info"}>{statusObj.geminiStatus}</Badge></Text>
                 <Text as="p" fontWeight="bold">Vision API: <Badge tone={statusObj.visionStatus === "Running" ? "magic" : "info"}>{statusObj.visionStatus}</Badge></Text>
                 <Text as="p" fontWeight="bold">Geo Library: <Badge tone="info">{statusObj.geoLibraryStatus}</Badge></Text>
@@ -311,9 +377,12 @@ export function DescriptionReviewSection({
   activeFilter = "All",
   expandedBays,
   matchesFilter,
+  isFieldEditorRetained,
   isMultilineKey,
   onToggleBay,
   onRepairPlanChange,
+  onFieldEditorFocus,
+  onFieldEditorBlur,
   onToggleApproval,
   onToggleKeepOriginal
 }) {
@@ -324,14 +393,16 @@ export function DescriptionReviewSection({
   const key = "native_description";
   const customKey = "custom.generated_description";
 
-  // Honor activeFilter / matchesFilter for both native_description and custom.generated_description
-  // while keeping All always visible so original and rejected suggestions can be inspected.
-  if (
-    activeFilter !== "All" &&
-    typeof matchesFilter === "function" &&
-    !matchesFilter(meta) &&
-    !matchesFilter(customDescMeta)
-  ) {
+  const visibility = evaluateDescriptionReviewVisibility({
+    data,
+    meta,
+    customDescMeta,
+    activeFilter,
+    matchesFilter,
+    isFieldEditorRetained
+  });
+
+  if (!visibility.isVisible) {
     return null;
   }
 
@@ -430,7 +501,8 @@ export function DescriptionReviewSection({
     canApproveCustom ||
     canKeepOriginalCustom ||
     Boolean(customDescMeta.isApproved) ||
-    Boolean(customDescMeta.isKeepOriginalSelected);
+    Boolean(customDescMeta.isKeepOriginalSelected) ||
+    Boolean(visibility.isCustomOnlyReviewTask);
 
   let boxBg = "#f8f9fa";
   let boxBorder = "#dee2e6";
@@ -502,12 +574,24 @@ export function DescriptionReviewSection({
         <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <Text as="h3" variant="headingLg" fontWeight="bold">{sectionTitle}</Text>
           <Badge tone={statusTone}>{meta.fieldStatus}</Badge>
+          {visibility.isCustomOnlyReviewTask && (
+            <Badge tone={customStatusTone || "attention"}>
+              {`Companion Metafield Needs Review: ${customDescMeta.fieldStatus}`}
+            </Badge>
+          )}
         </div>
         <Button variant="plain" icon={isExpanded ? ChevronUpIcon : ChevronDownIcon} />
       </div>
 
       {isExpanded && (
         <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "24px", minWidth: 0, boxSizing: "border-box" }}>
+          {visibility.isCustomOnlyReviewTask && (
+            <Banner tone="warning">
+              <Text as="p" variant="bodySm" fontWeight="medium">
+                <strong>Companion Destination Still Needs Review:</strong> Primary <code>native_description</code> is resolved ({meta.fieldStatus}), but isolated destination <code>custom.generated_description</code> remains in <strong>{customDescMeta.fieldStatus}</strong>. Approve or select &quot;Use original saved value&quot; for <code>custom.generated_description</code> below to resolve this destination independently.
+              </Text>
+            </Banner>
+          )}
           <Box padding="300" background={isBlank && meta.isSupported ? "bg-surface-warning" : "bg-surface"} borderColor="border" borderWidth="1" borderRadius="200">
             <div style={{ display: "flex", flexWrap: "wrap", gap: "20px", boxSizing: "border-box", minWidth: 0 }}>
               
@@ -552,11 +636,48 @@ export function DescriptionReviewSection({
                       </div>
                   </div>
                   
-                  <div style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}>
+                  <div
+                      style={{ minWidth: 0, width: "100%", boxSizing: "border-box" }}
+                      onFocusCapture={() => {
+                        if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly && typeof onFieldEditorFocus === "function") {
+                          onFieldEditorFocus(key);
+                        }
+                      }}
+                      onBlurCapture={(e) => {
+                        if (
+                          e?.currentTarget &&
+                          e?.relatedTarget &&
+                          typeof e.currentTarget.contains === "function" &&
+                          e.currentTarget.contains(e.relatedTarget)
+                        ) {
+                          return;
+                        }
+                        if (typeof onFieldEditorBlur === "function") {
+                          onFieldEditorBlur(key);
+                        }
+                      }}
+                  >
                       <Text as="p" variant="headingSm" tone="subdued" fontWeight="bold" style={{ marginBottom: "6px" }}>Bench Proposal Value</Text>
                       <TextField
                           value={meta.isSupported ? displayPropVal : "Connection pending."}
-                          onChange={(val) => { if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly) onRepairPlanChange(key, val); }}
+                          onChange={(val) => {
+                            if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly) {
+                              if (typeof onFieldEditorFocus === "function") {
+                                onFieldEditorFocus(key);
+                              }
+                              onRepairPlanChange(key, val);
+                            }
+                          }}
+                          onFocus={() => {
+                            if (meta.isSupported && !isHeldReadOnly && !meta.isManualOnly && typeof onFieldEditorFocus === "function") {
+                              onFieldEditorFocus(key);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (typeof onFieldEditorBlur === "function") {
+                              onFieldEditorBlur(key);
+                            }
+                          }}
                           autoComplete="off"
                           multiline={isMultilineKey("custom.generated_description", meta.control) ? 6 : 3}
                           placeholder={meta.fieldStatus === "Optional blank" || meta.fieldStatus === "Required missing" ? "Blank" : (meta.fieldStatus === "Proposal not provided" ? "Not provided" : "")}
@@ -643,7 +764,7 @@ export function DescriptionReviewSection({
 
                   {/* Destination-Isolated Companion Decision Block for custom.generated_description */}
                   {showCustomDecisionControls && (
-                      <div style={{ marginTop: "8px", backgroundColor: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
+                      <div style={{ marginTop: "8px", backgroundColor: visibility.isCustomOnlyReviewTask ? "#fffbeb" : "#f8f9fa", border: visibility.isCustomOnlyReviewTask ? "2px solid #f59e0b" : "1px solid #dee2e6", borderRadius: "8px", padding: "12px", minWidth: 0, boxSizing: "border-box" }}>
                           <Text as="p" variant="bodySm" fontWeight="bold" style={{ marginBottom: "8px", color: "#334155" }}>
                             Companion Metafield Decision (<code>custom.generated_description</code> — Isolated Destination | Status: {customDescMeta.fieldStatus} | Current: {customDescMeta.currentVal.length} chars)
                           </Text>
@@ -688,6 +809,12 @@ export function DescriptionReviewSection({
                                           Use original saved value (<code>custom.generated_description</code>): <span style={{ fontWeight: "normal" }}>{customBaselineSummaryLabel} (reject suggestion &amp; omit from save)</span>
                                       </label>
                                   </div>
+                              )}
+
+                              {!canApproveCustom && !canKeepOriginalCustom && Array.isArray(customDescMeta.reasons) && customDescMeta.reasons.length > 0 && (
+                                  <Text as="p" variant="bodySm" tone={customDescMeta.hasTechnicalBlock ? "critical" : "subdued"}>
+                                    <strong>Metafield Reason:</strong> {customDescMeta.reasons.join(" | ")}
+                                  </Text>
                               )}
                           </div>
                       </div>
