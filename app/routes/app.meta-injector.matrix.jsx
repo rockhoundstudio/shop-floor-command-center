@@ -171,6 +171,10 @@ export function OperationsMatrixTab({ products }) {
   const [stockCleanupPreview, setStockCleanupPreview] = useState(null);
   const [stockCleanupSelectedMap, setStockCleanupSelectedMap] = useState({});
   const [stockCleanupOutcomeReport, setStockCleanupOutcomeReport] = useState(null);
+  const [stockCleanupInlineFeedback, setStockCleanupInlineFeedback] = useState(null);
+
+  const stockCleanupFeedbackRef = useRef(null);
+  const lastScrolledFeedbackIdRef = useRef(null);
 
   const isComponentMountedRef = useRef(true);
   const blurClearTimersRef = useRef(new Map());
@@ -193,6 +197,27 @@ export function OperationsMatrixTab({ products }) {
       clearPendingEditorBlurTimers(null);
     };
   }, [clearPendingEditorBlurTimers]);
+
+  // Bring the inline cleanup feedback banner into view once per explicit action if it is outside the viewport,
+  // without repeated or disruptive scrolling on unrelated re-renders.
+  useEffect(() => {
+    if (!stockCleanupInlineFeedback?.id) return;
+    if (lastScrolledFeedbackIdRef.current === stockCleanupInlineFeedback.id) return;
+    lastScrolledFeedbackIdRef.current = stockCleanupInlineFeedback.id;
+
+    const node = stockCleanupFeedbackRef.current;
+    if (!node || typeof node.getBoundingClientRect !== "function") return;
+    const rect = node.getBoundingClientRect();
+    const viewportHeight =
+      typeof window !== "undefined" && typeof window.innerHeight === "number"
+        ? window.innerHeight
+        : 800;
+    if (rect.top < 16 || rect.bottom > viewportHeight - 16) {
+      if (typeof node.scrollIntoView === "function") {
+        node.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }, [stockCleanupInlineFeedback]);
 
   const activeBenchIdRef = useRef(selectedBenchId);
   useEffect(() => {
@@ -829,6 +854,7 @@ export function OperationsMatrixTab({ products }) {
     setStockCleanupPreview(null);
     setStockCleanupSelectedMap({});
     setStockCleanupOutcomeReport(null);
+    setStockCleanupInlineFeedback(null);
     setIsLoadingData(false);
     setIsExecuting(false);
     setExecutionMode(null);
@@ -1085,14 +1111,26 @@ export function OperationsMatrixTab({ products }) {
 
   const handleCaptureStockCleanupPreview = useCallback((scopeMode = "loaded_all") => {
     if (isLoadingData || isExecuting) {
-      setSafetyError("Cannot preview current-stock bezel cleanup while a load or execution operation is running.");
+      setStockCleanupInlineFeedback({
+        id: `cleanup_fb_${Date.now()}`,
+        kind: "error",
+        tone: "critical",
+        title: "Cannot preview while busy",
+        message: "Wait for the current load or execution operation to finish before capturing a preview."
+      });
       return;
     }
 
     let targetIds = [];
     if (scopeMode === "active_bench") {
       if (!selectedBenchId || !isExactProductGid(selectedBenchId)) {
-        setSafetyError("Cannot preview active bench item: No valid product is currently selected on the bench.");
+        setStockCleanupInlineFeedback({
+          id: `cleanup_fb_${Date.now()}`,
+          kind: "error",
+          tone: "critical",
+          title: "No active bench product selected",
+          message: "Select a loaded product on the bench first, or click 'Preview Loaded Stock'."
+        });
         return;
       }
       targetIds = [selectedBenchId.trim()];
@@ -1114,9 +1152,13 @@ export function OperationsMatrixTab({ products }) {
     }
 
     if (targetIds.length === 0) {
-      setSafetyError(
-        "Cannot preview current-stock bezel cleanup: No loaded product baselines are available in browser state. Select products and click 'GENERATE REPAIR PLAN (LOAD DATA)' first."
-      );
+      setStockCleanupInlineFeedback({
+        id: `cleanup_fb_${Date.now()}`,
+        kind: "error",
+        tone: "critical",
+        title: "No loaded product baselines",
+        message: "Select products in column 1 and click 'GENERATE REPAIR PLAN (LOAD DATA)' before running preview."
+      });
       return;
     }
 
@@ -1134,16 +1176,33 @@ export function OperationsMatrixTab({ products }) {
     });
     setStockCleanupSelectedMap(initialSelections);
     setStockCleanupOutcomeReport(null);
-    setSafetyError("");
-    setSafetyMessage(
-      `Captured fixed one-time current-stock cleanup preview for ${previewResult.summary.capturedProductCount} product(s): ${previewResult.summary.candidateCount} eligible replacement candidate(s), ${previewResult.summary.flaggedCount} flagged item(s), ${previewResult.summary.skippedCount} preserved/clean product(s). Review before staging.`
-    );
+
+    const candCount = previewResult.summary.candidateCount;
+    const flagCount = previewResult.summary.flaggedCount;
+    const skipCount = previewResult.summary.skippedCount;
+
+    setStockCleanupInlineFeedback({
+      id: `cleanup_fb_${Date.now()}`,
+      kind: "preview_captured",
+      tone: candCount > 0 ? "info" : (flagCount > 0 ? "warning" : "success"),
+      title:
+        candCount > 0
+          ? `Preview ready: ${candCount} eligible replacement candidate(s) found (${candCount} selected)`
+          : flagCount > 0
+            ? `Preview complete: 0 auto-replaceable candidates (${flagCount} item(s) flagged for manual review)`
+            : `Preview complete: 0 false bezel claims found (${skipCount} product(s) clean or pinch-bail preserved)`,
+      message:
+        candCount > 0
+          ? `Captured ${previewResult.summary.capturedProductCount} product(s). Click 'Stage Selected Proposals for Review' below to stage selected changes, or expand Candidate Details to inspect before/after text.`
+          : `Captured ${previewResult.summary.capturedProductCount} product(s). Flagged or preserved items are never staged automatically.`
+    });
   }, [isLoadingData, isExecuting, selectedBenchId, queueIds, manifestData]);
 
   const handleCancelStockCleanupPreview = useCallback(() => {
     setStockCleanupPreview(null);
     setStockCleanupSelectedMap({});
     setStockCleanupOutcomeReport(null);
+    setStockCleanupInlineFeedback(null);
   }, []);
 
   const handleToggleStockCleanupCandidateSelection = useCallback((candidateId, isChecked) => {
@@ -1167,11 +1226,23 @@ export function OperationsMatrixTab({ products }) {
 
   const handleStageSelectedStockCleanupCandidates = useCallback(() => {
     if (!stockCleanupPreview || !Array.isArray(stockCleanupPreview.candidates)) {
-      setSafetyError("No active current-stock cleanup preview to stage.");
+      setStockCleanupInlineFeedback({
+        id: `cleanup_fb_${Date.now()}`,
+        kind: "error",
+        tone: "critical",
+        title: "No active preview",
+        message: "Capture a preview first before staging candidates."
+      });
       return;
     }
     if (isLoadingData || isExecuting) {
-      setSafetyError("Cannot stage cleanup candidates while a load or execution operation is running.");
+      setStockCleanupInlineFeedback({
+        id: `cleanup_fb_${Date.now()}`,
+        kind: "error",
+        tone: "critical",
+        title: "Cannot stage while busy",
+        message: "Wait for the current load or execution operation to finish before staging."
+      });
       return;
     }
 
@@ -1185,7 +1256,13 @@ export function OperationsMatrixTab({ products }) {
     );
 
     if (selectedCandidates.length === 0) {
-      setSafetyError("No previewed cleanup candidates are selected for staging.");
+      setStockCleanupInlineFeedback({
+        id: `cleanup_fb_${Date.now()}`,
+        kind: "no_selection",
+        tone: "warning",
+        title: "0 candidates selected — nothing staged",
+        message: "No previewed cleanup candidates are selected. Expand Candidate Details below and check at least one candidate, or click 'Select All Candidates'."
+      });
       return;
     }
 
@@ -1426,23 +1503,53 @@ export function OperationsMatrixTab({ products }) {
       });
     }
 
-    setStockCleanupOutcomeReport({
+    const reportObj = {
       stagedAt: new Date().toISOString(),
+      selectedCount: selectedCandidates.length,
       stagedEntries,
       rejectedStaleEntries,
       preservedOperatorEntries
-    });
+    };
+    setStockCleanupOutcomeReport(reportObj);
 
-    if (stagedEntries.length > 0) {
-      setSafetyError("");
-      setSafetyMessage(
-        `Staged ${stagedEntries.length} one-time bezel cleanup proposal(s) across ${affectedProductIds.length} product(s) as unapproved review items (${preservedOperatorEntries.length} preserved due to existing edits/decisions, ${rejectedStaleEntries.length} rejected as stale). Explicit approval is required before saving.`
-      );
+    const stagedCount = stagedEntries.length;
+    const preservedCount = preservedOperatorEntries.length;
+    const staleCount = rejectedStaleEntries.length;
+
+    let feedbackTone = "success";
+    let feedbackKind = "staged_all";
+    let feedbackTitle = "";
+    let feedbackMessage = "";
+
+    if (stagedCount > 0 && preservedCount === 0 && staleCount === 0) {
+      feedbackTone = "success";
+      feedbackKind = "staged_all";
+      feedbackTitle = `Staged ${stagedCount} proposal(s) across ${affectedProductIds.length} product(s) for review`;
+      feedbackMessage = "Proposals are staged as unapproved review items. Approve each desired field in the drawers below before saving to Shopify.";
+    } else if (stagedCount > 0) {
+      feedbackTone = "warning";
+      feedbackKind = "staged_partial";
+      feedbackTitle = `Partially staged: ${stagedCount} staged | ${preservedCount} skipped (existing edit/approval/proposal) | ${staleCount} rejected (stale)`;
+      feedbackMessage = "Staged proposals require explicit approval below. Skipped items retained their existing operator decisions or AI proposals.";
+    } else if (staleCount > 0 && preservedCount === 0) {
+      feedbackTone = "critical";
+      feedbackKind = "zero_staged_stale";
+      feedbackTitle = `0 proposals staged — ${staleCount} rejected as stale`;
+      feedbackMessage = "Underlying product baseline changed since the preview was captured. Click Preview again to refresh.";
     } else {
-      setSafetyMessage(
-        `No cleanup candidates were staged (${preservedOperatorEntries.length} preserved due to existing edits/decisions, ${rejectedStaleEntries.length} rejected as stale).`
-      );
+      feedbackTone = "warning";
+      feedbackKind = "zero_staged_preserved";
+      feedbackTitle = `0 proposals staged — ${preservedCount} skipped (existing approval, edit, or AI proposal preserved)${staleCount > 0 ? ` | ${staleCount} stale` : ""}`;
+      feedbackMessage = "Staging never overwrites an existing approval, manual edit, Keep Original choice, or diverging AI proposal. Expand skipped details below to see which fields were preserved.";
     }
+
+    setStockCleanupInlineFeedback({
+      id: `cleanup_fb_${Date.now()}`,
+      kind: feedbackKind,
+      tone: feedbackTone,
+      title: feedbackTitle,
+      message: feedbackMessage
+    });
   }, [
     stockCleanupPreview,
     stockCleanupSelectedMap,
@@ -3262,6 +3369,7 @@ export function OperationsMatrixTab({ products }) {
   );
 
   const loadedManifestCount = Object.keys(manifestData || {}).length;
+  const totalCleanupCandidateCount = stockCleanupPreview?.candidates?.length || 0;
   const selectedCleanupCandidateCount = stockCleanupPreview?.candidates
     ? stockCleanupPreview.candidates.filter((c) => stockCleanupSelectedMap[c.candidateId] === true).length
     : 0;
@@ -3393,12 +3501,12 @@ export function OperationsMatrixTab({ products }) {
 
                 {/* EXPLICIT ONE-TIME CURRENT-STOCK BEZEL CLEANUP PREVIEW & STAGING PANEL */}
                 <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
-                  <BlockStack gap="300">
+                  <BlockStack gap="200">
                     <InlineStack align="space-between" blockAlign="center">
                       <InlineStack gap="200" blockAlign="center">
-                        <Badge tone="attention">One-Time Current-Stock Operation</Badge>
+                        <Badge tone="attention">One-Time Stock Cleanup</Badge>
                         <Text as="h4" variant="headingSm" fontWeight="bold">
-                          Current-Stock Bezel Claim Cleanup (Glue-On Setting w/ Integrated Chain Loop; Pinch Bails Preserved)
+                          Current-Stock Bezel Claim Cleanup (Glue-On w/ Loop; Pinch Bails Preserved)
                         </Text>
                       </InlineStack>
                       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -3408,7 +3516,7 @@ export function OperationsMatrixTab({ products }) {
                           onClick={() => handleCaptureStockCleanupPreview("loaded_all")}
                           disabled={loadedManifestCount === 0 || isLoadingData || isExecuting}
                         >
-                          {`Preview Loaded Stock (${loadedManifestCount} loaded)`}
+                          {`Preview Loaded Stock (${loadedManifestCount})`}
                         </Button>
                         <Button
                           size="slim"
@@ -3432,185 +3540,303 @@ export function OperationsMatrixTab({ products }) {
                       </div>
                     </InlineStack>
 
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      <strong>Scope &amp; Safety Contract:</strong> This explicit one-time preview inspects only the fixed product IDs captured when you click Preview above. It never runs on load or rescan, never converts pinch bails (pins through drilled holes) to glue-on, flags ambiguous/decorative or contradictory bezel wording instead of guessing, and stages selected replacements as unapproved review proposals. Outside this explicit operation, future genuine bezel stock remains allowed.
-                    </Text>
+                    <details style={{ fontSize: "12px", color: "#475569" }}>
+                      <summary style={{ cursor: "pointer", fontWeight: "600" }}>
+                        Scope &amp; Safety Rules (Click to expand)
+                      </summary>
+                      <div style={{ marginTop: "6px", paddingLeft: "8px", lineHeight: "1.45" }}>
+                        Inspects only the fixed product IDs captured when you click Preview. Never runs on load or rescan, never converts pinch bails (pins through drilled holes) to glue-on, flags ambiguous/contradictory bezel wording instead of guessing, and stages selected replacements as unapproved review proposals. Existing approvals, manual edits, Keep Original choices, and diverging AI proposals are preserved and never overwritten.
+                      </div>
+                    </details>
+
+                    {/* ACCESSIBLE LIVE FEEDBACK IMMEDIATELY BESIDE CONTROLS */}
+                    <div
+                      ref={stockCleanupFeedbackRef}
+                      role={stockCleanupInlineFeedback?.tone === "critical" ? "alert" : "status"}
+                      aria-live={stockCleanupInlineFeedback?.tone === "critical" ? "assertive" : "polite"}
+                      aria-atomic="true"
+                    >
+                      {stockCleanupInlineFeedback && (
+                        <Banner
+                          tone={stockCleanupInlineFeedback.tone || "info"}
+                          title={stockCleanupInlineFeedback.title}
+                          onDismiss={() => setStockCleanupInlineFeedback(null)}
+                        >
+                          <BlockStack gap="150">
+                            <Text as="p" variant="bodySm">
+                              {stockCleanupInlineFeedback.message}
+                            </Text>
+                            {stockCleanupOutcomeReport && (
+                              <InlineStack gap="200" wrap>
+                                <Badge tone={stockCleanupOutcomeReport.stagedEntries.length > 0 ? "success" : "new"}>
+                                  {`Staged: ${stockCleanupOutcomeReport.stagedEntries.length}`}
+                                </Badge>
+                                <Badge tone={stockCleanupOutcomeReport.preservedOperatorEntries.length > 0 ? "warning" : "new"}>
+                                  {`Skipped (Preserved Existing): ${stockCleanupOutcomeReport.preservedOperatorEntries.length}`}
+                                </Badge>
+                                <Badge tone={stockCleanupOutcomeReport.rejectedStaleEntries.length > 0 ? "critical" : "new"}>
+                                  {`Rejected (Stale): ${stockCleanupOutcomeReport.rejectedStaleEntries.length}`}
+                                </Badge>
+                              </InlineStack>
+                            )}
+                          </BlockStack>
+                        </Banner>
+                      )}
+                    </div>
 
                     {stockCleanupPreview && (
                       <Box padding="300" background="bg-surface" borderRadius="200" borderColor="border" borderWidth="1">
-                        <BlockStack gap="300">
-                          <InlineStack align="space-between" blockAlign="center">
-                            <Text as="p" variant="bodyMd" fontWeight="bold">
-                              Captured Snapshot ({stockCleanupPreview.evaluatedAt}): {stockCleanupPreview.summary.capturedProductCount} product(s) captured | {stockCleanupPreview.summary.candidateCount} eligible replacement(s) across {stockCleanupPreview.summary.affectedProductCount} product(s) | {stockCleanupPreview.summary.flaggedCount} flagged | {stockCleanupPreview.summary.skippedCount} preserved/clean | {stockCleanupPreview.summary.unavailableCount} unavailable
-                            </Text>
-                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                              {stockCleanupPreview.candidates.length > 0 && (
-                                <>
-                                  <Button
-                                    size="slim"
-                                    variant="tertiary"
-                                    onClick={() => handleSelectAllStockCleanupCandidates(true)}
-                                  >
-                                    Select All Candidates
-                                  </Button>
-                                  <Button
-                                    size="slim"
-                                    variant="tertiary"
-                                    onClick={() => handleSelectAllStockCleanupCandidates(false)}
-                                  >
-                                    Deselect All
-                                  </Button>
-                                  <Button
-                                    size="slim"
-                                    variant="primary"
-                                    onClick={handleStageSelectedStockCleanupCandidates}
-                                    disabled={selectedCleanupCandidateCount === 0 || isLoadingData || isExecuting}
-                                  >
-                                    {`Stage Selected Proposals for Review (${selectedCleanupCandidateCount}/${stockCleanupPreview.candidates.length})`}
-                                  </Button>
-                                </>
+                        <BlockStack gap="250">
+                          {/* COMPACT ACTION BAR & SELECTION STATUS */}
+                          <InlineStack align="space-between" blockAlign="center" wrap>
+                            <InlineStack gap="150" blockAlign="center" wrap>
+                              <Badge tone="info">
+                                {`Captured: ${stockCleanupPreview.summary.capturedProductCount} product(s)`}
+                              </Badge>
+                              <Badge tone={totalCleanupCandidateCount > 0 ? "success" : "new"}>
+                                {`Eligible: ${totalCleanupCandidateCount}`}
+                              </Badge>
+                              <Badge tone={selectedCleanupCandidateCount > 0 ? "attention" : "critical"}>
+                                {selectedCleanupCandidateCount > 0
+                                  ? `Selected: ${selectedCleanupCandidateCount} of ${totalCleanupCandidateCount}`
+                                  : `Nothing selected (0 of ${totalCleanupCandidateCount})`}
+                              </Badge>
+                              {stockCleanupPreview.summary.flaggedCount > 0 && (
+                                <Badge tone="warning">
+                                  {`Flagged: ${stockCleanupPreview.summary.flaggedCount}`}
+                                </Badge>
                               )}
-                            </div>
+                              {stockCleanupPreview.summary.skippedCount > 0 && (
+                                <Badge>
+                                  {`Preserved/Clean: ${stockCleanupPreview.summary.skippedCount}`}
+                                </Badge>
+                              )}
+                            </InlineStack>
+
+                            {totalCleanupCandidateCount > 0 && (
+                              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                                <Button
+                                  size="slim"
+                                  variant="tertiary"
+                                  onClick={() => handleSelectAllStockCleanupCandidates(true)}
+                                  disabled={isLoadingData || isExecuting}
+                                >
+                                  Select All Candidates
+                                </Button>
+                                <Button
+                                  size="slim"
+                                  variant="tertiary"
+                                  onClick={() => handleSelectAllStockCleanupCandidates(false)}
+                                  disabled={isLoadingData || isExecuting}
+                                >
+                                  Deselect All
+                                </Button>
+                                <Button
+                                  size="slim"
+                                  variant="primary"
+                                  onClick={handleStageSelectedStockCleanupCandidates}
+                                  disabled={selectedCleanupCandidateCount === 0 || isLoadingData || isExecuting}
+                                >
+                                  {`Stage Selected Proposals for Review (${selectedCleanupCandidateCount}/${totalCleanupCandidateCount})`}
+                                </Button>
+                              </div>
+                            )}
                           </InlineStack>
 
-                          <div style={{ fontSize: "12px", color: "#475569", wordBreak: "break-word" }}>
-                            <strong>Fixed Captured Product GIDs ({stockCleanupPreview.capturedProductIds.length}):</strong>{" "}
-                            <code>{stockCleanupPreview.capturedProductIds.join(", ") || "None"}</code>
-                          </div>
+                          {/* EXPANDABLE SKIPPED / STAGED OUTCOME DETAILS RIGHT UNDER THE STAGE BUTTON */}
+                          {stockCleanupOutcomeReport && (
+                            <Box padding="200" background="bg-surface-secondary" borderRadius="150" borderColor="border" borderWidth="1">
+                              <BlockStack gap="150">
+                                {stockCleanupOutcomeReport.stagedEntries.length > 0 && (
+                                  <details>
+                                    <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#166534" }}>
+                                      {`Staged for Review (${stockCleanupOutcomeReport.stagedEntries.length}) — Click to view destinations`}
+                                    </summary>
+                                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#166534" }}>
+                                      {stockCleanupOutcomeReport.stagedEntries.map((st, idx) => (
+                                        <div key={`staged-${idx}`} style={{ wordBreak: "break-word" }}>
+                                          • <strong>{st.productTitle}</strong> (<code>{st.destinationKey}</code>) — Staged for explicit approval below.
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </details>
+                                )}
 
-                          {/* 1. Eligible Replacement Candidates Table */}
-                          {stockCleanupPreview.candidates.length > 0 ? (
-                            <div style={{ overflowX: "auto" }}>
-                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                                <thead>
-                                  <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
-                                    <th style={{ padding: "6px 8px" }}>Stage?</th>
-                                    <th style={{ padding: "6px 8px" }}>Product</th>
-                                    <th style={{ padding: "6px 8px" }}>Destination</th>
-                                    <th style={{ padding: "6px 8px" }}>Before (Current Stored)</th>
-                                    <th style={{ padding: "6px 8px" }}>After (Proposed Replacement)</th>
-                                    <th style={{ padding: "6px 8px" }}>Rule / Reason</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {stockCleanupPreview.candidates.map((cand) => {
-                                    const isChecked = stockCleanupSelectedMap[cand.candidateId] === true;
-                                    const beforePreview =
-                                      cand.beforeValue.length > 260
-                                        ? `${cand.beforeValue.slice(0, 260)}… (${cand.beforeValue.length} chars)`
-                                        : cand.beforeValue;
-                                    const afterPreview =
-                                      cand.afterValue.length > 260
-                                        ? `${cand.afterValue.slice(0, 260)}… (${cand.afterValue.length} chars)`
-                                        : cand.afterValue;
-                                    return (
-                                      <tr key={cand.candidateId} style={{ borderBottom: "1px solid #e2e8f0", verticalAlign: "top" }}>
-                                        <td style={{ padding: "6px 8px" }}>
-                                          <input
-                                            type="checkbox"
-                                            checked={isChecked}
-                                            onChange={(e) =>
-                                              handleToggleStockCleanupCandidateSelection(cand.candidateId, e.target.checked)
-                                            }
-                                            aria-label={`Select cleanup candidate ${cand.productTitle} ${cand.destinationKey}`}
-                                          />
-                                        </td>
-                                        <td style={{ padding: "6px 8px", wordBreak: "break-word" }}>
-                                          <div style={{ fontWeight: "600" }}>{cand.productTitle}</div>
-                                          <div style={{ fontFamily: "monospace", color: "#475569" }}>{cand.productId}</div>
-                                        </td>
-                                        <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>
-                                          <div>{cand.destinationKey}</div>
-                                          <div style={{ color: "#475569", fontFamily: "sans-serif" }}>{cand.fieldLabel}</div>
-                                        </td>
-                                        <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#fff5f5" }}>
-                                          {beforePreview}
-                                        </td>
-                                        <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#f0fdf4" }}>
-                                          {afterPreview}
-                                        </td>
-                                        <td style={{ padding: "6px 8px", color: "#334155" }}>{cand.reason}</td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
+                                {stockCleanupOutcomeReport.preservedOperatorEntries.length > 0 && (
+                                  <details open={stockCleanupOutcomeReport.stagedEntries.length === 0}>
+                                    <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#854d0e" }}>
+                                      {`Skipped to Preserve Existing Approval / Edit / AI Proposal (${stockCleanupOutcomeReport.preservedOperatorEntries.length}) — Click to view reasons`}
+                                    </summary>
+                                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#713f12" }}>
+                                      {stockCleanupOutcomeReport.preservedOperatorEntries.map((p, idx) => (
+                                        <div key={`pres-${idx}`} style={{ wordBreak: "break-word" }}>
+                                          • <strong>{p.productTitle}</strong> — <code>{p.destinationKey}</code> ({p.fieldLabel}): {p.reason}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </details>
+                                )}
+
+                                {stockCleanupOutcomeReport.rejectedStaleEntries.length > 0 && (
+                                  <details open={stockCleanupOutcomeReport.stagedEntries.length === 0}>
+                                    <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#991b1b" }}>
+                                      {`Rejected Stale Candidates (${stockCleanupOutcomeReport.rejectedStaleEntries.length}) — Click to view reasons`}
+                                    </summary>
+                                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#991b1b" }}>
+                                      {stockCleanupOutcomeReport.rejectedStaleEntries.map((r, idx) => (
+                                        <div key={`stale-${idx}`} style={{ wordBreak: "break-word" }}>
+                                          • <strong>{r.productTitle}</strong> — <code>{r.destinationKey}</code> ({r.fieldLabel}): {r.reason}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </details>
+                                )}
+                              </BlockStack>
+                            </Box>
+                          )}
+
+                          {/* 1. EXPANDABLE CANDIDATE SELECTION & FULL BEFORE/AFTER REVIEW TABLE */}
+                          {totalCleanupCandidateCount > 0 ? (
+                            <details style={{ border: "1px solid #cbd5e1", borderRadius: "6px", padding: "8px 10px", backgroundColor: "#f8fafc" }}>
+                              <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "13px", color: "#0f172a" }}>
+                                {`Review & Select Eligible Replacement Candidates (${selectedCleanupCandidateCount} of ${totalCleanupCandidateCount} selected — Click to expand Before/After table)`}
+                              </summary>
+                              <div style={{ marginTop: "10px", overflowX: "auto" }}>
+                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", backgroundColor: "#ffffff" }}>
+                                  <thead>
+                                    <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
+                                      <th style={{ padding: "6px 8px" }}>Stage?</th>
+                                      <th style={{ padding: "6px 8px" }}>Product</th>
+                                      <th style={{ padding: "6px 8px" }}>Destination</th>
+                                      <th style={{ padding: "6px 8px" }}>Before (Current Stored)</th>
+                                      <th style={{ padding: "6px 8px" }}>After (Proposed Replacement)</th>
+                                      <th style={{ padding: "6px 8px" }}>Rule / Reason</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {stockCleanupPreview.candidates.map((cand) => {
+                                      const isChecked = stockCleanupSelectedMap[cand.candidateId] === true;
+                                      const isLongBefore = cand.beforeValue.length > 220;
+                                      const isLongAfter = cand.afterValue.length > 220;
+                                      return (
+                                        <tr key={cand.candidateId} style={{ borderBottom: "1px solid #e2e8f0", verticalAlign: "top" }}>
+                                          <td style={{ padding: "6px 8px" }}>
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={(e) =>
+                                                handleToggleStockCleanupCandidateSelection(cand.candidateId, e.target.checked)
+                                              }
+                                              aria-label={`Select cleanup candidate ${cand.productTitle} ${cand.destinationKey}`}
+                                            />
+                                          </td>
+                                          <td style={{ padding: "6px 8px", wordBreak: "break-word" }}>
+                                            <div style={{ fontWeight: "600" }}>{cand.productTitle}</div>
+                                            <div style={{ fontFamily: "monospace", color: "#475569" }}>{cand.productId}</div>
+                                          </td>
+                                          <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>
+                                            <div>{cand.destinationKey}</div>
+                                            <div style={{ color: "#475569", fontFamily: "sans-serif" }}>{cand.fieldLabel}</div>
+                                          </td>
+                                          <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#fff5f5" }}>
+                                            {isLongBefore ? (
+                                              <details>
+                                                <summary style={{ cursor: "pointer", fontWeight: "600" }}>
+                                                  {`${cand.beforeValue.slice(0, 180)}… (Click for full ${cand.beforeValue.length} chars)`}
+                                                </summary>
+                                                <div style={{ marginTop: "6px" }}>{cand.beforeValue}</div>
+                                              </details>
+                                            ) : (
+                                              cand.beforeValue
+                                            )}
+                                          </td>
+                                          <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#f0fdf4" }}>
+                                            {isLongAfter ? (
+                                              <details>
+                                                <summary style={{ cursor: "pointer", fontWeight: "600" }}>
+                                                  {`${cand.afterValue.slice(0, 180)}… (Click for full ${cand.afterValue.length} chars)`}
+                                                </summary>
+                                                <div style={{ marginTop: "6px" }}>{cand.afterValue}</div>
+                                              </details>
+                                            ) : (
+                                              cand.afterValue
+                                            )}
+                                          </td>
+                                          <td style={{ padding: "6px 8px", color: "#334155" }}>{cand.reason}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
                           ) : (
                             <Text as="p" variant="bodySm" tone="subdued">
                               No unambiguous false bezel replacement candidates were found in the captured product baselines.
                             </Text>
                           )}
 
-                          {/* 2. Ambiguous or Contradictory Flagged Items (Never Staged Automatically) */}
-                          {stockCleanupPreview.flaggedItems.length > 0 && (
-                            <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
-                              <BlockStack gap="150">
-                                <Text as="p" variant="bodySm" fontWeight="bold" tone="critical">
-                                  Flagged Ambiguous or Contradictory Bezel Mentions ({stockCleanupPreview.flaggedItems.length} — Not Staged; Resolve Manually):
-                                </Text>
-                                {stockCleanupPreview.flaggedItems.map((flg, idx) => (
-                                  <div key={`${flg.productId}-${flg.destinationKey}-${idx}`} style={{ fontSize: "12px", wordBreak: "break-word" }}>
-                                    • <strong>{flg.productTitle}</strong> (<code>{flg.productId}</code>) — <code>{flg.destinationKey}</code>: {flg.reason} [Current: &quot;{flg.beforeValue.length > 160 ? `${flg.beforeValue.slice(0, 160)}…` : flg.beforeValue}&quot;]
-                                  </div>
-                                ))}
-                              </BlockStack>
-                            </Box>
-                          )}
-
-                          {/* 3. Saved Stone-Identity Writer Limitation Diagnostics (Requirement 10) */}
-                          {stockCleanupPreview.stoneIdentityDiagnostics.length > 0 && (
-                            <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
-                              <BlockStack gap="150">
-                                <Text as="p" variant="bodySm" fontWeight="bold">
-                                  Saved Stone-Identity Compatibility Writer Limitation Diagnostics ({stockCleanupPreview.stoneIdentityDiagnostics.length}):
-                                </Text>
-                                {stockCleanupPreview.stoneIdentityDiagnostics.map((diag) => (
-                                  <div key={diag.productId} style={{ fontSize: "12px", wordBreak: "break-word" }}>
-                                    • <strong>{diag.productTitle}</strong> (<code>{diag.productId}</code>) — Saved <code>custom.material</code>: <code>{String(diag.savedMaterial ?? "blank")}</code> | Saved <code>custom.primary_medium</code>: <code>{String(diag.savedPrimaryMedium ?? "blank")}</code> | Saved <code>custom.stone_family</code>: <code>{String(diag.savedStoneFamily ?? "blank")}</code>. <strong>Unresolved Writer Limitation:</strong> {diag.compatibilityWriterLimitation}
-                                  </div>
-                                ))}
-                              </BlockStack>
-                            </Box>
-                          )}
-
-                          {/* 4. Skipped / Pinch-Bail Preserved & Unavailable Items */}
-                          {(stockCleanupPreview.skippedItems.length > 0 || stockCleanupPreview.unavailableProducts.length > 0) && (
-                            <div style={{ fontSize: "12px", color: "#475569", wordBreak: "break-word" }}>
-                              {stockCleanupPreview.skippedItems.length > 0 && (
-                                <div>
-                                  <strong>Preserved / Clean Products ({stockCleanupPreview.skippedItems.length}):</strong>{" "}
-                                  {stockCleanupPreview.skippedItems.map((sk) => `${sk.productTitle} (${sk.status}: ${sk.reason})`).join(" | ")}
+                          {/* 2. EXPANDABLE FLAGGED ITEMS, STONE-IDENTITY LIMITATIONS & CAPTURED GIDS */}
+                          {(stockCleanupPreview.flaggedItems.length > 0 ||
+                            stockCleanupPreview.stoneIdentityDiagnostics.length > 0 ||
+                            stockCleanupPreview.skippedItems.length > 0 ||
+                            stockCleanupPreview.unavailableProducts.length > 0 ||
+                            stockCleanupPreview.capturedProductIds.length > 0) && (
+                            <details style={{ border: "1px solid #e2e8f0", borderRadius: "6px", padding: "8px 10px", fontSize: "12px" }}>
+                              <summary style={{ cursor: "pointer", fontWeight: "600", color: "#334155" }}>
+                                {`Preview Diagnostics: Flagged (${stockCleanupPreview.flaggedItems.length}) | Stone-Identity Writer Limits (${stockCleanupPreview.stoneIdentityDiagnostics.length}) | Preserved/Clean (${stockCleanupPreview.skippedItems.length}) | Unavailable (${stockCleanupPreview.unavailableProducts.length})`}
+                              </summary>
+                              <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                                <div style={{ color: "#475569", wordBreak: "break-word" }}>
+                                  <strong>Fixed Captured Product GIDs ({stockCleanupPreview.capturedProductIds.length}):</strong>{" "}
+                                  <code>{stockCleanupPreview.capturedProductIds.join(", ") || "None"}</code>
                                 </div>
-                              )}
-                              {stockCleanupPreview.unavailableProducts.length > 0 && (
-                                <div style={{ marginTop: "4px", color: "#991b1b" }}>
-                                  <strong>Unavailable Baselines ({stockCleanupPreview.unavailableProducts.length}):</strong>{" "}
-                                  {stockCleanupPreview.unavailableProducts.map((un) => `${un.productTitle} (${un.productId}: ${un.reason})`).join(" | ")}
-                                </div>
-                              )}
-                            </div>
-                          )}
 
-                          {/* 5. Staging Outcome Report */}
-                          {stockCleanupOutcomeReport && (
-                            <Box padding="200" background="bg-surface-secondary" borderRadius="150" borderColor="border" borderWidth="1">
-                              <BlockStack gap="100">
-                                <Text as="p" variant="bodySm" fontWeight="bold">
-                                  Staging Report ({stockCleanupOutcomeReport.stagedAt}): {stockCleanupOutcomeReport.stagedEntries.length} staged for explicit review | {stockCleanupOutcomeReport.preservedOperatorEntries.length} preserved (existing edit/decision) | {stockCleanupOutcomeReport.rejectedStaleEntries.length} rejected (stale baseline)
-                                </Text>
-                                {stockCleanupOutcomeReport.preservedOperatorEntries.map((p, idx) => (
-                                  <div key={`pres-${idx}`} style={{ fontSize: "12px", color: "#0f5132" }}>
-                                    • Preserved <strong>{p.productTitle}</strong> (<code>{p.destinationKey}</code>): {p.reason}
+                                {stockCleanupPreview.flaggedItems.length > 0 && (
+                                  <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
+                                    <BlockStack gap="100">
+                                      <Text as="p" variant="bodySm" fontWeight="bold" tone="critical">
+                                        Flagged Ambiguous or Contradictory Bezel Mentions ({stockCleanupPreview.flaggedItems.length} — Not Staged; Resolve Manually):
+                                      </Text>
+                                      {stockCleanupPreview.flaggedItems.map((flg, idx) => (
+                                        <div key={`${flg.productId}-${flg.destinationKey}-${idx}`} style={{ fontSize: "12px", wordBreak: "break-word" }}>
+                                          • <strong>{flg.productTitle}</strong> (<code>{flg.productId}</code>) — <code>{flg.destinationKey}</code>: {flg.reason} [Current: &quot;{flg.beforeValue.length > 160 ? `${flg.beforeValue.slice(0, 160)}…` : flg.beforeValue}&quot;]
+                                        </div>
+                                      ))}
+                                    </BlockStack>
+                                  </Box>
+                                )}
+
+                                {stockCleanupPreview.stoneIdentityDiagnostics.length > 0 && (
+                                  <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
+                                    <BlockStack gap="100">
+                                      <Text as="p" variant="bodySm" fontWeight="bold">
+                                        Saved Stone-Identity Compatibility Writer Limitation Diagnostics ({stockCleanupPreview.stoneIdentityDiagnostics.length}):
+                                      </Text>
+                                      {stockCleanupPreview.stoneIdentityDiagnostics.map((diag) => (
+                                        <div key={diag.productId} style={{ fontSize: "12px", wordBreak: "break-word" }}>
+                                          • <strong>{diag.productTitle}</strong> (<code>{diag.productId}</code>) — Saved <code>custom.material</code>: <code>{String(diag.savedMaterial ?? "blank")}</code> | Saved <code>custom.primary_medium</code>: <code>{String(diag.savedPrimaryMedium ?? "blank")}</code> | Saved <code>custom.stone_family</code>: <code>{String(diag.savedStoneFamily ?? "blank")}</code>. <strong>Unresolved Writer Limitation:</strong> {diag.compatibilityWriterLimitation}
+                                        </div>
+                                      ))}
+                                    </BlockStack>
+                                  </Box>
+                                )}
+
+                                {stockCleanupPreview.skippedItems.length > 0 && (
+                                  <div style={{ color: "#475569", wordBreak: "break-word" }}>
+                                    <strong>Preserved / Clean Products ({stockCleanupPreview.skippedItems.length}):</strong>{" "}
+                                    {stockCleanupPreview.skippedItems.map((sk) => `${sk.productTitle} (${sk.status}: ${sk.reason})`).join(" | ")}
                                   </div>
-                                ))}
-                                {stockCleanupOutcomeReport.rejectedStaleEntries.map((r, idx) => (
-                                  <div key={`stale-${idx}`} style={{ fontSize: "12px", color: "#842029" }}>
-                                    • Rejected Stale <strong>{r.productTitle}</strong> (<code>{r.destinationKey}</code>): {r.reason}
+                                )}
+
+                                {stockCleanupPreview.unavailableProducts.length > 0 && (
+                                  <div style={{ color: "#991b1b", wordBreak: "break-word" }}>
+                                    <strong>Unavailable Baselines ({stockCleanupPreview.unavailableProducts.length}):</strong>{" "}
+                                    {stockCleanupPreview.unavailableProducts.map((un) => `${un.productTitle} (${un.productId}: ${un.reason})`).join(" | ")}
                                   </div>
-                                ))}
-                              </BlockStack>
-                            </Box>
+                                )}
+                              </div>
+                            </details>
                           )}
                         </BlockStack>
                       </Box>
