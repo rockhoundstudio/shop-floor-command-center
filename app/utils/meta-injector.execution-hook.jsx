@@ -66,6 +66,15 @@ const CLASSIFICATION_PRECEDENCE_KEYS = new Set([
   "necklace_design"
 ]);
 
+const PASSIVE_CONSTRUCTION_PRECEDENCE_KEYS = new Set([
+  "setting_ready",
+  "bail_included",
+  "jewelry_finding_type",
+  "secondary_medium",
+  "wire_material",
+  "alt_text"
+]);
+
 const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
   "origin_location",
   "origin_handle",
@@ -78,6 +87,36 @@ const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
 const isGenericBareStoneToken = (rawVal) => {
   if (rawVal === undefined || rawVal === null) return false;
   return String(rawVal).trim().toLowerCase() === "stone";
+};
+
+// Client-side mirror of setting/metal/plating/hardware detector for stone identity fields
+const isSettingOrHardwareMediumToken = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return false;
+  const trimmed = String(rawVal).trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+
+  if (lower === "stone" || lower === "metal" || lower === "none" || lower === "n/a" || lower === "unknown") {
+    return true;
+  }
+
+  if (
+    /\b(plated|plating|electroplated|alloy|sterling|925|fine\s+silver|nickel\s+silver|german\s+silver|tibetan\s+silver|pewter|brass|bronze|stainless|steel|aluminum|aluminium|vermeil|gold[-\s]?filled|silver[-\s]?filled|rose\s+gold|white\s+gold|yellow\s+gold|karat|10k|14k|18k|24k|bezel|bail|pinch\s+bail|glue[-\s]?on|glue[-\s]?in|wire[-\s]?wrap(?:ped)?|craft\s+wire|copper\s+wire|silver\s+wire|gold\s+wire|brass\s+wire|snake\s+chain|chain|cord|pendant\s+setting|metal\s+setting|finding|clasp|loop|rim|frame)\b/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /^(silver|gold|copper|metal)\s+(tone|toned|finish|color|coloured|colored|hardware|setting|finding|mounting|frame|rim|backing|bail|loop|wire|chain)$/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 };
 
 // Client-side mirror of found_object polarity & river-collection claim guards (no server imports)
@@ -94,7 +133,8 @@ const classifyFoundObjectPolarityClient = (rawVal) => {
     lower.startsWith("no ") ||
     lower.startsWith("no—") ||
     lower.startsWith("no -") ||
-    lower.startsWith("no Ã¢â‚¬â€") ||
+    lower.startsWith("no ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") ||
+    lower.startsWith("no ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â") ||
     /\b(purchased|bought)\b/i.test(lower)
   ) {
     return "purchased";
@@ -106,7 +146,8 @@ const classifyFoundObjectPolarityClient = (rawVal) => {
     lower.startsWith("yes ") ||
     lower.startsWith("yes—") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes Ã¢â‚¬â€") ||
+    lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") ||
+    lower.startsWith("yes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â") ||
     /\bfound in the wild\b/i.test(lower)
   ) {
     return "wild_found";
@@ -156,7 +197,8 @@ const normalizeOoakEquivalentValue = (rawVal, expectedType = "single_line_text_f
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes Ã¢â‚¬â€")
+    lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") ||
+    lower.startsWith("yes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -303,6 +345,16 @@ const hasNonBlankValue = (val) => {
   return trimmed !== "" && trimmed !== "[]" && trimmed !== "{}";
 };
 
+const hasExistingStoredGeneralAlt = (currentMetafields = {}) => {
+  if (!currentMetafields || typeof currentMetafields !== "object" || Array.isArray(currentMetafields)) {
+    return false;
+  }
+  const raw = Object.prototype.hasOwnProperty.call(currentMetafields, "custom.alt_text")
+    ? currentMetafields["custom.alt_text"]
+    : currentMetafields["alt_text"];
+  return hasNonBlankValue(raw);
+};
+
 const formatComparableValue = (val, expectedType, targetKey = "") => {
   if (val === undefined || val === null) return "";
   if (targetKey === "custom.is_one_of_a_kind" || targetKey === "custom.is_ooak") {
@@ -409,11 +461,12 @@ const resolveLockedProposalFromApprovals = (canonicalKey, productApprovals = {})
 
 // Resolves provenance & bench facts for a product, strictly separating human/operator-locked
 // values (manual edits or explicit approvals) from passive stored metafield values.
-// Only emits bare keys accepted by ALLOWED_PROVENANCE_FIELD_KEYS in meta-injector.autofill.server.jsx.
+// Only emits bare keys accepted by ALLOWED_PROVENANCE_FIELD_KEYS in app/routes/app.meta-injector-autofill.jsx.
 const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, productApprovals = {}) => {
   const safeMan = validObj(manifest);
   const edits = validObj(productManualEdits);
   const apps = validObj(productApprovals);
+  const productHasExistingGeneralAlt = hasExistingStoredGeneralAlt(safeMan.currentMetafields);
 
   const inspectableKeys = [
     "material", "primary_medium", "stone_family",
@@ -424,33 +477,46 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
     "treatment_status", "treated", "necklace_design",
     "found_object", "origin_location", "origin_page_handle",
     "collection_name", "collection_location", "collection_date",
-    "is_one_of_a_kind", "seo_title"
+    "is_one_of_a_kind", "seo_title", "alt_text"
   ];
 
   const operatorLockedKeys = [];
   const passiveStoredKeys = [];
   const valuesByBareKey = {};
+  const isStoneIdentityField = (bareKey) =>
+    bareKey === "material" || bareKey === "primary_medium" || bareKey === "stone_family";
 
   inspectableKeys.forEach((k) => {
-    const fullKey = `custom.${k}`;
-    const companionAliases =
-      k === "primary_medium"
-        ? ["material", "custom.material"]
-        : (ALIAS_COMPANION_LOOKUP[fullKey] || []);
+    if (k === "alt_text" && !productHasExistingGeneralAlt) {
+      return;
+    }
 
-    const hasManualEditFlag =
-      edits[fullKey] === true ||
-      edits[k] === true ||
-      companionAliases.some((ak) => edits[ak] === true);
+    const fullKey = `custom.${k}`;
+    // Keep custom.alt_text independent from per-photo native_image_alts_*;
+    // keep stone_family independent from material/primary_medium.
+    const companionAliases =
+      k === "alt_text" || k === "stone_family"
+        ? []
+        : k === "primary_medium"
+          ? ["material", "custom.material"]
+          : (ALIAS_COMPANION_LOOKUP[fullKey] || []);
+
+    const hasDirectEditFlag = edits[fullKey] === true || edits[k] === true;
+    const hasCompanionEditFlag = companionAliases.some((ak) => edits[ak] === true);
+    const hasManualEditFlag = hasDirectEditFlag || hasCompanionEditFlag;
 
     let manualPlanVal =
       safeMan.repairPlan?.[fullKey] !== undefined
         ? safeMan.repairPlan[fullKey]
         : safeMan.repairPlan?.[k];
-    if (manualPlanVal === undefined) {
+    if (manualPlanVal === undefined && hasCompanionEditFlag) {
       for (const ak of companionAliases) {
         if (safeMan.repairPlan?.[ak] !== undefined) {
-          manualPlanVal = safeMan.repairPlan[ak];
+          const candVal = safeMan.repairPlan[ak];
+          if (isStoneIdentityField(k) && isSettingOrHardwareMediumToken(candVal)) {
+            continue;
+          }
+          manualPlanVal = candVal;
           break;
         }
       }
@@ -463,18 +529,29 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
     if (approvalVal === undefined) {
       for (const ak of companionAliases) {
         if (apps[ak] !== undefined) {
-          approvalVal = apps[ak];
+          const candApp = apps[ak];
+          if (isStoneIdentityField(k) && isSettingOrHardwareMediumToken(candApp)) {
+            continue;
+          }
+          approvalVal = candApp;
           break;
         }
       }
     }
 
     let storedVal = safeMan.currentMetafields?.[fullKey];
+    if (isStoneIdentityField(k) && isSettingOrHardwareMediumToken(storedVal)) {
+      storedVal = undefined;
+    }
     if (!hasNonBlankValue(storedVal)) {
       for (const ak of companionAliases) {
         const fullAk = ak.includes(".") ? ak : `custom.${ak}`;
         const cand = safeMan.currentMetafields?.[fullAk] ?? safeMan.currentMetafields?.[ak];
         if (hasNonBlankValue(cand)) {
+          // Never promote a setting/metal/plating string from primary_medium or material via companion fallback
+          if (isStoneIdentityField(k) && isSettingOrHardwareMediumToken(cand)) {
+            continue;
+          }
           storedVal = cand;
           break;
         }
@@ -490,20 +567,25 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
     let chosenSource = null;
 
     if (hasManualEditFlag && manualPlanVal !== undefined) {
-      val = manualPlanVal;
-      if (val !== undefined && val !== null && String(val).trim() !== "") {
+      const candStr = String(manualPlanVal ?? "").trim();
+      if (candStr !== "" && !(isStoneIdentityField(k) && isSettingOrHardwareMediumToken(candStr))) {
+        val = candStr;
         chosenSource = "operator_locked";
       }
-    } else if (approvalVal !== undefined) {
-      val = approvalVal;
-      if (val !== undefined && val !== null && String(val).trim() !== "") {
+    }
+    if (!chosenSource && approvalVal !== undefined) {
+      const candStr = String(approvalVal ?? "").trim();
+      if (candStr !== "" && !(isStoneIdentityField(k) && isSettingOrHardwareMediumToken(candStr))) {
+        val = candStr;
         chosenSource = "operator_locked";
       }
-    } else if (storedVal !== undefined && storedVal !== null && String(storedVal).trim() !== "") {
-      val = storedVal;
-      chosenSource = (hasManualEditFlag || approvalVal !== undefined)
-        ? "operator_locked"
-        : "passive_stored";
+    }
+    if (!chosenSource && storedVal !== undefined && storedVal !== null && String(storedVal).trim() !== "") {
+      const candStr = String(storedVal).trim();
+      if (!(isStoneIdentityField(k) && isSettingOrHardwareMediumToken(candStr))) {
+        val = candStr;
+        chosenSource = "passive_stored";
+      }
     }
 
     if (val !== undefined && val !== null && String(val).trim() !== "") {
@@ -515,7 +597,7 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
           operatorLockedKeys.push("origin_handle");
           valuesByBareKey.origin_handle = strVal;
         }
-        if (k === "material" && !operatorLockedKeys.includes("primary_medium")) {
+        if (k === "material" && !isSettingOrHardwareMediumToken(strVal) && !operatorLockedKeys.includes("primary_medium")) {
           operatorLockedKeys.push("primary_medium");
           if (!hasNonBlankValue(valuesByBareKey.primary_medium)) {
             valuesByBareKey.primary_medium = strVal;
@@ -529,6 +611,7 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
         }
         if (
           k === "material" &&
+          !isSettingOrHardwareMediumToken(strVal) &&
           !operatorLockedKeys.includes("primary_medium") &&
           !passiveStoredKeys.includes("primary_medium")
         ) {
@@ -576,6 +659,7 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
   const incomingPlan = validObj(rawPlan);
   const cleanedPlan = {};
   const aliasConflicts = {};
+  const productHasExistingGeneralAlt = hasExistingStoredGeneralAlt(currentMetafields);
 
   const getFieldExpectedType = (destKey) => {
     const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
@@ -587,6 +671,14 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
   };
 
   const isKeyManuallyLocked = (destKey) => {
+    if (destKey === "custom.alt_text") {
+      return (
+        manualProductEdits?.["custom.alt_text"] === true ||
+        manualProductEdits?.["alt_text"] === true ||
+        productApprovals?.["custom.alt_text"] !== undefined ||
+        productApprovals?.["alt_text"] !== undefined
+      );
+    }
     const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
     if (manualProductEdits?.[destKey] === true || productApprovals?.[destKey] !== undefined) return true;
     return companions.some(aliasKey => manualProductEdits?.[aliasKey] === true || productApprovals?.[aliasKey] !== undefined);
@@ -602,6 +694,13 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
     const canonicalKey = normalizeIncomingTargetKey(rawKey);
     if (!canonicalKey || canonicalKey === "custom.stone_family" || isEffectiveRetiredKey(canonicalKey)) return;
 
+    // Never stage custom.alt_text on products that do not already carry custom.alt_text in Shopify
+    if (canonicalKey === "custom.alt_text" && !productHasExistingGeneralAlt) {
+      return;
+    }
+
+    const isDirectCanonical = rawKey === canonicalKey || (canonicalKey === "custom.alt_text" && rawKey === "alt_text");
+
     // Prevent an unlocked AI/load generic "Stone" proposal from staging into custom.material
     if (
       canonicalKey === "custom.material" &&
@@ -611,7 +710,15 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
       return;
     }
 
-    const isDirectCanonical = rawKey === canonicalKey;
+    // Never allow an alias (primary_medium) containing a setting/metal/plating value to stage into custom.material
+    if (
+      canonicalKey === "custom.material" &&
+      !isDirectCanonical &&
+      isSettingOrHardwareMediumToken(rawVal)
+    ) {
+      return;
+    }
+
     if (!canonicalCandidatesFromPlan[canonicalKey]) {
       canonicalCandidatesFromPlan[canonicalKey] = {
         canonicalRaw: undefined,
@@ -628,6 +735,18 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
     }
   });
 
+  // Ensure existing custom.alt_text is seeded from its own stored metafield value on load when not already in incomingPlan
+  if (productHasExistingGeneralAlt && !canonicalCandidatesFromPlan["custom.alt_text"]) {
+    const storedGenAlt = currentMetafields?.["custom.alt_text"] ?? currentMetafields?.["alt_text"];
+    if (hasNonBlankValue(storedGenAlt)) {
+      canonicalCandidatesFromPlan["custom.alt_text"] = {
+        canonicalRaw: storedGenAlt,
+        hasCanonicalKey: true,
+        aliasEntries: []
+      };
+    }
+  }
+
   // Also check stored metafields for canonical vs alias values when loading
   Object.entries(ALIAS_COMPANION_LOOKUP).forEach(([canonicalKey, aliasKeys]) => {
     if (!canonicalKey.startsWith("custom.")) return;
@@ -636,6 +755,10 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
       const fullAliasKey = aliasKey.includes(".") ? aliasKey : `custom.${aliasKey}`;
       const storedAlias = currentMetafields?.[fullAliasKey] ?? currentMetafields?.[aliasKey];
       if (hasNonBlankValue(storedAlias)) {
+        // Do not promote or create a fake save/alias conflict from a setting/metal value stored in custom.primary_medium
+        if (canonicalKey === "custom.material" && isSettingOrHardwareMediumToken(storedAlias)) {
+          return;
+        }
         if (!canonicalCandidatesFromPlan[canonicalKey]) {
           canonicalCandidatesFromPlan[canonicalKey] = {
             canonicalRaw: storedCanonical,
@@ -672,10 +795,12 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
     if (isKeyManuallyLocked(canonicalKey)) {
       if (
         (manualProductEdits?.[canonicalKey] === true ||
+          (canonicalKey === "custom.alt_text" && manualProductEdits?.["alt_text"] === true) ||
           (ALIAS_COMPANION_LOOKUP[canonicalKey] || []).some(ak => manualProductEdits?.[ak] === true)) &&
-        incomingPlan[canonicalKey] !== undefined
+        (incomingPlan[canonicalKey] !== undefined || (canonicalKey === "custom.alt_text" && incomingPlan["alt_text"] !== undefined))
       ) {
-        cleanedPlan[canonicalKey] = formatComparableValue(incomingPlan[canonicalKey], expectedType, canonicalKey);
+        const rawEditVal = incomingPlan[canonicalKey] !== undefined ? incomingPlan[canonicalKey] : incomingPlan["alt_text"];
+        cleanedPlan[canonicalKey] = formatComparableValue(rawEditVal, expectedType, canonicalKey);
         return;
       }
       const lockedApprovalVal = resolveLockedProposalFromApprovals(canonicalKey, productApprovals);
@@ -686,6 +811,28 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
     }
 
     if (canonicalFormatted !== "") {
+      // If custom.material itself stored a setting/metal value and a valid stone alias or stone_family exists, do not promote the hardware string over valid stone identity
+      if (
+        canonicalKey === "custom.material" &&
+        isSettingOrHardwareMediumToken(canonicalFormatted) &&
+        !isKeyManuallyLocked("custom.material")
+      ) {
+        const validStoneAlias = nonBlankAliases.find(a => !isSettingOrHardwareMediumToken(a.formatted));
+        const fallbackStoredFamily = formatComparableValue(
+          currentMetafields?.["custom.stone_family"],
+          expectedType,
+          "custom.material"
+        );
+        if (validStoneAlias) {
+          cleanedPlan[canonicalKey] = validStoneAlias.formatted;
+          return;
+        }
+        if (fallbackStoredFamily && !isSettingOrHardwareMediumToken(fallbackStoredFamily)) {
+          cleanedPlan[canonicalKey] = fallbackStoredFamily;
+          return;
+        }
+      }
+
       cleanedPlan[canonicalKey] = canonicalFormatted;
       const conflictingAlias = nonBlankAliases.find(a => a.formatted !== canonicalFormatted);
       if (conflictingAlias) {
@@ -1418,18 +1565,23 @@ export function useMetaInjectorExecution({
           fd.append("imageUrl", imageUrl);
         }
 
-        // Preserve explicit stone_family (family/mineral identity) before falling back to titleParse family or material
+        // Preserve explicit stone_family (family/mineral identity) before falling back to titleParse family or non-hardware material.
+        // Never promote a setting/metal/plating value from primary_medium, material, or stone_family into resolvedStoneFamily.
+        const stoneFamilyCandidates = [
+          provenancePacket.valuesByBareKey.stone_family,
+          manifest.currentMetafields?.["custom.stone_family"],
+          pieceAi.titleParse?.stone_family,
+          manualEdits[currentId]?.["custom.material"] === true ? manifest.repairPlan?.["custom.material"] : undefined,
+          approvals[currentId]?.["custom.material"],
+          manifest.currentMetafields?.["custom.material"],
+          manifest.currentMetafields?.["custom.primary_medium"],
+          pieceAi.titleParse?.material,
+          pieceAi.titleParse?.primary_medium
+        ];
         const resolvedStoneFamily =
-          provenancePacket.valuesByBareKey.stone_family ||
-          manifest.currentMetafields?.["custom.stone_family"] ||
-          pieceAi.titleParse?.stone_family ||
-          (manualEdits[currentId]?.["custom.material"] === true ? manifest.repairPlan?.["custom.material"] : undefined) ||
-          approvals[currentId]?.["custom.material"] ||
-          manifest.currentMetafields?.["custom.material"] ||
-          manifest.currentMetafields?.["custom.primary_medium"] ||
-          pieceAi.titleParse?.material ||
-          pieceAi.titleParse?.primary_medium ||
-          "";
+          stoneFamilyCandidates
+            .map(c => (c !== undefined && c !== null ? String(c).trim() : ""))
+            .find(c => c !== "" && !isSettingOrHardwareMediumToken(c)) || "";
         fd.append("stone_family", resolvedStoneFamily);
 
         const currentOriginStory =
@@ -1489,6 +1641,7 @@ export function useMetaInjectorExecution({
         fd.append("pieceId", currentId);
         const descriptionFacts = {};
         const tab3DataObj = validObj(pieceAi.tab3Data);
+        const productHasExistingGeneralAlt = hasExistingStoredGeneralAlt(manifest.currentMetafields);
 
         const isFactKeyOperatorLocked = (factKey) => {
           if (provenancePacket.operatorLockedKeys.includes(factKey)) return true;
@@ -1514,6 +1667,12 @@ export function useMetaInjectorExecution({
           return hasNonBlankValue(rawTab3Val);
         };
 
+        const hasFreshTab3Construction = (factKey) => {
+          if (!PASSIVE_CONSTRUCTION_PRECEDENCE_KEYS.has(factKey)) return false;
+          const rawTab3Val = tab3DataObj[factKey] ?? tab3DataObj[`custom.${factKey}`];
+          return hasNonBlankValue(rawTab3Val);
+        };
+
         const mergeDescriptionFacts = (source, isAuthoritative = false, isPassiveStoredSource = false) => {
           Object.entries(source || {}).forEach(([key, value]) => {
             if (key === "standardized_candidates" || key === "custom.standardized_candidates") return;
@@ -1522,6 +1681,7 @@ export function useMetaInjectorExecution({
             if (key.includes(".") && !key.startsWith("custom.")) return;
 
             const isStoneFamilyKey = key === "stone_family" || key === "custom.stone_family";
+            const isPrimaryMediumKey = key === "primary_medium" || key === "custom.primary_medium";
             const canonicalTarget = isStoneFamilyKey ? "custom.stone_family" : normalizeIncomingTargetKey(key);
             const factKey = isStoneFamilyKey
               ? "stone_family"
@@ -1530,11 +1690,27 @@ export function useMetaInjectorExecution({
                 : (key.startsWith("custom.") ? key.slice(7) : key);
             if (["intent", "success", "error", "errors", "logs", "debug_origin", "standardized_candidates", "shopify_title", "operator_locked_fields", "passive_stored_fields"].includes(factKey)) return;
 
+            if (factKey === "alt_text" && !productHasExistingGeneralAlt) return;
+
             if (value !== undefined && value !== null && typeof value !== "object" && String(value).trim() !== "") {
               let cleanVal = String(value).trim();
-              if (!isAuthoritative && factKey === "material" && isGenericBareStoneToken(cleanVal)) {
+
+              // Never promote a setting, metal, plating, or bare "Stone" token into stone identity fields
+              if (
+                (factKey === "material" || factKey === "primary_medium" || factKey === "stone_family") &&
+                (isGenericBareStoneToken(cleanVal) || isSettingOrHardwareMediumToken(cleanVal))
+              ) {
                 return;
               }
+
+              // Do not let passive stored custom.primary_medium overwrite an already-established distinct custom.material variety
+              if (isPrimaryMediumKey && isPassiveStoredSource && hasNonBlankValue(descriptionFacts.material)) {
+                if (!hasNonBlankValue(descriptionFacts.primary_medium)) {
+                  descriptionFacts.primary_medium = cleanVal;
+                }
+                return;
+              }
+
               if (factKey === "piece_name") {
                 cleanVal = extractPieceNameOnly(cleanVal, manifest.nativeTargets?.productTitle || product.title);
               }
@@ -1543,6 +1719,17 @@ export function useMetaInjectorExecution({
                 CLASSIFICATION_PRECEDENCE_KEYS.has(factKey) &&
                 hasFreshTab3Classification(factKey) &&
                 !isFactKeyOperatorLocked(factKey) &&
+                hasNonBlankValue(descriptionFacts[factKey])
+              ) {
+                return;
+              }
+              // Keep fresh tab3Data construction facts ahead of passive stored hardware metafields when not operator-locked,
+              // while retaining valid same-product stored hardware context when tab3Data did not supply a replacement.
+              if (
+                isPassiveStoredSource &&
+                PASSIVE_CONSTRUCTION_PRECEDENCE_KEYS.has(factKey) &&
+                !isFactKeyOperatorLocked(factKey) &&
+                hasFreshTab3Construction(factKey) &&
                 hasNonBlankValue(descriptionFacts[factKey])
               ) {
                 return;
@@ -1560,10 +1747,10 @@ export function useMetaInjectorExecution({
               if (isAuthoritative || !hasNonBlankValue(descriptionFacts[factKey])) {
                 descriptionFacts[factKey] = cleanVal;
               }
-              if (factKey === "material" && !hasNonBlankValue(descriptionFacts.stone_family)) {
+              if (factKey === "material" && !hasNonBlankValue(descriptionFacts.stone_family) && !isSettingOrHardwareMediumToken(cleanVal)) {
                 descriptionFacts.stone_family = cleanVal;
               }
-              if (factKey === "material" && (isAuthoritative || !hasNonBlankValue(descriptionFacts.primary_medium))) {
+              if (factKey === "material" && (isAuthoritative || !hasNonBlankValue(descriptionFacts.primary_medium)) && !isSettingOrHardwareMediumToken(cleanVal)) {
                 descriptionFacts.primary_medium = cleanVal;
               }
             }
@@ -1571,8 +1758,8 @@ export function useMetaInjectorExecution({
         };
 
         // Merge in order so stored merchant facts and explicit edits/approvals take precedence over AI draft outputs,
-        // while preserving freshly evidenced tab3Data classification values over passive stored classification labels
-        // and preventing passive stored river origins from overriding purchased provenance.
+        // while preserving freshly evidenced tab3Data classification & construction values over passive stored labels
+        // and preventing passive stored river origins or setting/metal values from overriding verified facts.
         mergeDescriptionFacts(pieceAi.titleParse, false, false);
         mergeDescriptionFacts(pieceAi.tab3Data, false, false);
         mergeDescriptionFacts(manifest.currentMetafields, true, true);
@@ -1586,13 +1773,21 @@ export function useMetaInjectorExecution({
           ) {
             const fk = key.slice(7);
             if (fk === "operator_locked_fields" || fk === "passive_stored_fields") return;
+            if (fk === "alt_text" && !productHasExistingGeneralAlt) return;
             if (!hasNonBlankValue(value)) return;
-            descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(value ?? ""), manifest.nativeTargets?.productTitle || product.title) : value;
+            const cleanApproved = String(value ?? "").trim();
+            if (
+              (fk === "material" || fk === "primary_medium" || fk === "stone_family") &&
+              isSettingOrHardwareMediumToken(cleanApproved)
+            ) {
+              return;
+            }
+            descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(cleanApproved, manifest.nativeTargets?.productTitle || product.title) : cleanApproved;
             if (fk === "material") {
               if (!hasNonBlankValue(descriptionFacts.stone_family)) {
-                descriptionFacts.stone_family = value;
+                descriptionFacts.stone_family = cleanApproved;
               }
-              descriptionFacts.primary_medium = value;
+              descriptionFacts.primary_medium = cleanApproved;
             }
           }
         });
@@ -1607,14 +1802,22 @@ export function useMetaInjectorExecution({
           ) {
             const fk = key.slice(7);
             if (fk === "operator_locked_fields" || fk === "passive_stored_fields") return;
+            if (fk === "alt_text" && !productHasExistingGeneralAlt) return;
             const editVal = manifest.repairPlan[key];
             if (!hasNonBlankValue(editVal)) return;
-            descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(String(editVal ?? ""), manifest.nativeTargets?.productTitle || product.title) : editVal;
+            const cleanEdited = String(editVal ?? "").trim();
+            if (
+              (fk === "material" || fk === "primary_medium" || fk === "stone_family") &&
+              isSettingOrHardwareMediumToken(cleanEdited)
+            ) {
+              return;
+            }
+            descriptionFacts[fk] = fk === "piece_name" ? extractPieceNameOnly(cleanEdited, manifest.nativeTargets?.productTitle || product.title) : cleanEdited;
             if (fk === "material") {
               if (!hasNonBlankValue(descriptionFacts.stone_family)) {
-                descriptionFacts.stone_family = editVal;
+                descriptionFacts.stone_family = cleanEdited;
               }
-              descriptionFacts.primary_medium = editVal;
+              descriptionFacts.primary_medium = cleanEdited;
             }
           }
         });
@@ -1627,13 +1830,20 @@ export function useMetaInjectorExecution({
           descriptionFacts.origin_location = hasNonBlankValue(tab3Origin) ? String(tab3Origin).trim() : "";
         }
 
+        const safeSharedStoneFamily =
+          (!isSettingOrHardwareMediumToken(descriptionFacts.stone_family) && descriptionFacts.stone_family) ||
+          (!isSettingOrHardwareMediumToken(descriptionFacts.material) && descriptionFacts.material) ||
+          "";
+
         descriptionFacts.pieceId = currentId;
         fd.append("sharedFields", JSON.stringify({
-          stone_family: descriptionFacts.stone_family || descriptionFacts.material || "",
+          stone_family: safeSharedStoneFamily,
           origin_location: descriptionFacts.origin_location || "",
           ...(descriptionFacts.found_object !== undefined ? { found_object: descriptionFacts.found_object } : {})
         }));
         fd.append("pieceData", JSON.stringify(descriptionFacts));
+        fd.append("operator_locked_fields", JSON.stringify(provenancePacket.operatorLockedKeys));
+        fd.append("passive_stored_fields", JSON.stringify(provenancePacket.passiveStoredKeys));
         batchFetcher.submit(fd, { method: "post", action: "/app/meta-injector-autofill" });
       }
       else if (aiStep === 4) {
@@ -2076,7 +2286,10 @@ export function useMetaInjectorExecution({
             if (existingManifest?.repairPlan && typeof existingManifest.repairPlan === "object") {
               Object.keys(productManualEdits).forEach(editedKey => {
                 if (productManualEdits[editedKey] !== true) return;
-                const proposalStorageKey = NATIVE_ALIAS_MAP[editedKey] || editedKey;
+                const proposalStorageKey = editedKey === "alt_text" ? "custom.alt_text" : (NATIVE_ALIAS_MAP[editedKey] || editedKey);
+                if (proposalStorageKey === "custom.alt_text" && !hasExistingStoredGeneralAlt(data.currentMetafields || {})) {
+                  return;
+                }
                 const existingEditedVal =
                   existingManifest.repairPlan[proposalStorageKey] !== undefined
                     ? existingManifest.repairPlan[proposalStorageKey]
@@ -2088,7 +2301,10 @@ export function useMetaInjectorExecution({
             }
             Object.entries(productApprovals).forEach(([approvedKey, approvedVal]) => {
               if (approvedVal === undefined) return;
-              const proposalStorageKey = NATIVE_ALIAS_MAP[approvedKey] || approvedKey;
+              const proposalStorageKey = approvedKey === "alt_text" ? "custom.alt_text" : (NATIVE_ALIAS_MAP[approvedKey] || approvedKey);
+              if (proposalStorageKey === "custom.alt_text" && !hasExistingStoredGeneralAlt(data.currentMetafields || {})) {
+                return;
+              }
               if (
                 productManualEdits[approvedKey] !== true &&
                 productManualEdits[proposalStorageKey] !== true &&
@@ -2595,6 +2811,7 @@ export function useMetaInjectorExecution({
                 const newPlan = { ...(existing.repairPlan || {}) };
                 const newMetadata = { ...(existing.metadata || {}) };
                 const newConflicts = { ...(existing.conflicts || {}) };
+                const productHasExistingGeneralAlt = hasExistingStoredGeneralAlt(existing.currentMetafields);
                 delete newPlan.standardized_candidates;
                 delete newPlan["custom.standardized_candidates"];
                 delete newPlan.operator_locked_fields;
@@ -2611,12 +2828,23 @@ export function useMetaInjectorExecution({
                 delete newPlan["origin_handle"];
                 delete newPlan["custom.canonical_title"];
                 delete newPlan["canonical_title"];
+                if (!productHasExistingGeneralAlt) {
+                  delete newPlan["custom.alt_text"];
+                  delete newPlan["alt_text"];
+                }
                 const diagnostics = { ...(existing.diagnostics || {}) };
 
                 const titleData = validObj(updatedPieceAi.titleParse);
                 const visionData = validObj(updatedPieceAi.tab3Data);
                 const descData = updatedPieceAi.generated_description || "";
                 const rawVerifiedGeo = validObj(updatedPieceAi.verifiedGeoValues);
+
+                if (visionData.review_proposals && typeof visionData.review_proposals === "object") {
+                  diagnostics.review_proposals = visionData.review_proposals;
+                  if (visionData.review_proposals.stone_identity_warning) {
+                    diagnostics.stone_identity_warning = visionData.review_proposals.stone_identity_warning;
+                  }
+                }
 
                 const mergeProvenancePacket = buildProductBenchProvenancePacket(
                   existing,
@@ -2678,6 +2906,14 @@ export function useMetaInjectorExecution({
                 };
 
                 const isLockedByOperator = (destKey) => {
+                  if (destKey === "custom.alt_text") {
+                    return (
+                      manualEdits[targetId]?.["custom.alt_text"] === true ||
+                      manualEdits[targetId]?.["alt_text"] === true ||
+                      approvals[targetId]?.["custom.alt_text"] !== undefined ||
+                      approvals[targetId]?.["alt_text"] !== undefined
+                    );
+                  }
                   if (manualEdits[targetId]?.[destKey] === true) return true;
                   if (approvals[targetId]?.[destKey] !== undefined) return true;
                   const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
@@ -2695,6 +2931,9 @@ export function useMetaInjectorExecution({
                     const w = existing.nativeTargets?.variants?.edges?.[0]?.node?.inventoryItem?.measurement?.weight;
                     return (w?.value !== undefined && w?.value !== null && Number(w.value) > 0) ||
                            hasNonBlankValue(existing.currentMetafields?.["custom.shipping_weight_oz"]);
+                  }
+                  if (destKey === "custom.alt_text") {
+                    return productHasExistingGeneralAlt;
                   }
                   if (hasNonBlankValue(existing.currentMetafields?.[destKey])) return true;
                   const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
@@ -2715,6 +2954,7 @@ export function useMetaInjectorExecution({
                   if (rawKeyName === "origin_story" || rawKeyName === "custom.origin_story") return;
                   if (rawKeyName === "stone_family" || rawKeyName === "custom.stone_family") return;
                   if (rawKeyName === "standardized_candidates" || rawKeyName === "custom.standardized_candidates") return;
+                  if (rawKeyName === "review_proposals" || rawKeyName === "custom.review_proposals") return;
                   if (rawKeyName === "operator_locked_fields" || rawKeyName === "passive_stored_fields" || rawKeyName === "custom.operator_locked_fields" || rawKeyName === "custom.passive_stored_fields") return;
                   if (rawKeyName.startsWith("custom.std_") || rawKeyName.startsWith("std_")) return;
                   if (rawKeyName === "canonical_title" || rawKeyName === "custom.canonical_title" || rawKeyName === "product_title" || rawKeyName === "custom.product_title" || rawKeyName === "shopify_title" || rawKeyName === "native_title") {
@@ -2724,14 +2964,22 @@ export function useMetaInjectorExecution({
                   const targetKey = normalizeIncomingTargetKey(rawKeyName);
                   if (!targetKey || isEffectiveRetiredKey(targetKey) || isEffectiveRetiredKey(rawKeyName)) return;
                   if (targetKey === "custom.origin_story" || targetKey === "custom.stone_family" || targetKey === "shopify_title" || targetKey === "native_title") return;
-                  if (targetKey === "custom.operator_locked_fields" || targetKey === "custom.passive_stored_fields") return;
+                  if (targetKey === "custom.operator_locked_fields" || targetKey === "custom.passive_stored_fields" || targetKey === "custom.review_proposals") return;
                   if (targetKey.startsWith("shopify.") && !isVerifiedStandardizedDestination(targetKey)) return;
+
+                  // Never create or stage custom.alt_text when the compatibility field does not already exist on this product
+                  if (targetKey === "custom.alt_text" && !productHasExistingGeneralAlt) {
+                    return;
+                  }
 
                   // Never allow generated drafts to overwrite operator manual edits or explicit approvals
                   if (isLockedByOperator(targetKey)) return;
 
-                  // Prevent trimmed case-insensitive exact "Stone" from AI/fallback material or primary_medium from staging into custom.material
-                  if (targetKey === "custom.material" && isGenericBareStoneToken(rawAiValue)) {
+                  // Prevent bare generic "Stone" or setting/metal/plating terms from staging into custom.material
+                  if (
+                    targetKey === "custom.material" &&
+                    (isGenericBareStoneToken(rawAiValue) || isSettingOrHardwareMediumToken(rawAiValue))
+                  ) {
                     return;
                   }
 
@@ -2807,7 +3055,10 @@ export function useMetaInjectorExecution({
                   const formattedVal = formatComparableValue(normalizedValue, expectedType, targetKey);
                   if (!formattedVal) return;
 
-                  if (targetKey === "custom.material" && isGenericBareStoneToken(formattedVal)) {
+                  if (
+                    targetKey === "custom.material" &&
+                    (isGenericBareStoneToken(formattedVal) || isSettingOrHardwareMediumToken(formattedVal))
+                  ) {
                     return;
                   }
 
@@ -2894,6 +3145,8 @@ export function useMetaInjectorExecution({
                     k !== "origin_story" &&
                     k !== "standardized_candidates" &&
                     k !== "custom.standardized_candidates" &&
+                    k !== "review_proposals" &&
+                    k !== "custom.review_proposals" &&
                     k !== "operator_locked_fields" &&
                     k !== "passive_stored_fields" &&
                     k !== "poetic_hook"
@@ -2912,6 +3165,8 @@ export function useMetaInjectorExecution({
                     k !== "origin_story" &&
                     k !== "standardized_candidates" &&
                     k !== "custom.standardized_candidates" &&
+                    k !== "review_proposals" &&
+                    k !== "custom.review_proposals" &&
                     k !== "operator_locked_fields" &&
                     k !== "passive_stored_fields"
                   ) {
@@ -2940,14 +3195,17 @@ export function useMetaInjectorExecution({
                 let enrichedSeoFromVision = Boolean(rawVisionSeo);
 
                 if (isPurchasedForMerge && enrichedSeo && hasRiverOrFieldCollectionClaimClient(enrichedSeo)) {
-                  const fallbackStoneFam =
-                    newPlan["custom.material"] ||
-                    existing.currentMetafields?.["custom.material"] ||
-                    visionData.stone_family ||
-                    titleData.stone_family ||
-                    "";
+                  const candidateStoneFam = [
+                    newPlan["custom.material"],
+                    existing.currentMetafields?.["custom.material"],
+                    visionData.stone_family,
+                    titleData.stone_family,
+                    existing.currentMetafields?.["custom.stone_family"]
+                  ]
+                    .map(c => (c !== undefined && c !== null ? String(c).trim() : ""))
+                    .find(c => c !== "" && !isSettingOrHardwareMediumToken(c)) || "";
                   const fallbackFormat = visionData.product_format || "";
-                  enrichedSeo = buildSafePurchasedSeoTitleClient(fallbackStoneFam, fallbackFormat);
+                  enrichedSeo = buildSafePurchasedSeoTitleClient(candidateStoneFam, fallbackFormat);
                 }
 
                 if (enrichedSeo !== "") {
@@ -2973,6 +3231,21 @@ export function useMetaInjectorExecution({
                   });
                 }
 
+                // If visionData.review_proposals contains a distinct general alt_text proposal for an existing custom.alt_text field
+                // and custom.alt_text was not operator-locked, stage it for explicit operator review without copying a per-photo alt.
+                if (
+                  productHasExistingGeneralAlt &&
+                  !isLockedByOperator("custom.alt_text") &&
+                  hasNonBlankValue(visionData.review_proposals?.alt_text)
+                ) {
+                  safeApply("custom.alt_text", visionData.review_proposals.alt_text, {
+                    source: "Vision",
+                    stage: "tab3FullRescan"
+                  });
+                }
+
+                // Handle per-image native_image_alts_* strictly from updatedPieceAi.imageAlts;
+                // never copy hero alt into custom.alt_text automatically.
                 if (updatedPieceAi.imageAlts) {
                   updatedPieceAi.imageAlts.forEach(altObj => {
                     if (altObj.imageId && altObj.altText) {

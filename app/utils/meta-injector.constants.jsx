@@ -2391,10 +2391,19 @@ export const TAB3_INSPECTABLE_TEMPLATE_GROUPS = Object.freeze([
 // PURE TEMPLATE AUDIT COUNT & EXPLICIT APPLICABILITY HELPERS
 // ==========================================================================
 
+const isGeneralAltCompatibilityRowKey = (rawKey) =>
+  rawKey === "custom.alt_text" || rawKey === "alt_text";
+
 /**
  * Pure helper that computes logical capability counts, group subtotals, actual rendered-row
- * counts, and explicit media-expansion vs. non-media row discrepancies without hardcoding 62
- * or substituting group.fields.length for missing rendered measurements.
+ * counts, and explicit media-expansion, compatibility-row, and non-media row discrepancies
+ * without hardcoding 62 or substituting group.fields.length for missing rendered measurements.
+ *
+ * When an existing `custom.alt_text` compatibility row is rendered alongside `native_image_alt`
+ * controls, it is counted accurately in `renderedCount` / `totalRenderedRows` and tracked
+ * explicitly in `compatibilityRowCount` (and group `compatibilityRenderedCount`) so it never
+ * inflates logical capability counts (62 / 93 / 7), never inflates `mediaControlCount`
+ * (per-photo alt rows), and never produces a false `nonMediaDiscrepancy`.
  *
  * @param {Array} templateGroups - Array of template group objects (defaults to PRODUCT_TEMPLATE_GROUPS).
  * @param {Object|null} renderedMeasurements - Optional consumer-supplied measurements:
@@ -2402,6 +2411,7 @@ export const TAB3_INSPECTABLE_TEMPLATE_GROUPS = Object.freeze([
  *   - renderedKeysByGroup: { [groupHeading]: string[] }
  *   - mediaControlCount: number (actual rendered per-image native_image_alts_* controls)
  *   - hasZeroImagePlaceholder: boolean (whether 1 zero-image native_image_alt placeholder row is rendered)
+ *   - compatibilityRowCount: number (optional explicit count of rendered compatibility rows such as custom.alt_text)
  */
 export function computeTemplateAuditCounts(
   templateGroups = PRODUCT_TEMPLATE_GROUPS,
@@ -2440,9 +2450,14 @@ export function computeTemplateAuditCounts(
     hasMeasurementsObj && typeof renderedMeasurements.hasZeroImagePlaceholder === "boolean"
       ? renderedMeasurements.hasZeroImagePlaceholder
       : null;
+  let observedCompatibilityRowCount =
+    hasMeasurementsObj && typeof renderedMeasurements.compatibilityRowCount === "number" && Number.isFinite(renderedMeasurements.compatibilityRowCount)
+      ? Math.max(0, Math.floor(renderedMeasurements.compatibilityRowCount))
+      : null;
 
   let derivedMediaControlsFromKeys = 0;
   let derivedPlaceholderFromKeys = false;
+  let derivedCompatibilityRowsFromKeys = 0;
   let sawAnyKeysList = false;
 
   const groupSubtotals = safeGroups.map((group) => {
@@ -2458,17 +2473,22 @@ export function computeTemplateAuditCounts(
 
     let groupRenderedCount = null;
     let groupRenderedKeys = null;
+    let groupCompatibilityRenderedCount = null;
 
     if (renderedKeysByGroup && Array.isArray(renderedKeysByGroup[heading])) {
       sawAnyKeysList = true;
       groupRenderedKeys = renderedKeysByGroup[heading];
       groupRenderedCount = groupRenderedKeys.length;
+      groupCompatibilityRenderedCount = 0;
       groupRenderedKeys.forEach((k) => {
         if (typeof k === "string") {
           if (k.startsWith("native_image_alts_")) {
             derivedMediaControlsFromKeys += 1;
           } else if (k === "native_image_alt") {
             derivedPlaceholderFromKeys = true;
+          } else if (isGeneralAltCompatibilityRowKey(k)) {
+            derivedCompatibilityRowsFromKeys += 1;
+            groupCompatibilityRenderedCount += 1;
           }
         }
       });
@@ -2488,13 +2508,18 @@ export function computeTemplateAuditCounts(
       unmeasuredGroupCount += 1;
     }
 
-    // For groups without native_image_alt, any difference between rendered and logical is a non-media discrepancy.
-    // For the group containing native_image_alt, separate media expansion from other fields in that group when keys are provided.
-    let nonMediaLogicalCount = logicalCount - logicalImageAltCount;
+    // For groups without native_image_alt, any difference between canonical rendered rows and logical slots is a non-media discrepancy.
+    // When rendered keys are provided, exclude native_image_alt, per-image native_image_alts_*, and the existing custom.alt_text
+    // compatibility row from nonMediaRenderedCount so the compatibility row is accounted for separately without a false discrepancy.
+    const nonMediaLogicalCount = logicalCount - logicalImageAltCount;
     let nonMediaRenderedCount = null;
     if (groupRenderedKeys) {
       nonMediaRenderedCount = groupRenderedKeys.filter(
-        (k) => typeof k === "string" && k !== "native_image_alt" && !k.startsWith("native_image_alts_")
+        (k) =>
+          typeof k === "string" &&
+          k !== "native_image_alt" &&
+          !k.startsWith("native_image_alts_") &&
+          !isGeneralAltCompatibilityRowKey(k)
       ).length;
     } else if (isMeasured && logicalImageAltCount === 0) {
       nonMediaRenderedCount = groupRenderedCount;
@@ -2508,6 +2533,7 @@ export function computeTemplateAuditCounts(
       logicalCount,
       logicalImageAltCount,
       renderedCount: groupRenderedCount,
+      compatibilityRenderedCount: groupCompatibilityRenderedCount,
       measurementStatus: isMeasured ? "measured" : "unmeasured",
       delta: isMeasured ? groupRenderedCount - logicalCount : null,
       nonMediaLogicalCount,
@@ -2521,6 +2547,9 @@ export function computeTemplateAuditCounts(
   }
   if (observedZeroImagePlaceholder === null && sawAnyKeysList) {
     observedZeroImagePlaceholder = derivedPlaceholderFromKeys;
+  }
+  if (observedCompatibilityRowCount === null && sawAnyKeysList) {
+    observedCompatibilityRowCount = derivedCompatibilityRowsFromKeys;
   }
 
   const allGroupsMeasured = safeGroups.length > 0 && unmeasuredGroupCount === 0;
@@ -2541,13 +2570,16 @@ export function computeTemplateAuditCounts(
       ? imageAltRenderedRows - totalLogicalImageAltCapabilities
       : null;
 
+  const compatibilityRowDelta =
+    observedCompatibilityRowCount !== null ? observedCompatibilityRowCount : 0;
+
   const totalLogicalMinusRenderedDelta = allGroupsMeasured
     ? totalRenderedRows - totalLogicalCapabilities
     : null;
 
   const nonMediaRowDiscrepancy =
     allGroupsMeasured && mediaExpansionDelta !== null
-      ? totalLogicalMinusRenderedDelta - mediaExpansionDelta
+      ? totalLogicalMinusRenderedDelta - mediaExpansionDelta - compatibilityRowDelta
       : null;
 
   return {
@@ -2561,8 +2593,10 @@ export function computeTemplateAuditCounts(
     measurementStatus,
     mediaControlCount: observedMediaControlCount,
     hasZeroImagePlaceholder: observedZeroImagePlaceholder,
+    compatibilityRowCount: observedCompatibilityRowCount,
     imageAltRenderedRows,
     mediaExpansionDelta,
+    compatibilityRowDelta: observedCompatibilityRowCount !== null ? compatibilityRowDelta : null,
     totalDelta: totalLogicalMinusRenderedDelta,
     nonMediaRowDiscrepancy,
     groupSubtotals

@@ -33,10 +33,12 @@ import {
   resolveApprovalStorageKey,
   resolveConfigFieldDestination,
   isParkedExcludedKey,
+  inspectFieldBaselineDescriptor,
   createKeepOriginalDecisionRecord,
   getDynamicSections,
   getStatusTone,
   isMultilineKey,
+  buildCurrentStockBezelCleanupPreview,
   evaluateFieldMetadata,
   computeSystemStatus,
   computeDiagnosticsStats
@@ -163,6 +165,12 @@ export function OperationsMatrixTab({ products }) {
   const [activeFilter, setActiveFilter] = useState("All");
   const [expandedBays, setExpandedBays] = useState(INITIAL_EXPANDED_BAYS);
   const [retainedFieldEditorsByOwner, setRetainedFieldEditorsByOwner] = useState({});
+
+  // Explicit One-Time Current-Stock Bezel Cleanup Preview & Staging State
+  // Never populated automatically on mount, load, filter change, or rescan.
+  const [stockCleanupPreview, setStockCleanupPreview] = useState(null);
+  const [stockCleanupSelectedMap, setStockCleanupSelectedMap] = useState({});
+  const [stockCleanupOutcomeReport, setStockCleanupOutcomeReport] = useState(null);
 
   const isComponentMountedRef = useRef(true);
   const blurClearTimersRef = useRef(new Map());
@@ -818,6 +826,9 @@ export function OperationsMatrixTab({ products }) {
     setTelemetryPublishNotice(null);
     setSectionAuditMeasurements({ productId: null, bySection: {} });
     setExpandedBays(INITIAL_EXPANDED_BAYS);
+    setStockCleanupPreview(null);
+    setStockCleanupSelectedMap({});
+    setStockCleanupOutcomeReport(null);
     setIsLoadingData(false);
     setIsExecuting(false);
     setExecutionMode(null);
@@ -1066,6 +1077,383 @@ export function OperationsMatrixTab({ products }) {
     standardizedCandidatesByProduct,
     getStandardizedEvaluationForField,
     releaseRetainedFieldEditorKeys
+  ]);
+
+  // ========================================================================
+  // EXPLICIT ONE-TIME CURRENT-STOCK BEZEL CLEANUP PREVIEW & STAGING HANDLERS
+  // ========================================================================
+
+  const handleCaptureStockCleanupPreview = useCallback((scopeMode = "loaded_all") => {
+    if (isLoadingData || isExecuting) {
+      setSafetyError("Cannot preview current-stock bezel cleanup while a load or execution operation is running.");
+      return;
+    }
+
+    let targetIds = [];
+    if (scopeMode === "active_bench") {
+      if (!selectedBenchId || !isExactProductGid(selectedBenchId)) {
+        setSafetyError("Cannot preview active bench item: No valid product is currently selected on the bench.");
+        return;
+      }
+      targetIds = [selectedBenchId.trim()];
+    } else {
+      // Capture a fixed snapshot of currently loaded product GIDs (preserving queue order first, then any other loaded bench item)
+      const seen = new Set();
+      queueIds.forEach((qid) => {
+        if (isExactProductGid(qid) && manifestData?.[qid] && !seen.has(qid.trim())) {
+          seen.add(qid.trim());
+          targetIds.push(qid.trim());
+        }
+      });
+      Object.keys(manifestData || {}).forEach((mid) => {
+        if (isExactProductGid(mid) && manifestData?.[mid] && !seen.has(mid.trim())) {
+          seen.add(mid.trim());
+          targetIds.push(mid.trim());
+        }
+      });
+    }
+
+    if (targetIds.length === 0) {
+      setSafetyError(
+        "Cannot preview current-stock bezel cleanup: No loaded product baselines are available in browser state. Select products and click 'GENERATE REPAIR PLAN (LOAD DATA)' first."
+      );
+      return;
+    }
+
+    const previewResult = buildCurrentStockBezelCleanupPreview(manifestData, targetIds);
+    const initialSelections = {};
+    (previewResult.candidates || []).forEach((cand) => {
+      if (cand && cand.candidateId) {
+        initialSelections[cand.candidateId] = true;
+      }
+    });
+
+    setStockCleanupPreview({
+      ...previewResult,
+      scopeMode
+    });
+    setStockCleanupSelectedMap(initialSelections);
+    setStockCleanupOutcomeReport(null);
+    setSafetyError("");
+    setSafetyMessage(
+      `Captured fixed one-time current-stock cleanup preview for ${previewResult.summary.capturedProductCount} product(s): ${previewResult.summary.candidateCount} eligible replacement candidate(s), ${previewResult.summary.flaggedCount} flagged item(s), ${previewResult.summary.skippedCount} preserved/clean product(s). Review before staging.`
+    );
+  }, [isLoadingData, isExecuting, selectedBenchId, queueIds, manifestData]);
+
+  const handleCancelStockCleanupPreview = useCallback(() => {
+    setStockCleanupPreview(null);
+    setStockCleanupSelectedMap({});
+    setStockCleanupOutcomeReport(null);
+  }, []);
+
+  const handleToggleStockCleanupCandidateSelection = useCallback((candidateId, isChecked) => {
+    if (typeof candidateId !== "string" || !candidateId.trim()) return;
+    setStockCleanupSelectedMap((prev) => ({
+      ...prev,
+      [candidateId]: Boolean(isChecked)
+    }));
+  }, []);
+
+  const handleSelectAllStockCleanupCandidates = useCallback((shouldSelectAll) => {
+    if (!stockCleanupPreview || !Array.isArray(stockCleanupPreview.candidates)) return;
+    const nextMap = {};
+    stockCleanupPreview.candidates.forEach((cand) => {
+      if (cand?.candidateId) {
+        nextMap[cand.candidateId] = Boolean(shouldSelectAll);
+      }
+    });
+    setStockCleanupSelectedMap(nextMap);
+  }, [stockCleanupPreview]);
+
+  const handleStageSelectedStockCleanupCandidates = useCallback(() => {
+    if (!stockCleanupPreview || !Array.isArray(stockCleanupPreview.candidates)) {
+      setSafetyError("No active current-stock cleanup preview to stage.");
+      return;
+    }
+    if (isLoadingData || isExecuting) {
+      setSafetyError("Cannot stage cleanup candidates while a load or execution operation is running.");
+      return;
+    }
+
+    const capturedSet = new Set(stockCleanupPreview.capturedProductIds || []);
+    const selectedCandidates = stockCleanupPreview.candidates.filter(
+      (c) =>
+        c &&
+        c.candidateId &&
+        stockCleanupSelectedMap[c.candidateId] === true &&
+        capturedSet.has(c.productId)
+    );
+
+    if (selectedCandidates.length === 0) {
+      setSafetyError("No previewed cleanup candidates are selected for staging.");
+      return;
+    }
+
+    const allConfigFields = [
+      ...TAB3_INSPECTABLE_TEMPLATE_GROUPS.flatMap((g) => g.fields || []),
+      ...(COMPATIBILITY_ADAPTER_FIELDS || [])
+    ];
+
+    const stagedEntries = [];
+    const rejectedStaleEntries = [];
+    const preservedOperatorEntries = [];
+    const patchesByProduct = {};
+
+    selectedCandidates.forEach((cand) => {
+      const {
+        candidateId,
+        productId,
+        productTitle,
+        destinationKey,
+        approvalStorageKey,
+        fieldLabel,
+        mediaImageId,
+        baselineSignature,
+        beforeValue,
+        afterValue
+      } = cand;
+
+      const liveManifest = manifestData?.[productId];
+      if (!liveManifest || typeof liveManifest !== "object") {
+        rejectedStaleEntries.push({
+          candidateId,
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          reason: "Stale preview rejected: Product manifest baseline is no longer loaded."
+        });
+        return;
+      }
+
+      const liveManifestPid =
+        (typeof liveManifest.nativeTargets?.productId === "string" && liveManifest.nativeTargets.productId.trim()) ||
+        (typeof liveManifest.productId === "string" && liveManifest.productId.trim()) ||
+        null;
+      if (liveManifestPid !== productId) {
+        rejectedStaleEntries.push({
+          candidateId,
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          reason: `Stale preview rejected: Manifest productId mismatch (${liveManifestPid || "none"} !== ${productId}).`
+        });
+        return;
+      }
+
+      // Verify media node identity when staging a MediaImage alt candidate
+      if (mediaImageId) {
+        const mediaEdges = Array.isArray(liveManifest.nativeTargets?.media?.edges)
+          ? liveManifest.nativeTargets.media.edges
+          : [];
+        const matchedMedia = mediaEdges.find((e) => e?.node?.id === mediaImageId);
+        if (!matchedMedia || typeof matchedMedia.node?.alt !== "string") {
+          rejectedStaleEntries.push({
+            candidateId,
+            productId,
+            productTitle,
+            destinationKey,
+            fieldLabel,
+            reason: `Stale preview rejected: MediaImage ${mediaImageId} is no longer present or verified on ${productId}.`
+          });
+          return;
+        }
+      }
+
+      // Verify exact baseline signature matches the preview snapshot
+      const liveBaselineDesc = inspectFieldBaselineDescriptor(destinationKey, liveManifest, productId);
+      if (!liveBaselineDesc.evidenceAvailable || liveBaselineDesc.signature !== baselineSignature) {
+        rejectedStaleEntries.push({
+          candidateId,
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          reason: "Stale preview rejected: Underlying stored Shopify baseline changed since the preview was captured."
+        });
+        return;
+      }
+
+      // Evaluate current field metadata to check for existing manual edits, approvals, Keep Original decisions, or diverging proposals
+      const liveMeta = evaluateFieldMetadata({
+        key: destinationKey,
+        data: liveManifest,
+        productId,
+        currentApprovals: approvals,
+        currentKeepOriginal: keepOriginalDecisions,
+        currentManualEdits: manualEdits,
+        configFields: allConfigFields,
+        standardizedCandidatesByProduct,
+        getStandardizedEvaluationForField,
+        includeTab3InspectableInventory: true
+      });
+
+      if (liveMeta.currentVal !== beforeValue) {
+        rejectedStaleEntries.push({
+          candidateId,
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          reason: "Stale preview rejected: Current stored value no longer matches the previewed 'Before' value."
+        });
+        return;
+      }
+
+      // Preserve existing manual edits, explicit approvals, and Keep Original decisions — never overwrite them!
+      const prodManualMap = validObj(manualEdits?.[productId]);
+      const prodApprovalsMap = validObj(approvals?.[productId]);
+      const prodKeepMap = validObj(keepOriginalDecisions?.[productId]);
+
+      const hasExistingManualEdit =
+        Boolean(liveMeta.isManuallyEdited) ||
+        prodManualMap[destinationKey] === true ||
+        (approvalStorageKey && prodManualMap[approvalStorageKey] === true) ||
+        (destinationKey === "custom.alt_text" && prodManualMap.alt_text === true);
+
+      const hasExistingApproval =
+        Boolean(liveMeta.isApproved) ||
+        prodApprovalsMap[destinationKey] !== undefined ||
+        (approvalStorageKey && prodApprovalsMap[approvalStorageKey] !== undefined);
+
+      const hasExistingKeepOriginal =
+        Boolean(liveMeta.isKeepOriginalSelected) ||
+        prodKeepMap[destinationKey] !== undefined ||
+        (approvalStorageKey && prodKeepMap[approvalStorageKey] !== undefined);
+
+      if (hasExistingManualEdit || hasExistingApproval || hasExistingKeepOriginal) {
+        const preservedWhy = hasExistingManualEdit
+          ? "Existing manual edit preserved"
+          : hasExistingApproval
+            ? "Existing explicit approval preserved"
+            : "Existing Keep Original decision preserved";
+        preservedOperatorEntries.push({
+          candidateId,
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          reason: `${preservedWhy}; cleanup candidate was not staged over operator state.`
+        });
+        return;
+      }
+
+      // Reject if another non-identical proposal was already staged for this destination since baseline load
+      if (
+        liveMeta.proposalExists &&
+        liveMeta.propVal !== liveMeta.currentVal &&
+        liveMeta.propVal !== afterValue
+      ) {
+        preservedOperatorEntries.push({
+          candidateId,
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          reason: `Existing diverging proposal ("${liveMeta.propVal.slice(0, 80)}${liveMeta.propVal.length > 80 ? "…" : ""}") preserved; cleanup candidate was not staged over it.`
+        });
+        return;
+      }
+
+      if (!patchesByProduct[productId]) {
+        patchesByProduct[productId] = [];
+      }
+      patchesByProduct[productId].push(cand);
+      stagedEntries.push({
+        candidateId,
+        productId,
+        productTitle,
+        destinationKey,
+        approvalStorageKey,
+        fieldLabel,
+        beforeValue,
+        afterValue
+      });
+    });
+
+    const affectedProductIds = Object.keys(patchesByProduct);
+    if (affectedProductIds.length > 0) {
+      setManifestData((prevMan) => {
+        const nextMan = { ...prevMan };
+
+        affectedProductIds.forEach((pid) => {
+          const existingMan = nextMan[pid];
+          if (!existingMan) return;
+          const nextRepairPlan = { ...(existingMan.repairPlan || {}) };
+          const nextMetadata = { ...(existingMan.metadata || {}) };
+          const prodCands = patchesByProduct[pid] || [];
+
+          const stagesNativeDesc = prodCands.some((c) => c.destinationKey === "native_description");
+          const stagesCustomDesc = prodCands.some((c) => c.destinationKey === "custom.generated_description");
+
+          prodCands.forEach((cand) => {
+            const destKey = cand.destinationKey;
+            nextRepairPlan[destKey] = cand.afterValue;
+
+            if (destKey === "custom.generated_description") {
+              // If native_description was NOT staged by cleanup and does not have its own explicit key in repairPlan,
+              // mark custom.generated_description as destinationOnly so native_description does not inherit the metafield's HTML.
+              const hasIndependentNativeKey =
+                stagesNativeDesc ||
+                Object.prototype.hasOwnProperty.call(nextRepairPlan, "native_description");
+              nextMetadata["custom.generated_description"] = {
+                source: "One-Time Stock Cleanup",
+                stage: "OneTimeStockBezelCleanup",
+                destinationOnly: !hasIndependentNativeKey
+              };
+            } else if (destKey === "native_description") {
+              nextMetadata["native_description"] = {
+                source: "One-Time Stock Cleanup",
+                stage: "OneTimeStockBezelCleanup"
+              };
+            } else {
+              nextMetadata[destKey] = {
+                source: "One-Time Stock Cleanup",
+                stage: "OneTimeStockBezelCleanup"
+              };
+            }
+          });
+
+          nextMan[pid] = {
+            ...existingMan,
+            repairPlan: nextRepairPlan,
+            metadata: nextMetadata
+          };
+        });
+
+        return nextMan;
+      });
+    }
+
+    setStockCleanupOutcomeReport({
+      stagedAt: new Date().toISOString(),
+      stagedEntries,
+      rejectedStaleEntries,
+      preservedOperatorEntries
+    });
+
+    if (stagedEntries.length > 0) {
+      setSafetyError("");
+      setSafetyMessage(
+        `Staged ${stagedEntries.length} one-time bezel cleanup proposal(s) across ${affectedProductIds.length} product(s) as unapproved review items (${preservedOperatorEntries.length} preserved due to existing edits/decisions, ${rejectedStaleEntries.length} rejected as stale). Explicit approval is required before saving.`
+      );
+    } else {
+      setSafetyMessage(
+        `No cleanup candidates were staged (${preservedOperatorEntries.length} preserved due to existing edits/decisions, ${rejectedStaleEntries.length} rejected as stale).`
+      );
+    }
+  }, [
+    stockCleanupPreview,
+    stockCleanupSelectedMap,
+    isLoadingData,
+    isExecuting,
+    manifestData,
+    approvals,
+    keepOriginalDecisions,
+    manualEdits,
+    standardizedCandidatesByProduct,
+    getStandardizedEvaluationForField
   ]);
 
   const handleReleasePendingReferenceMatch = useCallback(() => {
@@ -1923,11 +2311,22 @@ export function OperationsMatrixTab({ products }) {
         ) {
           nextRepairPlan[approvalStorageKey] = value;
         }
+        const nextMetadata = { ...(existingManifest.metadata || {}) };
+        if (
+          targetKeyForProposal === "custom.generated_description" &&
+          nextMetadata["custom.generated_description"]?.destinationOnly === true
+        ) {
+          nextMetadata["custom.generated_description"] = {
+            ...nextMetadata["custom.generated_description"],
+            destinationOnly: false
+          };
+        }
         return {
           ...prev,
           [selectedBenchId]: {
             ...existingManifest,
-            repairPlan: nextRepairPlan
+            repairPlan: nextRepairPlan,
+            metadata: nextMetadata
           }
         };
       });
@@ -2749,6 +3148,22 @@ export function OperationsMatrixTab({ products }) {
         ? getFieldMetadata("custom.generated_description", unselectedDraftManifest, null, approvals, allDynamicConfigFields)
         : null);
 
+  // Detect when native_description and custom.generated_description hold independent staged proposals on the active bench product
+  // (e.g., after surgical HTML cleanup of each destination's own stored HTML string).
+  const hasIndependentDescriptionProposalsOnBench = Boolean(
+    activeBenchData &&
+    nativeDescriptionMeta &&
+    customDescriptionMeta &&
+    ((nativeDescriptionMeta.proposalExists &&
+      customDescriptionMeta.proposalExists &&
+      nativeDescriptionMeta.propVal !== customDescriptionMeta.propVal) ||
+      (Object.prototype.hasOwnProperty.call(activeBenchData.repairPlan || {}, "native_description") &&
+        !Object.prototype.hasOwnProperty.call(activeBenchData.repairPlan || {}, "custom.generated_description")) ||
+      (Object.prototype.hasOwnProperty.call(activeBenchData.repairPlan || {}, "custom.generated_description") &&
+        activeBenchData.metadata?.["custom.generated_description"]?.destinationOnly === true &&
+        !Object.prototype.hasOwnProperty.call(activeBenchData.repairPlan || {}, "native_description")))
+  );
+
   // Authoritative shared selection for Description Review and all 11 ManifestSectionCard drawers
   const currentBenchOrDraftTargetId = activeBenchData ? selectedBenchId : null;
   const descriptionReviewVisibility = effectiveManifestForSections
@@ -2845,6 +3260,11 @@ export function OperationsMatrixTab({ products }) {
       ? { renderedKeysByGroup: renderedKeysByGroupForAudit }
       : null
   );
+
+  const loadedManifestCount = Object.keys(manifestData || {}).length;
+  const selectedCleanupCandidateCount = stockCleanupPreview?.candidates
+    ? stockCleanupPreview.candidates.filter((c) => stockCleanupSelectedMap[c.candidateId] === true).length
+    : 0;
 
   return (
     <BlockStack gap="600">
@@ -2971,6 +3391,233 @@ export function OperationsMatrixTab({ products }) {
                   </Button>
                 </div>
 
+                {/* EXPLICIT ONE-TIME CURRENT-STOCK BEZEL CLEANUP PREVIEW & STAGING PANEL */}
+                <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Badge tone="attention">One-Time Current-Stock Operation</Badge>
+                        <Text as="h4" variant="headingSm" fontWeight="bold">
+                          Current-Stock Bezel Claim Cleanup (Glue-On Setting w/ Integrated Chain Loop; Pinch Bails Preserved)
+                        </Text>
+                      </InlineStack>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <Button
+                          size="slim"
+                          variant="secondary"
+                          onClick={() => handleCaptureStockCleanupPreview("loaded_all")}
+                          disabled={loadedManifestCount === 0 || isLoadingData || isExecuting}
+                        >
+                          {`Preview Loaded Stock (${loadedManifestCount} loaded)`}
+                        </Button>
+                        <Button
+                          size="slim"
+                          variant="secondary"
+                          onClick={() => handleCaptureStockCleanupPreview("active_bench")}
+                          disabled={!selectedBenchId || !activeBenchData || isLoadingData || isExecuting}
+                        >
+                          Preview Active Bench Item Only
+                        </Button>
+                        {stockCleanupPreview && (
+                          <Button
+                            size="slim"
+                            tone="critical"
+                            variant="tertiary"
+                            onClick={handleCancelStockCleanupPreview}
+                            disabled={isLoadingData || isExecuting}
+                          >
+                            Cancel / Clear Preview
+                          </Button>
+                        )}
+                      </div>
+                    </InlineStack>
+
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      <strong>Scope &amp; Safety Contract:</strong> This explicit one-time preview inspects only the fixed product IDs captured when you click Preview above. It never runs on load or rescan, never converts pinch bails (pins through drilled holes) to glue-on, flags ambiguous/decorative or contradictory bezel wording instead of guessing, and stages selected replacements as unapproved review proposals. Outside this explicit operation, future genuine bezel stock remains allowed.
+                    </Text>
+
+                    {stockCleanupPreview && (
+                      <Box padding="300" background="bg-surface" borderRadius="200" borderColor="border" borderWidth="1">
+                        <BlockStack gap="300">
+                          <InlineStack align="space-between" blockAlign="center">
+                            <Text as="p" variant="bodyMd" fontWeight="bold">
+                              Captured Snapshot ({stockCleanupPreview.evaluatedAt}): {stockCleanupPreview.summary.capturedProductCount} product(s) captured | {stockCleanupPreview.summary.candidateCount} eligible replacement(s) across {stockCleanupPreview.summary.affectedProductCount} product(s) | {stockCleanupPreview.summary.flaggedCount} flagged | {stockCleanupPreview.summary.skippedCount} preserved/clean | {stockCleanupPreview.summary.unavailableCount} unavailable
+                            </Text>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                              {stockCleanupPreview.candidates.length > 0 && (
+                                <>
+                                  <Button
+                                    size="slim"
+                                    variant="tertiary"
+                                    onClick={() => handleSelectAllStockCleanupCandidates(true)}
+                                  >
+                                    Select All Candidates
+                                  </Button>
+                                  <Button
+                                    size="slim"
+                                    variant="tertiary"
+                                    onClick={() => handleSelectAllStockCleanupCandidates(false)}
+                                  >
+                                    Deselect All
+                                  </Button>
+                                  <Button
+                                    size="slim"
+                                    variant="primary"
+                                    onClick={handleStageSelectedStockCleanupCandidates}
+                                    disabled={selectedCleanupCandidateCount === 0 || isLoadingData || isExecuting}
+                                  >
+                                    {`Stage Selected Proposals for Review (${selectedCleanupCandidateCount}/${stockCleanupPreview.candidates.length})`}
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </InlineStack>
+
+                          <div style={{ fontSize: "12px", color: "#475569", wordBreak: "break-word" }}>
+                            <strong>Fixed Captured Product GIDs ({stockCleanupPreview.capturedProductIds.length}):</strong>{" "}
+                            <code>{stockCleanupPreview.capturedProductIds.join(", ") || "None"}</code>
+                          </div>
+
+                          {/* 1. Eligible Replacement Candidates Table */}
+                          {stockCleanupPreview.candidates.length > 0 ? (
+                            <div style={{ overflowX: "auto" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                                <thead>
+                                  <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
+                                    <th style={{ padding: "6px 8px" }}>Stage?</th>
+                                    <th style={{ padding: "6px 8px" }}>Product</th>
+                                    <th style={{ padding: "6px 8px" }}>Destination</th>
+                                    <th style={{ padding: "6px 8px" }}>Before (Current Stored)</th>
+                                    <th style={{ padding: "6px 8px" }}>After (Proposed Replacement)</th>
+                                    <th style={{ padding: "6px 8px" }}>Rule / Reason</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {stockCleanupPreview.candidates.map((cand) => {
+                                    const isChecked = stockCleanupSelectedMap[cand.candidateId] === true;
+                                    const beforePreview =
+                                      cand.beforeValue.length > 260
+                                        ? `${cand.beforeValue.slice(0, 260)}… (${cand.beforeValue.length} chars)`
+                                        : cand.beforeValue;
+                                    const afterPreview =
+                                      cand.afterValue.length > 260
+                                        ? `${cand.afterValue.slice(0, 260)}… (${cand.afterValue.length} chars)`
+                                        : cand.afterValue;
+                                    return (
+                                      <tr key={cand.candidateId} style={{ borderBottom: "1px solid #e2e8f0", verticalAlign: "top" }}>
+                                        <td style={{ padding: "6px 8px" }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={isChecked}
+                                            onChange={(e) =>
+                                              handleToggleStockCleanupCandidateSelection(cand.candidateId, e.target.checked)
+                                            }
+                                            aria-label={`Select cleanup candidate ${cand.productTitle} ${cand.destinationKey}`}
+                                          />
+                                        </td>
+                                        <td style={{ padding: "6px 8px", wordBreak: "break-word" }}>
+                                          <div style={{ fontWeight: "600" }}>{cand.productTitle}</div>
+                                          <div style={{ fontFamily: "monospace", color: "#475569" }}>{cand.productId}</div>
+                                        </td>
+                                        <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>
+                                          <div>{cand.destinationKey}</div>
+                                          <div style={{ color: "#475569", fontFamily: "sans-serif" }}>{cand.fieldLabel}</div>
+                                        </td>
+                                        <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#fff5f5" }}>
+                                          {beforePreview}
+                                        </td>
+                                        <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#f0fdf4" }}>
+                                          {afterPreview}
+                                        </td>
+                                        <td style={{ padding: "6px 8px", color: "#334155" }}>{cand.reason}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              No unambiguous false bezel replacement candidates were found in the captured product baselines.
+                            </Text>
+                          )}
+
+                          {/* 2. Ambiguous or Contradictory Flagged Items (Never Staged Automatically) */}
+                          {stockCleanupPreview.flaggedItems.length > 0 && (
+                            <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
+                              <BlockStack gap="150">
+                                <Text as="p" variant="bodySm" fontWeight="bold" tone="critical">
+                                  Flagged Ambiguous or Contradictory Bezel Mentions ({stockCleanupPreview.flaggedItems.length} — Not Staged; Resolve Manually):
+                                </Text>
+                                {stockCleanupPreview.flaggedItems.map((flg, idx) => (
+                                  <div key={`${flg.productId}-${flg.destinationKey}-${idx}`} style={{ fontSize: "12px", wordBreak: "break-word" }}>
+                                    • <strong>{flg.productTitle}</strong> (<code>{flg.productId}</code>) — <code>{flg.destinationKey}</code>: {flg.reason} [Current: &quot;{flg.beforeValue.length > 160 ? `${flg.beforeValue.slice(0, 160)}…` : flg.beforeValue}&quot;]
+                                  </div>
+                                ))}
+                              </BlockStack>
+                            </Box>
+                          )}
+
+                          {/* 3. Saved Stone-Identity Writer Limitation Diagnostics (Requirement 10) */}
+                          {stockCleanupPreview.stoneIdentityDiagnostics.length > 0 && (
+                            <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
+                              <BlockStack gap="150">
+                                <Text as="p" variant="bodySm" fontWeight="bold">
+                                  Saved Stone-Identity Compatibility Writer Limitation Diagnostics ({stockCleanupPreview.stoneIdentityDiagnostics.length}):
+                                </Text>
+                                {stockCleanupPreview.stoneIdentityDiagnostics.map((diag) => (
+                                  <div key={diag.productId} style={{ fontSize: "12px", wordBreak: "break-word" }}>
+                                    • <strong>{diag.productTitle}</strong> (<code>{diag.productId}</code>) — Saved <code>custom.material</code>: <code>{String(diag.savedMaterial ?? "blank")}</code> | Saved <code>custom.primary_medium</code>: <code>{String(diag.savedPrimaryMedium ?? "blank")}</code> | Saved <code>custom.stone_family</code>: <code>{String(diag.savedStoneFamily ?? "blank")}</code>. <strong>Unresolved Writer Limitation:</strong> {diag.compatibilityWriterLimitation}
+                                  </div>
+                                ))}
+                              </BlockStack>
+                            </Box>
+                          )}
+
+                          {/* 4. Skipped / Pinch-Bail Preserved & Unavailable Items */}
+                          {(stockCleanupPreview.skippedItems.length > 0 || stockCleanupPreview.unavailableProducts.length > 0) && (
+                            <div style={{ fontSize: "12px", color: "#475569", wordBreak: "break-word" }}>
+                              {stockCleanupPreview.skippedItems.length > 0 && (
+                                <div>
+                                  <strong>Preserved / Clean Products ({stockCleanupPreview.skippedItems.length}):</strong>{" "}
+                                  {stockCleanupPreview.skippedItems.map((sk) => `${sk.productTitle} (${sk.status}: ${sk.reason})`).join(" | ")}
+                                </div>
+                              )}
+                              {stockCleanupPreview.unavailableProducts.length > 0 && (
+                                <div style={{ marginTop: "4px", color: "#991b1b" }}>
+                                  <strong>Unavailable Baselines ({stockCleanupPreview.unavailableProducts.length}):</strong>{" "}
+                                  {stockCleanupPreview.unavailableProducts.map((un) => `${un.productTitle} (${un.productId}: ${un.reason})`).join(" | ")}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* 5. Staging Outcome Report */}
+                          {stockCleanupOutcomeReport && (
+                            <Box padding="200" background="bg-surface-secondary" borderRadius="150" borderColor="border" borderWidth="1">
+                              <BlockStack gap="100">
+                                <Text as="p" variant="bodySm" fontWeight="bold">
+                                  Staging Report ({stockCleanupOutcomeReport.stagedAt}): {stockCleanupOutcomeReport.stagedEntries.length} staged for explicit review | {stockCleanupOutcomeReport.preservedOperatorEntries.length} preserved (existing edit/decision) | {stockCleanupOutcomeReport.rejectedStaleEntries.length} rejected (stale baseline)
+                                </Text>
+                                {stockCleanupOutcomeReport.preservedOperatorEntries.map((p, idx) => (
+                                  <div key={`pres-${idx}`} style={{ fontSize: "12px", color: "#0f5132" }}>
+                                    • Preserved <strong>{p.productTitle}</strong> (<code>{p.destinationKey}</code>): {p.reason}
+                                  </div>
+                                ))}
+                                {stockCleanupOutcomeReport.rejectedStaleEntries.map((r, idx) => (
+                                  <div key={`stale-${idx}`} style={{ fontSize: "12px", color: "#842029" }}>
+                                    • Rejected Stale <strong>{r.productTitle}</strong> (<code>{r.destinationKey}</code>): {r.reason}
+                                  </div>
+                                ))}
+                              </BlockStack>
+                            </Box>
+                          )}
+                        </BlockStack>
+                      </Box>
+                    )}
+                  </BlockStack>
+                </Box>
+
                 <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
                   <BlockStack gap="150">
                     <InlineStack align="space-between" blockAlign="center">
@@ -3086,10 +3733,16 @@ export function OperationsMatrixTab({ products }) {
                             if (!isGrpMeasured) {
                               rowNote = "Not measured";
                             } else if (grp.logicalImageAltCount > 0) {
+                              const compatNote =
+                                grp.compatibilityRenderedCount > 0
+                                  ? ` + ${grp.compatibilityRenderedCount} existing custom.alt_text compatibility row`
+                                  : "";
                               if (templateAuditSummary.mediaControlCount > 0) {
-                                rowNote = `Includes ${templateAuditSummary.mediaControlCount} per-image media alt control(s) from 1 logical native_image_alt capability`;
+                                rowNote = `Includes ${templateAuditSummary.mediaControlCount} per-image media alt control(s) from 1 logical native_image_alt capability${compatNote}`;
                               } else if (templateAuditSummary.hasZeroImagePlaceholder) {
-                                rowNote = "Includes 1 read-only zero-image placeholder row for native_image_alt";
+                                rowNote = `Includes 1 read-only zero-image placeholder row for native_image_alt${compatNote}`;
+                              } else if (compatNote) {
+                                rowNote = `Includes ${compatNote.slice(3)}`;
                               }
                             } else if (grp.nonMediaDiscrepancy !== null && grp.nonMediaDiscrepancy !== 0) {
                               rowNote = `Non-media row delta: ${grp.nonMediaDiscrepancy > 0 ? `+${grp.nonMediaDiscrepancy}` : grp.nonMediaDiscrepancy}`;
@@ -3169,7 +3822,7 @@ export function OperationsMatrixTab({ products }) {
                               </td>
                               <td style={{ padding: "8px 10px" }}>
                                 {templateAuditSummary.mediaControlCount !== null
-                                  ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}`
+                                  ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}${templateAuditSummary.compatibilityRowCount ? ` | Compat Rows: ${templateAuditSummary.compatibilityRowCount}` : ""}`
                                   : "Media breakdown: Not measured"}
                               </td>
                             </tr>
@@ -3394,6 +4047,114 @@ export function OperationsMatrixTab({ products }) {
                         </Text>
                       </BlockStack>
                     </Banner>
+                  </Card>
+                )}
+
+                {/* INDEPENDENT DESCRIPTION DESTINATION REVIEW CARD (When native_description and custom.generated_description have distinct staged HTML) */}
+                {hasIndependentDescriptionProposalsOnBench && (
+                  <Card padding="400">
+                    <BlockStack gap="300">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="attention">Independent Description Destinations</Badge>
+                          <Text as="h3" variant="headingMd" fontWeight="bold">
+                            Destination-Specific Description HTML Review ({selectedBenchId})
+                          </Text>
+                        </InlineStack>
+                      </InlineStack>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        <code>native_description</code> (<code>product.descriptionHtml</code>) and <code>custom.generated_description</code> currently hold independent HTML proposals on this product. Review, approve, or choose <strong>Use original saved value</strong> for each destination independently below without forcing both destinations to share one string.
+                      </Text>
+
+                      {[
+                        {
+                          destKey: "native_description",
+                          title: "1. Native Description (product.descriptionHtml)",
+                          descMeta: nativeDescriptionMeta
+                        },
+                        {
+                          destKey: "custom.generated_description",
+                          title: "2. Custom Generated Description Metafield (custom.generated_description)",
+                          descMeta: customDescriptionMeta
+                        }
+                      ].map(({ destKey, title, descMeta }) => {
+                        if (!descMeta) return null;
+                        const hasDelta = descMeta.proposalExists && descMeta.propVal !== descMeta.currentVal;
+                        return (
+                          <Box
+                            key={destKey}
+                            padding="300"
+                            background="bg-surface-secondary"
+                            borderRadius="200"
+                            borderColor="border"
+                            borderWidth="1"
+                          >
+                            <BlockStack gap="200">
+                              <InlineStack align="space-between" blockAlign="center">
+                                <Text as="h4" variant="headingSm" fontWeight="bold">
+                                  {title}
+                                </Text>
+                                <Badge
+                                  tone={
+                                    descMeta.isApproved
+                                      ? "success"
+                                      : descMeta.isKeepOriginalSelected
+                                        ? "info"
+                                        : hasDelta
+                                          ? "warning"
+                                          : "new"
+                                  }
+                                >
+                                  {descMeta.fieldStatus}
+                                </Badge>
+                              </InlineStack>
+
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px", fontSize: "12px" }}>
+                                <div style={{ padding: "10px", backgroundColor: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "220px", overflowY: "auto" }}>
+                                  <strong>Current Stored HTML ({descMeta.currentVal.length} chars):</strong>
+                                  <div style={{ marginTop: "6px" }}>{descMeta.currentVal || "Blank"}</div>
+                                </div>
+                                <div style={{ padding: "10px", backgroundColor: hasDelta ? "#f0fdf4" : "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "220px", overflowY: "auto" }}>
+                                  <strong>Staged Proposal HTML ({descMeta.propVal.length} chars | Source: {descMeta.source}):</strong>
+                                  <div style={{ marginTop: "6px" }}>{descMeta.proposalExists ? descMeta.propVal : "No proposal staged for this destination"}</div>
+                                </div>
+                              </div>
+
+                              {hasDelta && (
+                                <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center", marginTop: "4px" }}>
+                                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: "600", cursor: "pointer" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(descMeta.isApproved)}
+                                      disabled={descMeta.hasTechnicalBlock}
+                                      onChange={(e) =>
+                                        handleToggleApproval(selectedBenchId, destKey, descMeta.propVal, e.target.checked)
+                                      }
+                                      style={{ width: "18px", height: "18px" }}
+                                    />
+                                    <span>Approve exact proposal for {destKey}</span>
+                                  </label>
+
+                                  {descMeta.canKeepOriginal && (
+                                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: "600", cursor: "pointer" }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(descMeta.isKeepOriginalSelected)}
+                                        onChange={(e) =>
+                                          handleToggleKeepOriginal(selectedBenchId, destKey, descMeta.propVal, e.target.checked)
+                                        }
+                                        style={{ width: "18px", height: "18px" }}
+                                      />
+                                      <span>Use original saved value for {destKey} (reject suggestion)</span>
+                                    </label>
+                                  )}
+                                </div>
+                              )}
+                            </BlockStack>
+                          </Box>
+                        );
+                      })}
+                    </BlockStack>
                   </Card>
                 )}
 

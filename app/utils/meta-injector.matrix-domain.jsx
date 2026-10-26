@@ -33,7 +33,7 @@ export const FIELD_LIMITS = {
   "native_seo_description": 160,
   "shopify_title": 255,
   "custom.piece_name": 255,
-  "custom.alt_text": 100000,
+  "custom.alt_text": 255,
   "custom.honest_flaws_and_character": 255
 };
 
@@ -52,7 +52,6 @@ export const HARDWARE_FIELDS = [
 export const POLICY_PRE_APPROVED_FIELDS = [
   "custom.rarity",
   "custom.authenticity",
-  "custom.alt_text",
   "custom.material",
   "custom.stone_family",
   "custom.surface_finish",
@@ -83,7 +82,8 @@ export const DESTINATION_SPECIFIC_APPROVAL_KEYS = new Set([
   "native_description",
   "custom.generated_description",
   "native_seo_title",
-  "custom.seo_title"
+  "custom.seo_title",
+  "custom.alt_text"
 ]);
 
 export const resolveApprovalStorageKey = (key) => {
@@ -92,6 +92,7 @@ export const resolveApprovalStorageKey = (key) => {
   if (!trimmed) return "";
   if (trimmed === "generated_description") return "custom.generated_description";
   if (trimmed === "seo_title") return "custom.seo_title";
+  if (trimmed === "alt_text") return "custom.alt_text";
   if (DESTINATION_SPECIFIC_APPROVAL_KEYS.has(trimmed)) {
     return trimmed;
   }
@@ -100,6 +101,19 @@ export const resolveApprovalStorageKey = (key) => {
 
 const isExactProductGidString = (val) =>
   typeof val === "string" && /^gid:\/\/shopify\/Product\/\d+$/.test(val.trim());
+
+const isExactMediaImageGidString = (val) =>
+  typeof val === "string" && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(val.trim());
+
+const hasStoredNonBlankGeneralAltMetafield = (manifest) => {
+  if (!manifest || typeof manifest !== "object") return false;
+  const cm = manifest.currentMetafields;
+  if (!cm || typeof cm !== "object" || Array.isArray(cm)) return false;
+  const raw = Object.prototype.hasOwnProperty.call(cm, "custom.alt_text")
+    ? cm["custom.alt_text"]
+    : cm["alt_text"];
+  return raw !== undefined && raw !== null && String(raw).trim() !== "";
+};
 
 const parseStrictExactMetaobjectGidJsonArray = (rawVal) => {
   if (typeof rawVal !== "string") return null;
@@ -193,6 +207,27 @@ export const hasVerifiedLoadedDestinationBaseline = (destKey, data, expectedProd
     return Boolean(hasLoadedProductContext);
   }
 
+  if (destKey === "custom.alt_text" || destKey === "alt_text") {
+    if (
+      !data.currentMetafields ||
+      typeof data.currentMetafields !== "object" ||
+      Array.isArray(data.currentMetafields)
+    ) {
+      return false;
+    }
+    if (data.readBackVerified === false) {
+      return false;
+    }
+    const hasLoadedProductContext =
+      data.intent === "loadProductData" ||
+      data.intent === "executeRepairPlan" ||
+      data.diagnostics?.shopifyRead === "Success" ||
+      typeof data.nativeTargets?.productTitle === "string" ||
+      typeof data.productTitle === "string";
+    // Only allow writing to custom.alt_text when the compatibility metafield already exists on the loaded product
+    return Boolean(hasLoadedProductContext && hasStoredNonBlankGeneralAltMetafield(data));
+  }
+
   return true;
 };
 
@@ -202,6 +237,35 @@ const CANONICAL_READ_COMPANIONS = Object.freeze({
   "custom.origin_page_handle": ["custom.origin_handle", "origin_handle"],
   "custom.cut_and_shape": ["custom.cut_type", "cut_type"]
 });
+
+const isSettingOrHardwareMediumTokenInDomain = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return false;
+  const trimmed = String(rawVal).trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+
+  if (lower === "stone" || lower === "metal" || lower === "none" || lower === "n/a" || lower === "unknown") {
+    return true;
+  }
+
+  if (
+    /\b(plated|plating|electroplated|alloy|sterling|925|fine\s+silver|nickel\s+silver|german\s+silver|tibetan\s+silver|pewter|brass|bronze|stainless|steel|aluminum|aluminium|vermeil|gold[-\s]?filled|silver[-\s]?filled|rose\s+gold|white\s+gold|yellow\s+gold|karat|10k|14k|18k|24k|bezel|bail|pinch\s+bail|glue[-\s]?on|glue[-\s]?in|wire[-\s]?wrap(?:ped)?|craft\s+wire|copper\s+wire|silver\s+wire|gold\s+wire|brass\s+wire|snake\s+chain|chain|cord|pendant\s+setting|metal\s+setting|finding|clasp|loop|rim|frame)\b/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /^(silver|gold|copper|metal)\s+(tone|toned|finish|color|coloured|colored|hardware|setting|finding|mounting|frame|rim|backing|bail|loop|wire|chain)$/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+};
 
 export const DESCRIPTION_REVIEW_EXCLUDED_KEYS = ["native_description", "custom.generated_description"];
 
@@ -353,7 +417,7 @@ const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field"
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â")
+    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -829,6 +893,7 @@ export function inspectFieldBaselineDescriptor(key, data, expectedProductId = nu
   }
 
   // Only consult canonical read companions for active canonical working fields, never for parked/excluded entries
+  // and never promote a setting/metal/plating string from custom.primary_medium into custom.material baseline.
   if (
     !isParkedKey &&
     (matchedSourceKey === null || rawStoredVal === undefined || rawStoredVal === null || String(rawStoredVal).trim() === "") &&
@@ -838,6 +903,9 @@ export function inspectFieldBaselineDescriptor(key, data, expectedProductId = nu
       if (Object.prototype.hasOwnProperty.call(currentMetafields, compKey)) {
         const compVal = currentMetafields[compKey];
         if (compVal !== undefined && compVal !== null && String(compVal).trim() !== "") {
+          if (key === "custom.material" && isSettingOrHardwareMediumTokenInDomain(compVal)) {
+            continue;
+          }
           matchedSourceKey = compKey;
           rawStoredVal = compVal;
           break;
@@ -1053,6 +1121,8 @@ export const getDynamicSections = (manifest, options = null) => {
     ? TAB3_INSPECTABLE_TEMPLATE_GROUPS
     : PRODUCT_TEMPLATE_GROUPS;
 
+  const hasExistingGeneralAlt = hasStoredNonBlankGeneralAltMetafield(manifest);
+
   return sourceGroups.map(group => {
     const isParkedGroup = Boolean(
       includeTab3InspectableInventory &&
@@ -1074,10 +1144,16 @@ export const getDynamicSections = (manifest, options = null) => {
       if (f.key === "is_ooak" || f.key === "custom.is_ooak" || f.key === "cut_type" || f.key === "custom.cut_type") return;
       
       if (f.key === "native_image_alt") {
+        // When custom.alt_text compatibility metafield already exists on the loaded product,
+        // surface it in section.keys for independent review/edit alongside per-image media alt controls.
+        // Do NOT append a new entry to group.fields so the canonical 62 / 93 logical capability count remains unchanged.
+        if (hasExistingGeneralAlt && !keys.includes("custom.alt_text")) {
+          keys.push("custom.alt_text");
+        }
         const mediaEdges = manifest?.nativeTargets?.media?.edges;
         const mediaKeys = Array.isArray(mediaEdges)
           ? mediaEdges
-              .filter(e => e?.node?.id && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(String(e.node.id)))
+              .filter(e => e?.node?.id && isExactMediaImageGidString(String(e.node.id)))
               .map(e => `native_image_alts_${e.node.id}`)
           : [];
         if (mediaKeys.length > 0) {
@@ -1134,6 +1210,712 @@ export const isMultilineKey = (k, control) => control === "multiline" || [
   "custom.artist_notes", "custom.origin_story", "native_seo_description"
 ].includes(k);
 
+// ==========================================================================
+// ONE-TIME CURRENT-STOCK BEZEL CLEANUP PREVIEW HELPER (PURE / NO MUTATION)
+// ==========================================================================
+
+const BEZEL_WORD_REGEX = /\bbezel(?:[-\s]?set(?:ting)?s?|\s+bails?|\s+mount(?:ed|ing)?|\s+frames?|\s+rims?|s)?\b/i;
+const PINCH_BAIL_REGEX = /\bpinch\s+bails?\b|\bdrilled\s+(?:stone|hole|top|pendant)\b|\bpins?\s+(?:pass(?:ing)?|through)\b/i;
+const NEGATED_OR_HISTORICAL_BEZEL_REGEX = /\b(?:no|not|without|non|never|unlike|instead\s+of|rather\s+than|free\s+of|lacks?|lacking)\s+(?:a\s+|an\s+|any\s+)?bezel\b|\bnon[-\s]?bezel\b|\bbezel[-\s]?free\b/i;
+
+const applyCaseAwareReplacement = (matchedText, lowerReplacement) => {
+  if (!matchedText) return lowerReplacement;
+  if (matchedText === matchedText.toUpperCase() && matchedText !== matchedText.toLowerCase()) {
+    return lowerReplacement.toUpperCase();
+  }
+  const firstChar = matchedText.charAt(0);
+  if (firstChar === firstChar.toUpperCase() && firstChar !== firstChar.toLowerCase()) {
+    return lowerReplacement.charAt(0).toUpperCase() + lowerReplacement.slice(1);
+  }
+  return lowerReplacement;
+};
+
+/**
+ * Surgically replaces unambiguous false bezel fastening phrases in plain text while flagging
+ * negated, decorative-rim, or unrecognized/ambiguous "bezel" mentions for manual review.
+ */
+const transformPlainTextBezelClaims = (rawText) => {
+  if (typeof rawText !== "string" || !rawText) {
+    return { status: "clean", after: rawText, matchedPhrases: [], reason: null };
+  }
+  if (!BEZEL_WORD_REGEX.test(rawText)) {
+    return { status: "clean", after: rawText, matchedPhrases: [], reason: null };
+  }
+  if (NEGATED_OR_HISTORICAL_BEZEL_REGEX.test(rawText)) {
+    return {
+      status: "flagged",
+      after: null,
+      matchedPhrases: [],
+      reason: "Contains negated or historical bezel phrasing (e.g. 'no bezel' / 'without bezel'); flagged for manual review instead of auto-replacing."
+    };
+  }
+  if (PINCH_BAIL_REGEX.test(rawText)) {
+    return {
+      status: "flagged",
+      after: null,
+      matchedPhrases: [],
+      reason: "Contains both pinch-bail/drilled-hole and bezel wording in the same text; flagged as contradictory for manual review."
+    };
+  }
+
+  const matchedPhrases = [];
+  let working = rawText;
+
+  const phraseRules = [
+    {
+      regex: /\bwith\s+an\s+integrated\s+bezel\s+bail\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "with an integrated chain loop");
+      }
+    },
+    {
+      regex: /\bwith\s+integrated\s+bezel\s+bail\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "with an integrated chain loop");
+      }
+    },
+    {
+      regex: /\ban\s+integrated\s+bezel\s+bail\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "an integrated chain loop");
+      }
+    },
+    {
+      regex: /\bintegrated\s+bezel\s+bails?\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        const plural = /s$/i.test(m);
+        return applyCaseAwareReplacement(m, plural ? "integrated chain loops" : "integrated chain loop");
+      }
+    },
+    {
+      regex: /\bbezel\s+setting\s*[—–-]\s*ready\s+to\s+wear\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "glue-on setting — ready to wear");
+      }
+    },
+    {
+      regex: /\bmounted\s+in\s+a\s+bezel\s+setting\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "mounted in a glue-on setting");
+      }
+    },
+    {
+      regex: /\bset\s+in\s+a\s+bezel\s+setting\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "set in a glue-on setting");
+      }
+    },
+    {
+      regex: /\bin\s+a\s+bezel\s+setting\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "in a glue-on setting");
+      }
+    },
+    {
+      regex: /\bbezel[-\s]?set\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        return applyCaseAwareReplacement(m, "glue-on set");
+      }
+    },
+    {
+      regex: /\bbezel\s+settings?\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        const plural = /s$/i.test(m);
+        return applyCaseAwareReplacement(m, plural ? "glue-on settings" : "glue-on setting");
+      }
+    },
+    {
+      regex: /\bbezel\s+mount(?:ed|ing)\b/gi,
+      replace: (m) => {
+        matchedPhrases.push(m);
+        const isIng = /ing$/i.test(m);
+        return applyCaseAwareReplacement(m, isIng ? "glue-on mounting" : "glue-on mounted");
+      }
+    }
+  ];
+
+  phraseRules.forEach((rule) => {
+    working = working.replace(rule.regex, rule.replace);
+  });
+
+  // If any "bezel" token still remains after surgical phrase replacement (e.g. "bezel wire", "bezel rim",
+  // "bezel bail", or standalone "bezel"), flag for manual review rather than doing a blind regex replace.
+  if (/\bbezel/i.test(working)) {
+    return {
+      status: "flagged",
+      after: null,
+      matchedPhrases,
+      reason: "Contains ambiguous, standalone, or decorative-rim 'bezel' wording that cannot be safely auto-replaced without human review."
+    };
+  }
+
+  if (working === rawText) {
+    return { status: "clean", after: rawText, matchedPhrases: [], reason: null };
+  }
+
+  return {
+    status: "replaced",
+    after: working,
+    matchedPhrases,
+    reason: `Replaced unambiguous false bezel phrase(s) (${matchedPhrases.join("; ")}) with confirmed glue-on setting / integrated chain loop wording.`
+  };
+};
+
+/**
+ * Surgically transforms text nodes inside HTML while preserving all tags, attributes, href URLs,
+ * and structure verbatim. Fails closed (flags) if malformed markup or any tag-attribute "bezel"
+ * occurrence is detected.
+ */
+const transformHtmlBezelClaims = (rawHtml) => {
+  if (typeof rawHtml !== "string" || !rawHtml) {
+    return { status: "clean", after: rawHtml, matchedPhrases: [], reason: null };
+  }
+  if (!BEZEL_WORD_REGEX.test(rawHtml)) {
+    return { status: "clean", after: rawHtml, matchedPhrases: [], reason: null };
+  }
+
+  // Verify well-formed tag boundaries before attempting text-node-only replacement
+  const tokens = rawHtml.split(/(<[^>]+>)/g);
+  let openAngleCount = 0;
+  let closeAngleCount = 0;
+  for (let i = 0; i < rawHtml.length; i += 1) {
+    if (rawHtml[i] === "<") openAngleCount += 1;
+    if (rawHtml[i] === ">") closeAngleCount += 1;
+  }
+  if (openAngleCount !== closeAngleCount) {
+    return {
+      status: "flagged",
+      after: null,
+      matchedPhrases: [],
+      reason: "HTML has unbalanced '<' / '>' angle brackets; flagged to avoid risking markup corruption."
+    };
+  }
+
+  const allMatchedPhrases = [];
+  const transformedTokens = [];
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) {
+      transformedTokens.push(token);
+      continue;
+    }
+
+    if (token.startsWith("<") && token.endsWith(">")) {
+      // Tag token: never alter attributes or URLs; if "bezel" appears inside a tag attribute/URL, flag for review
+      if (/\bbezel/i.test(token)) {
+        return {
+          status: "flagged",
+          after: null,
+          matchedPhrases: allMatchedPhrases,
+          reason: "HTML tag attribute or URL contains 'bezel'; flagged to preserve links and attributes intact."
+        };
+      }
+      transformedTokens.push(token);
+      continue;
+    }
+
+    // Text node token
+    if (!BEZEL_WORD_REGEX.test(token)) {
+      transformedTokens.push(token);
+      continue;
+    }
+
+    const res = transformPlainTextBezelClaims(token);
+    if (res.status === "flagged") {
+      return {
+        status: "flagged",
+        after: null,
+        matchedPhrases: allMatchedPhrases,
+        reason: res.reason
+      };
+    }
+    if (res.status === "replaced") {
+      allMatchedPhrases.push(...res.matchedPhrases);
+      transformedTokens.push(res.after);
+    } else {
+      transformedTokens.push(token);
+    }
+  }
+
+  const reconstructed = transformedTokens.join("");
+  if (reconstructed === rawHtml) {
+    return { status: "clean", after: rawHtml, matchedPhrases: [], reason: null };
+  }
+
+  return {
+    status: "replaced",
+    after: reconstructed,
+    matchedPhrases: allMatchedPhrases,
+    reason: `Surgically replaced ${allMatchedPhrases.length} false bezel phrase(s) in HTML text nodes while preserving tags, links, stories, specs, and signatures.`
+  };
+};
+
+const evaluateHardwareFieldBezelCleanup = (destKey, rawStoredVal) => {
+  if (rawStoredVal === undefined || rawStoredVal === null) {
+    return { status: "clean", after: null, reason: null };
+  }
+  const strVal = String(rawStoredVal).trim();
+  if (!strVal || !/\bbezel/i.test(strVal)) {
+    return { status: "clean", after: null, reason: null };
+  }
+  if (NEGATED_OR_HISTORICAL_BEZEL_REGEX.test(strVal)) {
+    return {
+      status: "flagged",
+      after: null,
+      reason: `Negated bezel phrasing in ${destKey} ("${strVal}"); flagged for manual review.`
+    };
+  }
+  if (PINCH_BAIL_REGEX.test(strVal)) {
+    return {
+      status: "flagged",
+      after: null,
+      reason: `Contradictory pinch-bail and bezel wording in ${destKey} ("${strVal}"); flagged for manual review.`
+    };
+  }
+
+  if (destKey === "custom.setting_ready") {
+    if (/^bezel\s+setting\s*[—–-]\s*ready\s+to\s+wear$/i.test(strVal) || /^bezel\s+setting$/i.test(strVal)) {
+      return {
+        status: "replaced",
+        after: "Yes",
+        reason: 'Retains ready-to-wear status ("Yes" per custom.setting_ready contract) while removing false "Bezel Setting" claim.'
+      };
+    }
+    return {
+      status: "flagged",
+      after: null,
+      reason: `Unrecognized bezel phrasing in custom.setting_ready ("${strVal}"); flagged for manual review.`
+    };
+  }
+
+  if (destKey === "custom.bail_included") {
+    if (/^integrated\s+bezel\s+bail$/i.test(strVal) || /^bezel\s+bail$/i.test(strVal)) {
+      return {
+        status: "replaced",
+        after: "Yes",
+        reason: 'Retains top chain-loop/bail presence ("Yes" per custom.bail_included contract) while removing false "Integrated Bezel Bail" claim.'
+      };
+    }
+    return {
+      status: "flagged",
+      after: null,
+      reason: `Unrecognized bezel phrasing in custom.bail_included ("${strVal}"); flagged for manual review.`
+    };
+  }
+
+  if (destKey === "custom.jewelry_finding_type") {
+    const tokens = strVal
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const nonBezelTokens = [];
+    let sawRecognizedBezelToken = false;
+
+    for (let i = 0; i < tokens.length; i += 1) {
+      const tok = tokens[i];
+      if (
+        /^integrated\s+bezel\s+bail$/i.test(tok) ||
+        /^bezel\s+setting$/i.test(tok) ||
+        /^bezel[-\s]?set(?:ting)?$/i.test(tok) ||
+        /^bezel\s+bail$/i.test(tok)
+      ) {
+        sawRecognizedBezelToken = true;
+      } else if (/\bbezel/i.test(tok)) {
+        return {
+          status: "flagged",
+          after: null,
+          reason: `Ambiguous finding token "${tok}" in custom.jewelry_finding_type ("${strVal}"); flagged for manual review.`
+        };
+      } else {
+        nonBezelTokens.push(tok);
+      }
+    }
+
+    if (!sawRecognizedBezelToken) {
+      return {
+        status: "flagged",
+        after: null,
+        reason: `Ambiguous bezel wording in custom.jewelry_finding_type ("${strVal}"); flagged for manual review.`
+      };
+    }
+
+    const replacementFinding = "Assorted Glue-In Setting";
+    const mergedTokens = nonBezelTokens.some((t) => t.toLowerCase() === replacementFinding.toLowerCase())
+      ? nonBezelTokens
+      : [replacementFinding, ...nonBezelTokens];
+
+    return {
+      status: "replaced",
+      after: mergedTokens.join(", "),
+      reason: 'Replaces false bezel finding claim with confirmed "Assorted Glue-In Setting" (glue-on setting with integrated chain loop) from supported inventory vocabulary.'
+    };
+  }
+
+  return {
+    status: "flagged",
+    after: null,
+    reason: `Bezel mention in ${destKey} ("${strVal}") requires manual review.`
+  };
+};
+
+/**
+ * Pure helper that inspects ONLY the explicitly supplied `targetProductIds` against `manifestData`
+ * to build a deterministic preview of one-time current-stock bezel cleanup candidates,
+ * ambiguity/contradiction flags, pinch-bail preservations, and saved stone-identity writer diagnostics.
+ * Never mutates state, never runs on load, and never invents values for unloaded baselines.
+ */
+export function buildCurrentStockBezelCleanupPreview(manifestData, targetProductIds = []) {
+  const safeManifestMap = manifestData && typeof manifestData === "object" ? manifestData : {};
+  const rawIds = Array.isArray(targetProductIds) ? targetProductIds : [];
+  const capturedProductIds = Array.from(
+    new Set(
+      rawIds
+        .map((id) => (typeof id === "string" ? id.trim() : ""))
+        .filter((id) => isExactProductGidString(id))
+    )
+  );
+
+  const candidates = [];
+  const flaggedItems = [];
+  const skippedItems = [];
+  const unavailableProducts = [];
+  const stoneIdentityDiagnostics = [];
+
+  capturedProductIds.forEach((productId) => {
+    const manifest = safeManifestMap[productId];
+    const manifestPid =
+      (typeof manifest?.nativeTargets?.productId === "string" && manifest.nativeTargets.productId.trim()) ||
+      (typeof manifest?.productId === "string" && manifest.productId.trim()) ||
+      null;
+
+    const hasCompleteBaseline = Boolean(
+      manifest &&
+      typeof manifest === "object" &&
+      manifestPid === productId &&
+      manifest.readBackVerified !== false &&
+      manifest.currentMetafields &&
+      typeof manifest.currentMetafields === "object" &&
+      !Array.isArray(manifest.currentMetafields) &&
+      manifest.nativeTargets &&
+      typeof manifest.nativeTargets === "object" &&
+      manifest.nativeTargets.isComplete === true &&
+      !manifest.nativeTargets.loadError
+    );
+
+    const productTitle =
+      (typeof manifest?.nativeTargets?.productTitle === "string" && manifest.nativeTargets.productTitle) ||
+      (typeof manifest?.productTitle === "string" && manifest.productTitle) ||
+      productId;
+
+    if (!hasCompleteBaseline) {
+      unavailableProducts.push({
+        productId,
+        productTitle,
+        reason: !manifest
+          ? "Manifest baseline is not loaded for this product ID."
+          : manifestPid !== productId
+            ? `Manifest productId mismatch (expected ${productId}, found ${manifestPid || "none"}).`
+            : "Product nativeTargets or currentMetafields baseline is incomplete or unverified."
+      });
+      return;
+    }
+
+    const cm = manifest.currentMetafields;
+    const unverifiedFields = Array.isArray(manifest.nativeTargets?.unverifiedFields)
+      ? manifest.nativeTargets.unverifiedFields
+      : [];
+
+    // Check saved primary_medium / stone_family hardware contamination & writer limitation diagnostic (Requirement 10)
+    const rawSavedMaterial = cm["custom.material"];
+    const rawSavedPrimaryMedium = cm["custom.primary_medium"];
+    const rawSavedStoneFamily = cm["custom.stone_family"];
+    const pmContaminated = isSettingOrHardwareMediumTokenInDomain(rawSavedPrimaryMedium);
+    const sfContaminated = isSettingOrHardwareMediumTokenInDomain(rawSavedStoneFamily);
+    const matContaminated = isSettingOrHardwareMediumTokenInDomain(rawSavedMaterial);
+
+    if (pmContaminated || sfContaminated || matContaminated) {
+      stoneIdentityDiagnostics.push({
+        productId,
+        productTitle,
+        savedMaterial: rawSavedMaterial ?? null,
+        savedPrimaryMedium: rawSavedPrimaryMedium ?? null,
+        savedStoneFamily: rawSavedStoneFamily ?? null,
+        writableCanonicalDestination: "custom.material",
+        compatibilityWriterLimitation:
+          "app/routes/app.meta-injector-api.jsx skips writing custom.primary_medium and custom.stone_family (compatibility hold). Generation-context protection prevents hardware values from polluting prompts or custom.material, and custom.material is writable, but saved custom.primary_medium / custom.stone_family cannot be overwritten by the current repair writer."
+      });
+    }
+
+    // Gather all construction/text surfaces on this product to check for pinch-bail construction
+    const settingReadyVal = String(cm["custom.setting_ready"] ?? "");
+    const bailIncludedVal = String(cm["custom.bail_included"] ?? "");
+    const findingTypeVal = String(cm["custom.jewelry_finding_type"] ?? "");
+    const generalAltVal = hasStoredNonBlankGeneralAltMetafield(manifest)
+      ? String(cm["custom.alt_text"] ?? cm["alt_text"] ?? "")
+      : "";
+    const nativeDescVal =
+      !unverifiedFields.includes("descriptionHtml") && typeof manifest.nativeTargets?.descriptionHtml === "string"
+        ? manifest.nativeTargets.descriptionHtml
+        : null;
+    const customDescVal =
+      typeof cm["custom.generated_description"] === "string"
+        ? cm["custom.generated_description"]
+        : null;
+    const mediaEdges =
+      !unverifiedFields.includes("media") && Array.isArray(manifest.nativeTargets?.media?.edges)
+        ? manifest.nativeTargets.media.edges.filter(
+            (e) => e?.node?.id && isExactMediaImageGidString(String(e.node.id)) && typeof e.node.alt === "string"
+          )
+        : [];
+
+    const hasPinchBailEvidence =
+      PINCH_BAIL_REGEX.test(bailIncludedVal) ||
+      PINCH_BAIL_REGEX.test(findingTypeVal) ||
+      PINCH_BAIL_REGEX.test(settingReadyVal) ||
+      PINCH_BAIL_REGEX.test(generalAltVal) ||
+      (typeof nativeDescVal === "string" && PINCH_BAIL_REGEX.test(nativeDescVal)) ||
+      (typeof customDescVal === "string" && PINCH_BAIL_REGEX.test(customDescVal)) ||
+      mediaEdges.some((e) => PINCH_BAIL_REGEX.test(e.node.alt));
+
+    const hasAnyBezelMentionOnProduct =
+      /\bbezel/i.test(settingReadyVal) ||
+      /\bbezel/i.test(bailIncludedVal) ||
+      /\bbezel/i.test(findingTypeVal) ||
+      /\bbezel/i.test(generalAltVal) ||
+      (typeof nativeDescVal === "string" && /\bbezel/i.test(nativeDescVal)) ||
+      (typeof customDescVal === "string" && /\bbezel/i.test(customDescVal)) ||
+      mediaEdges.some((e) => /\bbezel/i.test(e.node.alt));
+
+    // Requirement 5: Pinch-bail products (pins through drilled holes) must NEVER be converted to glue-on.
+    // If a pinch-bail product ALSO contains contradictory bezel claims, flag each contradictory field as unresolved!
+    if (hasPinchBailEvidence) {
+      if (!hasAnyBezelMentionOnProduct) {
+        skippedItems.push({
+          productId,
+          productTitle,
+          status: "pinch_bail_preserved",
+          reason: "Pinch-bail construction (pins through drilled hole) preserved; no bezel claims present."
+        });
+        return;
+      }
+
+      const checkPinchContradiction = (destKey, label, val, mediaImageId = null) => {
+        if (typeof val === "string" && /\bbezel/i.test(val)) {
+          flaggedItems.push({
+            productId,
+            productTitle,
+            destinationKey: destKey,
+            fieldLabel: label,
+            mediaImageId,
+            beforeValue: val,
+            reason: "Contradictory bezel claim on a pinch-bail (drilled-hole) product. Pinch bails are never auto-converted to glue-on; resolve manually."
+          });
+        }
+      };
+
+      checkPinchContradiction("custom.setting_ready", "Setting Ready", settingReadyVal);
+      checkPinchContradiction("custom.bail_included", "Bail Included", bailIncludedVal);
+      checkPinchContradiction("custom.jewelry_finding_type", "Jewelry Finding Type", findingTypeVal);
+      if (hasStoredNonBlankGeneralAltMetafield(manifest)) {
+        checkPinchContradiction("custom.alt_text", "Alt Text (General Metafield Compat)", generalAltVal);
+      }
+      mediaEdges.forEach((edge) => {
+        const imgId = edge.node.id;
+        checkPinchContradiction(`native_image_alts_${imgId}`, `Native Image Alt (${imgId.split("/").pop()})`, edge.node.alt, imgId);
+      });
+      if (typeof nativeDescVal === "string") {
+        checkPinchContradiction("native_description", "Native Description (descriptionHtml)", nativeDescVal);
+      }
+      if (typeof customDescVal === "string") {
+        checkPinchContradiction("custom.generated_description", "Generated Description (custom.generated_description)", customDescVal);
+      }
+      return;
+    }
+
+    if (!hasAnyBezelMentionOnProduct) {
+      skippedItems.push({
+        productId,
+        productTitle,
+        status: "no_bezel_claims",
+        reason: "No bezel mentions found in hardware, alt text, or descriptions."
+      });
+      return;
+    }
+
+    const pushCandidateOrFlag = ({
+      destinationKey,
+      fieldLabel,
+      owner,
+      mediaImageId = null,
+      beforeValue,
+      evalResult
+    }) => {
+      const baselineDesc = inspectFieldBaselineDescriptor(destinationKey, manifest, productId);
+      if (!baselineDesc.evidenceAvailable) {
+        flaggedItems.push({
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          mediaImageId,
+          beforeValue,
+          reason: `Baseline descriptor unavailable for ${destinationKey}; skipped to prevent unverified staging.`
+        });
+        return;
+      }
+
+      if (evalResult.status === "flagged") {
+        flaggedItems.push({
+          productId,
+          productTitle,
+          destinationKey,
+          fieldLabel,
+          mediaImageId,
+          beforeValue,
+          reason: evalResult.reason
+        });
+        return;
+      }
+
+      if (evalResult.status === "replaced" && typeof evalResult.after === "string" && evalResult.after !== beforeValue) {
+        const limit = FIELD_LIMITS[destinationKey] || null;
+        if (limit !== null && evalResult.after.length > limit) {
+          flaggedItems.push({
+            productId,
+            productTitle,
+            destinationKey,
+            fieldLabel,
+            mediaImageId,
+            beforeValue,
+            reason: `Proposed replacement (${evalResult.after.length} chars) exceeds limit (${limit}) for ${destinationKey}; flagged for manual review.`
+          });
+          return;
+        }
+
+        candidates.push({
+          candidateId: `${productId}::${destinationKey}`,
+          productId,
+          productTitle,
+          destinationKey,
+          approvalStorageKey: resolveApprovalStorageKey(destinationKey),
+          fieldLabel,
+          owner,
+          mediaImageId,
+          baselineSignature: baselineDesc.signature,
+          beforeValue,
+          afterValue: evalResult.after,
+          reason: evalResult.reason
+        });
+      }
+    };
+
+    // 1. Hardware fields
+    ["custom.setting_ready", "custom.bail_included", "custom.jewelry_finding_type"].forEach((hwKey) => {
+      const rawHw = cm[hwKey];
+      if (rawHw === undefined || rawHw === null || String(rawHw).trim() === "") return;
+      const beforeStr = String(rawHw);
+      if (!/\bbezel/i.test(beforeStr)) return;
+      const evalRes = evaluateHardwareFieldBezelCleanup(hwKey, beforeStr);
+      pushCandidateOrFlag({
+        destinationKey: hwKey,
+        fieldLabel: formatLabel(hwKey),
+        owner: "PRODUCT",
+        beforeValue: beforeStr,
+        evalResult: evalRes
+      });
+    });
+
+    // 2. Existing custom.alt_text compatibility field (only when already present on product; never copied from hero alt)
+    if (hasStoredNonBlankGeneralAltMetafield(manifest) && /\bbezel/i.test(generalAltVal)) {
+      const genAltRes = transformPlainTextBezelClaims(generalAltVal);
+      pushCandidateOrFlag({
+        destinationKey: "custom.alt_text",
+        fieldLabel: "Alt Text (General Metafield Compat)",
+        owner: "PRODUCT",
+        beforeValue: generalAltVal,
+        evalResult: genAltRes
+      });
+    }
+
+    // 3. Individual MediaImage alts
+    mediaEdges.forEach((edge) => {
+      const imgId = edge.node.id;
+      const rawAlt = edge.node.alt;
+      if (typeof rawAlt !== "string" || !/\bbezel/i.test(rawAlt)) return;
+      const mediaKey = `native_image_alts_${imgId}`;
+      const altRes = transformPlainTextBezelClaims(rawAlt);
+      pushCandidateOrFlag({
+        destinationKey: mediaKey,
+        fieldLabel: `Native Image Alt (${imgId.split("/").pop()})`,
+        owner: "MEDIAIMAGE",
+        mediaImageId: imgId,
+        beforeValue: rawAlt,
+        evalResult: altRes
+      });
+    });
+
+    // 4. Native descriptionHtml (evaluated on its own HTML string)
+    if (typeof nativeDescVal === "string" && /\bbezel/i.test(nativeDescVal)) {
+      const nativeDescRes = transformHtmlBezelClaims(nativeDescVal);
+      pushCandidateOrFlag({
+        destinationKey: "native_description",
+        fieldLabel: "Native Description (descriptionHtml)",
+        owner: "PRODUCT",
+        beforeValue: nativeDescVal,
+        evalResult: nativeDescRes
+      });
+    } else if (unverifiedFields.includes("descriptionHtml")) {
+      unavailableProducts.push({
+        productId,
+        productTitle,
+        reason: "Native descriptionHtml baseline is marked unverified."
+      });
+    }
+
+    // 5. Custom generated_description metafield (evaluated independently on its own HTML string)
+    if (typeof customDescVal === "string" && /\bbezel/i.test(customDescVal)) {
+      const customDescRes = transformHtmlBezelClaims(customDescVal);
+      pushCandidateOrFlag({
+        destinationKey: "custom.generated_description",
+        fieldLabel: "Generated Description (custom.generated_description)",
+        owner: "PRODUCT",
+        beforeValue: customDescVal,
+        evalResult: customDescRes
+      });
+    }
+  });
+
+  return {
+    capturedProductIds,
+    evaluatedAt: new Date().toISOString(),
+    candidates,
+    flaggedItems,
+    skippedItems,
+    unavailableProducts,
+    stoneIdentityDiagnostics,
+    summary: {
+      capturedProductCount: capturedProductIds.length,
+      candidateCount: candidates.length,
+      affectedProductCount: new Set(candidates.map((c) => c.productId)).size,
+      flaggedCount: flaggedItems.length,
+      skippedCount: skippedItems.length,
+      unavailableCount: unavailableProducts.length,
+      stoneIdentityWarningCount: stoneIdentityDiagnostics.length
+    }
+  };
+}
+
 export const evaluateFieldMetadata = ({
   key,
   data,
@@ -1154,7 +1936,11 @@ export const evaluateFieldMetadata = ({
     ? UNSELECTED_DRAFT_STORAGE_KEY
     : productId;
   const isParkedEntryFromCatalog = isParkedExcludedKey(key);
-  const targetKeyForProposal = isParkedEntryFromCatalog ? key : (NATIVE_ALIAS_MAP[key] || key);
+  const targetKeyForProposal = isParkedEntryFromCatalog
+    ? key
+    : key === "alt_text" || key === "custom.alt_text"
+      ? "custom.alt_text"
+      : (NATIVE_ALIAS_MAP[key] || key);
   const approvalStorageKey = isParkedEntryFromCatalog ? key : resolveApprovalStorageKey(key);
   const isDestinationSpecificApprovalField = DESTINATION_SPECIFIC_APPROVAL_KEYS.has(approvalStorageKey);
   const isDescriptionDestination =
@@ -1167,6 +1953,11 @@ export const evaluateFieldMetadata = ({
     key === "custom.seo_title" ||
     approvalStorageKey === "native_seo_title" ||
     approvalStorageKey === "custom.seo_title";
+  const isGeneralAltCompatField =
+    key === "custom.alt_text" ||
+    key === "alt_text" ||
+    targetKeyForProposal === "custom.alt_text" ||
+    approvalStorageKey === "custom.alt_text";
   const isNativeImageAlt = key.startsWith("native_image_alts_");
   const isImageAltCapabilityPlaceholder = key === "native_image_alt";
   const isShippingWeightField = key === "native_shipping_weight" || key === "custom.shipping_weight_oz";
@@ -1259,7 +2050,7 @@ export const evaluateFieldMetadata = ({
   // Distinguish actual zero-image placeholder state from per-image media targets only when state establishes it
   const mediaTargetsObj = safeData.nativeTargets?.media;
   const mediaEdgesList = Array.isArray(mediaTargetsObj?.edges)
-    ? mediaTargetsObj.edges.filter(e => e?.node?.id && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(String(e.node.id)))
+    ? mediaTargetsObj.edges.filter(e => e?.node?.id && isExactMediaImageGidString(String(e.node.id)))
     : null;
   let imageAltPlaceholderReason = "";
   if (isImageAltCapabilityPlaceholder) {
@@ -1293,15 +2084,21 @@ export const evaluateFieldMetadata = ({
       !key.startsWith("native_") &&
       !NATIVE_FIELDS.includes(key));
 
+  // custom.alt_text is only editable/writable on loaded products where custom.alt_text already exists in Shopify
+  const hasExistingGeneralAltOnProduct =
+    !isUnselectedDraftMode && hasStoredNonBlankGeneralAltMetafield(safeData);
+
   // Relax pending_read_only ONLY for the six verified standardized destinations when BOTH reference matching and category eligibility pass.
-  // Parked/excluded entries and zero-image native_image_alt placeholders are always held read-only and never writable.
+  // Parked/excluded entries, zero-image native_image_alt placeholders, and absent custom.alt_text compatibility fields are held read-only.
   const isPendingReadOnly = isImageAltCapabilityPlaceholder || isParkedExcluded
     ? true
-    : isVerifiedStdDest
-      ? !(Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)
-      : (isStandardizedAttribute
-          ? true
-          : (templateConfig?.mappingStatus === "pending_read_only" || hasExplicitStorageHold || isChannelFlagReadOnly));
+    : isGeneralAltCompatField
+      ? !hasExistingGeneralAltOnProduct
+      : isVerifiedStdDest
+        ? !(Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)
+        : (isStandardizedAttribute
+            ? true
+            : (templateConfig?.mappingStatus === "pending_read_only" || hasExplicitStorageHold || isChannelFlagReadOnly));
 
   const hasContractOrOwnerHold =
     isImageAltCapabilityPlaceholder ||
@@ -1331,13 +2128,17 @@ export const evaluateFieldMetadata = ({
       ? currentManualEdits[effectiveApprovalLookupId]
       : null;
 
+  // For destination-specific approval fields (e.g. native_description vs custom.generated_description),
+  // check manual edits on the specific key/approvalStorageKey so independent edits do not bleed across destinations.
   const isManuallyEdited = Boolean(
     !isParkedExcluded &&
     !isImageAltCapabilityPlaceholder &&
     ownerManualEditsMap &&
-    (ownerManualEditsMap[key] === true ||
-      ownerManualEditsMap[targetKeyForProposal] === true ||
-      (approvalStorageKey && ownerManualEditsMap[approvalStorageKey] === true))
+    (isDestinationSpecificApprovalField
+      ? (ownerManualEditsMap[key] === true || ownerManualEditsMap[approvalStorageKey] === true)
+      : (ownerManualEditsMap[key] === true ||
+          ownerManualEditsMap[targetKeyForProposal] === true ||
+          (approvalStorageKey && ownerManualEditsMap[approvalStorageKey] === true)))
   );
 
   let currentVal = "";
@@ -1355,6 +2156,10 @@ export const evaluateFieldMetadata = ({
       } else {
           currentVal = "";
       }
+  } else if (isGeneralAltCompatField) {
+      // General alt retains its own stored metafield baseline; never copy hero photo alt into it automatically
+      const rawGenAlt = safeData.currentMetafields?.["custom.alt_text"] ?? safeData.currentMetafields?.["alt_text"] ?? "";
+      currentVal = rawGenAlt !== undefined && rawGenAlt !== null ? String(rawGenAlt) : "";
   } else if (isNativeImageAlt) {
       const imageId = key.replace("native_image_alts_", "");
       const match = safeData.nativeTargets?.media?.edges?.find(e => e.node?.id === imageId);
@@ -1419,6 +2224,9 @@ export const evaluateFieldMetadata = ({
           for (const companionKey of CANONICAL_READ_COMPANIONS[key]) {
               const compVal = safeData.currentMetafields?.[companionKey];
               if (compVal !== undefined && compVal !== null && String(compVal).trim() !== "") {
+                  if (key === "custom.material" && isSettingOrHardwareMediumTokenInDomain(compVal)) {
+                      continue;
+                  }
                   rawCurrent = compVal;
                   break;
               }
@@ -1436,6 +2244,41 @@ export const evaluateFieldMetadata = ({
   if (isImageAltCapabilityPlaceholder || isParkedExcluded) {
       isProposed = false;
       propVal = "";
+  } else if (isGeneralAltCompatField) {
+      if (hasExistingGeneralAltOnProduct && safeData.repairPlan && typeof safeData.repairPlan === "object") {
+          if (Object.prototype.hasOwnProperty.call(safeData.repairPlan, "custom.alt_text")) {
+              isProposed = true;
+              propVal = serializeFieldValueByType(safeData.repairPlan["custom.alt_text"], expectedType, "custom.alt_text");
+          } else if (Object.prototype.hasOwnProperty.call(safeData.repairPlan, "alt_text")) {
+              isProposed = true;
+              propVal = serializeFieldValueByType(safeData.repairPlan["alt_text"], expectedType, "custom.alt_text");
+          }
+      }
+  } else if (key === "native_description") {
+      // Requirement 8: Support an independent repairPlan["native_description"] proposal (e.g., from one-time surgical HTML cleanup)
+      // while falling back to shared repairPlan["custom.generated_description"] ONLY when native_description does not have its own key
+      // AND custom.generated_description was not staged solely for the metafield destination by one-time cleanup.
+      if (safeData.repairPlan && typeof safeData.repairPlan === "object") {
+          if (Object.prototype.hasOwnProperty.call(safeData.repairPlan, "native_description")) {
+              isProposed = true;
+              propVal = String(safeData.repairPlan["native_description"] ?? "");
+          } else if (
+              Object.prototype.hasOwnProperty.call(safeData.repairPlan, "custom.generated_description") &&
+              safeData.metadata?.["custom.generated_description"]?.destinationOnly !== true
+          ) {
+              isProposed = true;
+              propVal = String(safeData.repairPlan["custom.generated_description"] ?? "");
+          }
+      }
+  } else if (key === "custom.generated_description") {
+      if (
+          safeData.repairPlan &&
+          typeof safeData.repairPlan === "object" &&
+          Object.prototype.hasOwnProperty.call(safeData.repairPlan, "custom.generated_description")
+      ) {
+          isProposed = true;
+          propVal = String(safeData.repairPlan["custom.generated_description"] ?? "");
+      }
   } else if (isVerifiedStdDest) {
       if (stdEvaluation?.isTechnicallyEligible && isCategoryEligible) {
           if (safeData.repairPlan !== undefined && safeData.repairPlan.hasOwnProperty(targetKeyForProposal)) {
@@ -1470,21 +2313,34 @@ export const evaluateFieldMetadata = ({
       }
   }
 
-  let fieldMeta = safeData.metadata?.[key] || safeData.metadata?.[targetKeyForProposal] || {};
+  let fieldMeta = isDestinationSpecificApprovalField
+    ? (safeData.metadata?.[key] ||
+        safeData.metadata?.[approvalStorageKey] ||
+        (key === "native_description" && !Object.prototype.hasOwnProperty.call(safeData.repairPlan || {}, "native_description")
+          ? safeData.metadata?.["custom.generated_description"]
+          : {}) ||
+        {})
+    : (safeData.metadata?.[key] || safeData.metadata?.[targetKeyForProposal] || {});
   let source =
     fieldMeta.source ||
     (isVerifiedStdDest && isProposed
       ? "Vision"
       : shippingProposalState?.isDerived
         ? "Derived"
-        : "Not reported");
+        : isManuallyEdited
+          ? "Manual"
+          : "Not reported");
   let stage =
     fieldMeta.stage ||
     (isVerifiedStdDest && isProposed
       ? "resolveStandardizedCandidates"
       : shippingProposalState?.isDerived
         ? "complete_product_weight_calculation"
-        : "Not reported");
+        : isManuallyEdited
+          ? "ManualEdit"
+          : "Not reported");
+
+  const isOneTimeCleanupStaged = stage === "OneTimeStockBezelCleanup";
 
   let fieldStatus = "Unchanged";
   let proposalStatus = isProposed ? (propVal.trim() !== "" ? "Provided" : "Empty") : "Not provided";
@@ -1537,6 +2393,7 @@ export const evaluateFieldMetadata = ({
 
   const isKnownKey =
     templateConfig !== undefined ||
+    isGeneralAltCompatField ||
     isParkedExcluded ||
     DESTINATION_SPECIFIC_APPROVAL_KEYS.has(key) ||
     DESTINATION_SPECIFIC_APPROVAL_KEYS.has(targetKeyForProposal) ||
@@ -1550,7 +2407,7 @@ export const evaluateFieldMetadata = ({
     ? false
     : isParkedExcluded
       ? Boolean(baselineDescriptor.evidenceAvailable)
-      : (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
+      : (isDescriptionDestination || isSeoTitleDestination || isGeneralAltCompatField || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
         ? hasVerifiedLoadedDestinationBaseline(approvalStorageKey, safeData, productId)
         : Boolean(baselineDescriptor.evidenceAvailable);
 
@@ -1583,8 +2440,17 @@ export const evaluateFieldMetadata = ({
       proposalExists
     });
 
-  // Never auto-preapprove description destinations, standardized reference proposals, image-alt placeholders, parked fields, or fields under contract/owner hold
-  if (!hasContractOrOwnerHold && !isParkedExcluded && !isVerifiedStdDest && !isImageAltCapabilityPlaceholder && !isDescriptionDestination) {
+  // Never auto-preapprove description destinations, custom.alt_text compatibility fields, one-time cleanup staged proposals,
+  // standardized reference proposals, image-alt placeholders, parked fields, or fields under contract/owner hold.
+  if (
+    !hasContractOrOwnerHold &&
+    !isParkedExcluded &&
+    !isVerifiedStdDest &&
+    !isImageAltCapabilityPlaceholder &&
+    !isDescriptionDestination &&
+    !isGeneralAltCompatField &&
+    !isOneTimeCleanupStaged
+  ) {
       if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
           isContentPreApproved = true;
           preApprovalReason = "Category pre-approved";
@@ -1669,10 +2535,12 @@ export const evaluateFieldMetadata = ({
   let contentNeedsReview = false;
 
   // Require explicit exact-value operator approval for changed proposals on native_description, custom.generated_description,
-  // custom.jewelry_type, custom.wire_material, and native_seo_description (including blank destinations).
+  // custom.alt_text, one-time cleanup staged proposals, custom.jewelry_type, custom.wire_material, and native_seo_description.
   if (
     !isParkedExcluded &&
     (isDescriptionDestination ||
+      isGeneralAltCompatField ||
+      isOneTimeCleanupStaged ||
       targetKeyForProposal === "custom.jewelry_type" ||
       targetKeyForProposal === "custom.wire_material" ||
       key === "native_seo_description") &&
@@ -1687,10 +2555,14 @@ export const evaluateFieldMetadata = ({
     !isUnselectedDraftMode &&
     !isParkedExcluded &&
     !hasLoadedBaseline &&
-    (isDescriptionDestination || isSeoTitleDestination || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
+    (isDescriptionDestination || isSeoTitleDestination || isGeneralAltCompatField || key === "native_seo_description" || key === "native_title" || key === "shopify_title")
   ) {
       hasTechnicalBlock = true;
-      reasons.push(`Baseline not loaded or unverified for ${approvalStorageKey} — reload product data before saving`);
+      reasons.push(
+        isGeneralAltCompatField
+          ? "custom.alt_text compatibility metafield is not present on this product (only existing custom.alt_text values can be edited/saved)"
+          : `Baseline not loaded or unverified for ${approvalStorageKey} — reload product data before saving`
+      );
   }
 
   // Technical Verification Layer
@@ -1716,6 +2588,9 @@ export const evaluateFieldMetadata = ({
   } else if (isImageAltCapabilityPlaceholder) {
       hasTechnicalBlock = true;
       reasons.push(imageAltPlaceholderReason);
+  } else if (isGeneralAltCompatField && !hasExistingGeneralAltOnProduct) {
+      hasTechnicalBlock = true;
+      reasons.push("General alt compatibility field (custom.alt_text) is absent on this product; new general-alt fields are never created automatically.");
   } else if (isVerifiedStdDest) {
       if (!stdEvaluation?.isTechnicallyEligible || !isCategoryEligible) {
           hasTechnicalBlock = true;
@@ -1801,6 +2676,7 @@ export const evaluateFieldMetadata = ({
     ? undefined
     : isDestinationSpecificApprovalField
       ? (safeData.blockedFields?.[key] ||
+          safeData.blockedFields?.[approvalStorageKey] ||
           (key.startsWith("custom.") ? safeData.blockedFields?.[unprefixedKey] : undefined))
       : (safeData.blockedFields?.[key] ||
           safeData.blockedFields?.[targetKeyForProposal] ||
@@ -1815,6 +2691,7 @@ export const evaluateFieldMetadata = ({
     ? undefined
     : isDestinationSpecificApprovalField
       ? (safeData.conflicts?.[key] ||
+          safeData.conflicts?.[approvalStorageKey] ||
           (key.startsWith("custom.") ? safeData.conflicts?.[unprefixedKey] : undefined))
       : (safeData.conflicts?.[key] ||
           safeData.conflicts?.[targetKeyForProposal] ||
@@ -2027,23 +2904,31 @@ export const evaluateFieldMetadata = ({
         tone: "info",
         reason: "Excluded from active Tab 3 working capabilities (inspectable read-only inventory)"
       }
-    : categoryEligibility && categoryEligibility.isComplete === true
-      ? (categoryEligibility.isEligible === false
-          ? {
-              status: "Inapplicable",
-              tone: "warning",
-              reason: categoryEligibility.reason || "Confirmed ineligible for this product's taxonomy category"
-            }
-          : {
-              status: "Applicable",
-              tone: "success",
-              reason: categoryEligibility.reason || "Confirmed eligible for this product's taxonomy category"
-            })
-      : {
-          status: "Not evaluated",
-          tone: "info",
-          reason: "Applicability not evaluated"
-        };
+    : isGeneralAltCompatField
+      ? {
+          status: hasExistingGeneralAltOnProduct ? "Applicable" : "Not evaluated",
+          tone: hasExistingGeneralAltOnProduct ? "info" : "info",
+          reason: hasExistingGeneralAltOnProduct
+            ? "Existing product-level general alt compatibility metafield (custom.alt_text)"
+            : "Compatibility representation (absent on this product)"
+        }
+      : categoryEligibility && categoryEligibility.isComplete === true
+        ? (categoryEligibility.isEligible === false
+            ? {
+                status: "Inapplicable",
+                tone: "warning",
+                reason: categoryEligibility.reason || "Confirmed ineligible for this product's taxonomy category"
+              }
+            : {
+                status: "Applicable",
+                tone: "success",
+                reason: categoryEligibility.reason || "Confirmed eligible for this product's taxonomy category"
+              })
+        : {
+            status: "Not evaluated",
+            tone: "info",
+            reason: "Applicability not evaluated"
+          };
 
   return { 
     currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
@@ -2054,9 +2939,9 @@ export const evaluateFieldMetadata = ({
     keepOriginalDecision: isKeepOriginalSelected ? rawKeepOriginalDecision : null,
     canKeepOriginal,
     isParkedExcluded,
-    registryRole: templateConfig?.registryRole || (isParkedExcluded ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION"),
+    registryRole: templateConfig?.registryRole || (isGeneralAltCompatField ? "COMPAT_REP" : (isParkedExcluded ? "EXCLUDED_INPUT" : "PRIMARY_CANDIDATE_DESTINATION")),
     registryOwner: templateConfig?.registryOwner || (isVariantMetafieldHold ? "PRODUCTVARIANT" : "PRODUCT"),
-    registryIdentity: templateConfig?.registryIdentity || key,
+    registryIdentity: templateConfig?.registryIdentity || (isGeneralAltCompatField ? "custom.alt_text" : key),
     baselineDescriptor,
     hasTechnicalBlock, contentNeedsReview,
     isContentPreApproved, preApprovalReason, isManualOnly, isOperatorOwned, isActualBlockedProposal,
@@ -2083,7 +2968,7 @@ export const evaluateFieldMetadata = ({
     owner: (isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_") || NATIVE_FIELDS.includes(key)) ? "native" : (templateConfig?.owner || "metafield"),
     namespace: key.startsWith("shopify.") ? "shopify" : ((isNativeImageAlt || isImageAltCapabilityPlaceholder || key.startsWith("native_")) ? "native" : (templateConfig?.namespace || "custom")),
     metaKey: templateConfig?.metaKey || (key.startsWith("shopify.") ? key.slice(8) : unprefixedKey),
-    label: templateConfig?.label || formatLabel(key),
+    label: isGeneralAltCompatField ? "Alt Text (General Metafield Compat)" : (templateConfig?.label || formatLabel(key)),
     control: templateConfig?.control
   };
 };
@@ -2388,6 +3273,9 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   candidateKeys.add("native_seo_description");
   candidateKeys.add("native_price");
   candidateKeys.add("native_shipping_weight");
+  if (hasStoredNonBlankGeneralAltMetafield(manifest)) {
+    candidateKeys.add("custom.alt_text");
+  }
 
   let handledTitle = false;
   let handledShippingWeight = false;
@@ -2396,6 +3284,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   let handledNativeSeoTitle = false;
   let handledCustomSeoTitle = false;
   let handledSeoDescription = false;
+  let handledGeneralAlt = false;
   let handledPrice = false;
 
   candidateKeys.forEach(key => {
@@ -2405,6 +3294,34 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
       if (key.startsWith("custom.std_") || key.startsWith("std_")) return;
       if (key.startsWith("shopify.") && !isVerifiedStandardizedDestination(key)) return;
       if (isParkedExcludedKey(key)) return;
+
+      // Dedicated compatibility writer branch for existing custom.alt_text on the same product:
+      // Requires existing stored custom.alt_text baseline, non-empty changed proposal, no technical/Keep-Original block,
+      // and explicit exact-value approval (never auto-copied from hero alt and never auto-created when absent).
+      if (key === "custom.alt_text" || key === "alt_text") {
+          if (handledGeneralAlt) return;
+          handledGeneralAlt = true;
+          if (!hasStoredNonBlankGeneralAltMetafield(manifest)) return;
+          const generalAltMeta = getFieldMetadata("custom.alt_text", manifest, currentId, currentApprovals, allConfigFields);
+          const hasGeneralAltBaseline = hasVerifiedLoadedDestinationBaseline("custom.alt_text", manifest, currentId);
+          if (
+              hasGeneralAltBaseline &&
+              !generalAltMeta.isKeepOriginalSelected &&
+              !generalAltMeta.isBlockedAction &&
+              !generalAltMeta.hasTechnicalBlock &&
+              generalAltMeta.isApproved &&
+              generalAltMeta.proposalExists &&
+              generalAltMeta.propVal !== generalAltMeta.currentVal
+          ) {
+              safePlan["custom.alt_text"] = serializeFieldValueByType(
+                  generalAltMeta.propVal,
+                  generalAltMeta.type || "single_line_text_field",
+                  "custom.alt_text"
+              );
+          }
+          return;
+      }
+
       if (NON_ORDINARY_COMPAT_AND_EXCLUDED_SET.has(key)) {
           return;
       }
@@ -2661,7 +3578,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
   if (isMediaComplete && !mediaLoadError) {
       const imageAlts = [];
       (manifest.nativeTargets?.media?.edges || []).forEach(({ node }) => {
-          if (node?.id && /^gid:\/\/shopify\/MediaImage\/\d+$/.test(node.id)) {
+          if (node?.id && isExactMediaImageGidString(node.id)) {
               const key = `native_image_alts_${node.id}`;
               if (manifest.repairPlan && manifest.repairPlan[key] !== undefined) {
                   const meta = getFieldMetadata(key, manifest, currentId, currentApprovals, allConfigFields);
