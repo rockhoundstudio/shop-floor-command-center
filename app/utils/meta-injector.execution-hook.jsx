@@ -3112,6 +3112,73 @@ export function useMetaInjectorExecution({
                     }
                   }
 
+                  if (targetKey === "custom.secondary_colors") {
+                    if (
+                      hasNonBlankValue(existing.currentMetafields?.["custom.secondary_colors"]) ||
+                      hasNonBlankValue(existing.currentMetafields?.["secondary_colors"])
+                    ) {
+                      const storedSecColors =
+                        existing.currentMetafields?.["custom.secondary_colors"] ??
+                        existing.currentMetafields?.["secondary_colors"];
+                      newPlan["custom.secondary_colors"] = String(storedSecColors).trim();
+                      return;
+                    }
+
+                    const isInvalidSecondaryColorToken = (token) => {
+                      if (!token) return true;
+                      if (token === "[object Object]") return true;
+                      if (/[\r\n]/.test(token)) return true;
+                      if (/^gid:\/\//i.test(token) || /gid:\/\/shopify\//i.test(token)) return true;
+                      if (/^shopify:\/\/metaobject/i.test(token)) return true;
+                      if (/^metaobject[:/]/i.test(token)) return true;
+                      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) return true;
+                      if ((token.startsWith("[") && token.endsWith("]")) || (token.startsWith("{") && token.endsWith("}"))) return true;
+                      return false;
+                    };
+
+                    const formatSecondaryColorsArray = (arr) => {
+                      if (!Array.isArray(arr) || arr.length === 0) return null;
+                      const cleaned = [];
+                      for (let i = 0; i < arr.length; i += 1) {
+                        const item = arr[i];
+                        if (typeof item !== "string") return null;
+                        const trimmedItem = item.trim();
+                        if (isInvalidSecondaryColorToken(trimmedItem)) return null;
+                        cleaned.push(trimmedItem);
+                      }
+                      const joined = cleaned.join(", ");
+                      if (!joined || isInvalidSecondaryColorToken(joined)) return null;
+                      return joined;
+                    };
+
+                    if (Array.isArray(normalizedValue)) {
+                      const convertedArr = formatSecondaryColorsArray(normalizedValue);
+                      if (!convertedArr) return;
+                      normalizedValue = convertedArr;
+                    } else if (typeof normalizedValue === "string") {
+                      const trimmedStr = normalizedValue.trim();
+                      if (!trimmedStr) return;
+                      if (trimmedStr.startsWith("[") || trimmedStr.endsWith("]") || trimmedStr.startsWith("{") || trimmedStr.endsWith("}")) {
+                        if (!(trimmedStr.startsWith("[") && trimmedStr.endsWith("]"))) {
+                          return;
+                        }
+                        try {
+                          const parsed = JSON.parse(trimmedStr);
+                          const convertedParsed = formatSecondaryColorsArray(parsed);
+                          if (!convertedParsed) return;
+                          normalizedValue = convertedParsed;
+                        } catch (e) {
+                          return;
+                        }
+                      } else {
+                        if (isInvalidSecondaryColorToken(trimmedStr)) return;
+                        normalizedValue = trimmedStr;
+                      }
+                    } else {
+                      return;
+                    }
+                  }
+
                   const expectedType = getExpectedFieldType(targetKey);
                   const formattedVal = formatComparableValue(normalizedValue, expectedType, targetKey);
                   if (!formattedVal) return;
