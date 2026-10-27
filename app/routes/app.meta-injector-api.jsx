@@ -69,6 +69,7 @@ const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.collection_date": "single_line_text_field",
   "custom.cut_type": "single_line_text_field",
   "custom.secondary_colors": "single_line_text_field",
+  "custom.tenacity": "single_line_text_field",
   "custom.color_pattern": "single_line_text_field",
   "custom.wire_material": "single_line_text_field",
   "custom.jewelry_type": "single_line_text_field",

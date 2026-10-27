@@ -1,4 +1,3 @@
-import { authenticate } from "../shopify.server";
 import { DROPDOWN_OPTIONS, normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
 
 // 🟢 AI Engine — No Prisma Import Here
@@ -143,10 +142,11 @@ function collectionsDataEdgesMap(edges) {
 function splitSegmentedTitle(val) {
   if (typeof val !== "string") return [];
   const normalized = val
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬ ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
-    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
     .trim();
   if (!normalized) return [];
   return normalized.split(/\s+[—–-]\s+/).map(s => s.trim()).filter(Boolean);
@@ -155,10 +155,11 @@ function splitSegmentedTitle(val) {
 function extractStoneName(title) {
   if (!title) return "Unknown";
   const normalized = String(title)
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬ ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
-    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
     .trim();
   const segs = splitSegmentedTitle(normalized);
   const sectionOne = segs.length >= 2 ? segs[0] : normalized.split(/[—–-]/)[0].trim();
@@ -315,7 +316,63 @@ function resolveCanonicalOoakFromInputs(inputs = {}, aiProposal = undefined) {
   return { value: "", conflict: false };
 }
 
-function parseIdentityAndOriginInputs(body) {
+// Evaluates found_object polarity without mutating the underlying stored value or type
+function classifyFoundObjectPolarity(rawVal) {
+  if (rawVal === undefined || rawVal === null) return "unknown";
+  if (typeof rawVal === "boolean") return rawVal ? "wild_found" : "purchased";
+  const str = String(rawVal).trim();
+  if (!str) return "unknown";
+  const lower = str.toLowerCase();
+  if (
+    lower === "false" ||
+    lower === "no" ||
+    lower === "0" ||
+    lower.startsWith("no ") ||
+    lower.startsWith("no—") ||
+    lower.startsWith("no -") ||
+    lower.startsWith("no â€”") ||
+    lower.startsWith("no Ã¢â‚¬â€") ||
+    /\b(purchased|bought)\b/i.test(lower)
+  ) {
+    return "purchased";
+  }
+  if (
+    lower === "true" ||
+    lower === "yes" ||
+    lower === "1" ||
+    lower.startsWith("yes ") ||
+    lower.startsWith("yes—") ||
+    lower.startsWith("yes -") ||
+    lower.startsWith("yes â€”") ||
+    lower.startsWith("yes Ã¢â‚¬â€") ||
+    /\bfound in the wild\b/i.test(lower)
+  ) {
+    return "wild_found";
+  }
+  return "unknown";
+}
+
+function hasRiverOrFieldCollectionClaim(text) {
+  if (typeof text !== "string" || !text.trim()) return false;
+  return /\b(found at|found in|found on|found along|river[- ]collected|field[- ]collected|collected at|collected from|collected along|pulled from|picked up on the river|spokane river|yakima river)\b/i.test(text);
+}
+
+function buildSafePurchasedSeoTitle(stoneFamily, productFormat = "") {
+  const cleanFam = String(stoneFamily || "").trim();
+  const cleanFmt = String(productFormat || "").trim();
+  if (!cleanFam) return "";
+  const candidateWithFmt =
+    cleanFmt &&
+    !/^(n\/a|none|unknown)$/i.test(cleanFmt) &&
+    !cleanFam.toLowerCase().includes(cleanFmt.toLowerCase())
+      ? `${cleanFam} ${cleanFmt} — Rockhound Studio`
+      : `${cleanFam} — Rockhound Studio`;
+  if (candidateWithFmt.length <= 70) return candidateWithFmt;
+  const fallback = `${cleanFam} — Rockhound Studio`;
+  return fallback.length <= 70 ? fallback : fallback.slice(0, 70).trim();
+}
+
+function parseIdentityAndOriginInputs(body, provenance = null) {
   const rawProductTitle = (body.get("productTitle") || "").trim();
   const rawPieceName = (body.get("pieceName") || body.get("piece_name") || "").trim();
   const rawHumanId = (body.get("humanPieceId") || "").trim();
@@ -323,6 +380,16 @@ function parseIdentityAndOriginInputs(body) {
   const explicitOriginLocation = (body.get("origin_location") || "").trim();
   const explicitOriginHandle = (body.get("origin_handle") || body.get("origin_page_handle") || "").trim();
   const explicitCollectionName = (body.get("collection_name") || body.get("collectionName") || "").trim();
+  const rawFoundObject = body.get("found_object") ?? body.get("custom.found_object");
+  const foundObjectPolarity = classifyFoundObjectPolarity(rawFoundObject);
+
+  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
+  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+
+  // Purchase provenance is established when found_object explicitly indicates purchased polarity
+  // (or when operator_locked_fields locks found_object/origin_location as purchased).
+  const isPurchasedProvenance = foundObjectPolarity === "purchased";
+  const isOriginOperatorLocked = operatorLockedSet.has("origin_location") && Boolean(explicitOriginLocation);
 
   const productTitleSegments = splitSegmentedTitle(rawProductTitle);
   const pieceNameSegments = splitSegmentedTitle(rawPieceName);
@@ -349,9 +416,13 @@ function parseIdentityAndOriginInputs(body) {
     ? productTitleSegments[0]
     : (hasSegmentedPieceName ? pieceNameSegments[0] : "");
 
-  const titleOriginCandidate = hasSegmentedProductTitle
-    ? productTitleSegments[1]
-    : (hasSegmentedPieceName ? pieceNameSegments[1] : "");
+  // When human/locked facts establish purchased provenance or lock origin_location,
+  // never derive originSegment from the middle segment of a segmented marketing title.
+  const titleOriginCandidate = (isPurchasedProvenance || isOriginOperatorLocked)
+    ? ""
+    : (hasSegmentedProductTitle
+        ? productTitleSegments[1]
+        : (hasSegmentedPieceName ? pieceNameSegments[1] : ""));
 
   const validExplicitStoneFamily = !isSettingOrHardwareMediumValue(explicitStoneFamily) ? explicitStoneFamily : "";
   const rawFamilySource = validExplicitStoneFamily || titleFamilyCandidate || "";
@@ -359,7 +430,9 @@ function parseIdentityAndOriginInputs(body) {
   const derivedShape = extractShapeFromString(rawFamilySource);
 
   const rawOriginSource = explicitOriginLocation || titleOriginCandidate || "";
-  const originSegment = resolveEvidencedOriginLocation(rawOriginSource);
+  const originSegment = isOriginOperatorLocked
+    ? explicitOriginLocation
+    : resolveEvidencedOriginLocation(rawOriginSource);
 
   return {
     rawTitleInput: rawProductTitle || rawPieceName,
@@ -371,55 +444,111 @@ function parseIdentityAndOriginInputs(body) {
     explicitStoneFamily: Boolean(validExplicitStoneFamily),
     explicitOriginLocation: Boolean(explicitOriginLocation),
     explicitOriginHandle,
-    explicitCollectionName
+    explicitCollectionName,
+    rawFoundObject: rawFoundObject !== null && rawFoundObject !== undefined ? String(rawFoundObject).trim() : "",
+    foundObjectPolarity,
+    isPurchasedProvenance,
+    isOriginOperatorLocked
   };
 }
 
 async function getGeoData(admin, stoneFamily) {
-  const emptyGeo = { mohs_hardness: "", luster: "", fracture_pattern: "", cleavage: "", specific_gravity: "", diaphaneity: "", crystal_system: "", geological_era: "", mineral_class: "", rock_composition: "", rock_formation: "", geological_age: "", geoSource: "none" };
+  const emptyGeo = {
+    mohs_hardness: "",
+    luster: "",
+    fracture_pattern: "",
+    cleavage: "",
+    specific_gravity: "",
+    diaphaneity: "",
+    tenacity: "",
+    crystal_system: "",
+    geological_era: "",
+    mineral_class: "",
+    rock_composition: "",
+    rock_formation: "",
+    geological_age: "",
+    geoSource: "none"
+  };
   if (!stoneFamily || stoneFamily === "Unknown Stone" || isSettingOrHardwareMediumValue(stoneFamily) || !admin) return emptyGeo;
+  const fullStoneCandidate = cleanStoneFamilyShape(String(stoneFamily || "").trim());
   const cleanStoneName = extractStoneName(stoneFamily);
-  if (!cleanStoneName || cleanStoneName === "Unknown") return emptyGeo;
-  const search = cleanStoneName.toLowerCase().trim();
+  if ((!fullStoneCandidate || fullStoneCandidate.toLowerCase() === "unknown") && (!cleanStoneName || cleanStoneName === "Unknown")) {
+    return emptyGeo;
+  }
 
   try {
     const { lookupStone } = await import("../utils/geoLibrary.jsx");
-    const localResult = lookupStone(cleanStoneName);
+    // Try full stone family / variety first (preserving exact multi-word entries like "Fire Obsidian",
+    // "Dalmatian Stone", "Botswana Agate", "Montana Agate", "Picture Jasper", "Brecciated Jasper"),
+    // then fall back to cleaned base rock name.
+    const localResult =
+      (fullStoneCandidate ? lookupStone(fullStoneCandidate) : null) ||
+      (cleanStoneName && cleanStoneName !== "Unknown" ? lookupStone(cleanStoneName) : null);
     if (localResult && Object.keys(localResult).length > 0) {
       return {
         mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
-        luster: localResult.luster || "", fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
-        cleavage: localResult.cleavage || "", specific_gravity: localResult.specific_gravity || "",
-        diaphaneity: localResult.diaphaneity || "", crystal_system: localResult.crystal_system || "",
+        luster: localResult.luster || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "",
+        specific_gravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "",
+        tenacity: localResult.tenacity || "",
+        crystal_system: localResult.crystal_system || "",
         geological_era: localResult.geological_era || localResult.geological_age || "",
-        mineral_class: localResult.mineral_class || "", rock_composition: localResult.rock_composition || "",
-        rock_formation: localResult.rock_formation || "", geological_age: localResult.geological_era || localResult.geological_age || "",
+        mineral_class: localResult.mineral_class || "",
+        rock_composition: localResult.rock_composition || "",
+        rock_formation: localResult.rock_formation || "",
+        geological_age: localResult.geological_era || localResult.geological_age || "",
         geoSource: "library"
       };
     }
   } catch (err) {}
 
+  const search = (cleanStoneName && cleanStoneName !== "Unknown" ? cleanStoneName : fullStoneCandidate).toLowerCase().trim();
+  const fullSearch = fullStoneCandidate ? fullStoneCandidate.toLowerCase().trim() : search;
+
   try {
-    const cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+    let cacheRows = [];
+    if (fullSearch && fullSearch !== search) {
+      cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [fullSearch]);
+    }
+    if (cacheRows.length === 0 && search) {
+      cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+    }
     if (cacheRows.length > 0 && cacheRows[0].data) {
       const parsed = typeof cacheRows[0].data === "string" ? JSON.parse(cacheRows[0].data) : cacheRows[0].data;
-      return { ...parsed, geoSource: "cache" };
+      return {
+        ...emptyGeo,
+        ...parsed,
+        tenacity: parsed?.tenacity || "",
+        geoSource: "cache"
+      };
     }
   } catch (err) {}
 
   try {
     if (stoneProfileCache.has(search)) {
       const cached = stoneProfileCache.get(search);
-      if (cached) return { ...cached, geoSource: "cache" };
+      if (cached) return { ...emptyGeo, ...cached, tenacity: cached.tenacity || "", geoSource: "cache" };
     } else {
       const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
       if (rows.length > 0) {
         const s = rows[0];
         const geoResult = {
-          mohs_hardness: s.hardness || s.mohs_hardness || "", luster: s.luster || "", fracture_pattern: s.fracture || "", cleavage: s.cleavage || "",
-          specific_gravity: s.specific_gravity || "", diaphaneity: s.diaphaneity || "", crystal_system: s.crystal_system || "",
-          geological_era: s.geological_era || "", mineral_class: s.mineral_class || "", rock_composition: s.rock_composition || "",
-          rock_formation: s.rock_formation || "", geological_age: s.geological_era || "", geoSource: "database"
+          mohs_hardness: s.hardness || s.mohs_hardness || "",
+          luster: s.luster || "",
+          fracture_pattern: s.fracture || "",
+          cleavage: s.cleavage || "",
+          specific_gravity: s.specific_gravity || "",
+          diaphaneity: s.diaphaneity || "",
+          tenacity: "",
+          crystal_system: s.crystal_system || "",
+          geological_era: s.geological_era || "",
+          mineral_class: s.mineral_class || "",
+          rock_composition: s.rock_composition || "",
+          rock_formation: s.rock_formation || "",
+          geological_age: s.geological_era || "",
+          geoSource: "database"
         };
         stoneProfileCache.set(search, geoResult);
         return geoResult;
@@ -428,7 +557,7 @@ async function getGeoData(admin, stoneFamily) {
   } catch (err) {}
 
   try {
-    if (MINDAT_API_KEY) {
+    if (MINDAT_API_KEY && cleanStoneName && cleanStoneName !== "Unknown") {
       const controller = new AbortController();
       const id = setTimeout(() => controller.abort(), 60000);
       const mindatRes = await fetch(`https://api.mindat.org/minerals/?name=${encodeURIComponent(cleanStoneName)}&format=json`, { headers: { Authorization: `Token ${MINDAT_API_KEY}` }, signal: controller.signal });
@@ -437,9 +566,20 @@ async function getGeoData(admin, stoneFamily) {
       const mineral = mindatData?.results?.[0];
       if (mineral) {
         const geoResult = {
-          mohs_hardness: mineral.hardness || "", luster: mineral.luster || "", fracture_pattern: mineral.fracture || "", cleavage: mineral.cleavage || "",
-          specific_gravity: mineral.density || "", diaphaneity: mineral.transparency || "", crystal_system: mineral.crystal_system || "",
-          geological_era: "", mineral_class: mineral.mineral_class || "", rock_composition: "", rock_formation: "", geological_age: "", geoSource: "mindat"
+          mohs_hardness: mineral.hardness || "",
+          luster: mineral.luster || "",
+          fracture_pattern: mineral.fracture || "",
+          cleavage: mineral.cleavage || "",
+          specific_gravity: mineral.density || "",
+          diaphaneity: mineral.transparency || "",
+          tenacity: "",
+          crystal_system: mineral.crystal_system || "",
+          geological_era: "",
+          mineral_class: mineral.mineral_class || "",
+          rock_composition: "",
+          rock_formation: "",
+          geological_age: "",
+          geoSource: "mindat"
         };
         stoneProfileCache.set(search, geoResult);
         await saveToStoneCache(search, geoResult);
@@ -464,7 +604,7 @@ const INVALID_CANDIDATE_FILLERS = new Set(["none", "unknown", "n/a", "null", "un
 
 const ALLOWED_PROVENANCE_FIELD_KEYS = new Set([
   "color_pattern", "primary_color", "secondary_colors", "color",
-  "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
+  "dimensions_mm", "overall_solid_length_in", "weight_grams", "shipping_weight_oz", "price",
   "honest_flaws_and_character", "character_marks",
   "surface_finish", "cut_type", "cut_and_shape", "stone_shape",
   "jewelry_finding_type", "bail_included", "chain_material",
@@ -491,6 +631,17 @@ const PASSIVE_CONSTRUCTION_REVIEW_KEYS = new Set([
   "secondary_medium",
   "wire_material",
   "alt_text"
+]);
+
+// Passive stored provenance/SEO keys that may have been populated by earlier AI runs or title parses.
+// When not operator-locked, they must not override explicit human purchase provenance.
+const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
+  "origin_location",
+  "origin_handle",
+  "origin_page_handle",
+  "collection_location",
+  "seo_title",
+  "poetic_hook"
 ]);
 
 const STONE_IDENTITY_KEYS = new Set([
@@ -662,7 +813,15 @@ function resolveTab3FieldProvenance(body) {
 function sanitizeCandidateString(str) {
   if (typeof str !== "string") return "";
   if (str.includes("See Shopify")) return "";
-  return str.replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—").replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—").replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—").replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—").trim();
+  return str
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬ ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
+    .trim();
 }
 
 function isCleanCandidateLabel(label) {
@@ -770,7 +929,14 @@ function sanitizeObject(obj) {
   for (let key in obj) {
     if (typeof obj[key] === "string") {
       if (obj[key].includes("See Shopify")) obj[key] = "";
-      else obj[key] = obj[key].replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—").replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—").replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—").replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—");
+      else obj[key] = obj[key]
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬ ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—")
+        .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—");
     }
   }
   return obj;
@@ -821,13 +987,27 @@ function getDerivedMaterial(stoneFam) {
   return stoneFam.replace(/^(Dragon's Eye|Green|Blue|Fire|Rufus|Rainbow|Yellow|Red|Black|Oregon)\s+/i, "").trim();
 }
 
+function parseValidPhotoSolidLengthInches(rawVal) {
+  if (rawVal === undefined || rawVal === null) return "";
+  if (typeof rawVal === "number") {
+    if (!Number.isFinite(rawVal) || rawVal <= 0) return "";
+    return String(Number(rawVal.toFixed(4)));
+  }
+  if (typeof rawVal !== "string") return "";
+  const str = rawVal.trim();
+  if (!str || !/^\d+(\.\d+)?$/.test(str)) return "";
+  const num = Number(str);
+  if (!Number.isFinite(num) || num <= 0) return "";
+  return String(Number(num.toFixed(4)));
+}
+
 // ==========================================
 // SHARED FACTUAL CONTRACT
 // ==========================================
 const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator-locked corrections > established verified product facts > resolved origin/collection source context > supported visible observations.
-2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
 3. NO VISUAL INFERENCE OF FASTENING OR METAL COMPOSITION: Do not infer treatment, provenance, fastening method (bezel vs. glue-on/adhesive), metal alloy/fineness, plating, or mineral rarity from appearance or front photographs alone.
 4. SEPARATE CONSTRUCTION DIMENSIONS: Keep these five dimensions strictly distinct:
    (a) Fastening method (e.g., glue-on/glue-in adhesive setting, pinch bail with pins passing through a drilled hole, wire wrap, or explicit verified bezel setting),
@@ -838,6 +1018,14 @@ const getSharedFactualContract = () => `
    Never infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a visible metal rim, backing frame, or top chain loop alone. Where construction fastening is not explicitly confirmed in supplied facts, use supported neutral wording (such as "metal setting", "decorative metal rim", or "top chain loop") rather than inventing a mounting mechanism.
 5. PINCH BAILS VS. FRAMED/BACKED SETTINGS: Preserve pinch-bail construction ("Silver Plated Pinch Bail", whose pins pass through a drilled hole in the stone) whenever visibly present or supplied in facts. Never turn a pinch bail into a glue-on or bezel setting.
 6. STONE IDENTITY VS. SETTING / HARDWARE MATERIAL: primary_medium, material, and stone_family represent STONE/MINERAL identity ONLY (keeping mineral family such as "Agate" distinct from variety such as "Botswana Agate" when applicable). NEVER put metal, plating, alloy, wire, chain, or setting hardware (such as "Silver Plated", "Silver Alloy", "Sterling Silver", "Copper Wire", or "Pinch Bail") into primary_medium, material, or stone_family. Hardware/metal belongs only in secondary_medium, wire_material, chain_material, bail_included, or jewelry_finding_type. If stone identity is uncertain, omit it rather than guessing or substituting hardware material.
+7. PROVENANCE & PURCHASE CONSISTENCY:
+   - Never override explicit human/locked purchase provenance (such as found_object indicating purchased/false/No or an explicit purchase source) with a product title segment or collection membership.
+   - When a stone was purchased (not field/river-collected), NEVER claim or imply it was "Found at...", river-collected, or field-collected in generated_description, seo_title, or poetic_hook, even if the product belongs to a regional or river-named collection.
+   - A purchase venue or shop name establishes where the material was bought, NOT its geological origin. Never treat a purchase venue as geological formation/locality origin.
+8. PHOTO-BASED SOLID LENGTH MEASUREMENT (overall_solid_length_in):
+   - When a product is deliberately aligned with a measuring tape or ruler in the photo(s), read the visible tape markings, identifiable units, and both solid-product endpoints to determine overall_solid_length_in in decimal inches (including the solid setting/bail, strictly excluding any flexible necklace chain or cord).
+   - All necklace chain/cord lengths are a separate confirmed 18 inches; never confuse or conflate the 18-inch necklace length with overall_solid_length_in.
+   - If the measuring tape/ruler markings, units, or both solid-product endpoints cannot be read reliably from the photo(s), omit overall_solid_length_in completely. Never fall back to or calculate from dimensions_mm text alone.
 -------------------------------
 `;
 
@@ -881,6 +1069,15 @@ function buildDescriptionPrompt(derivedFamily, originSegment, extractedStory, fu
   const effectiveFamilyForPrompt = stoneContext.effectiveFamily || derivedFamily || "";
   const effectiveVarietyForPrompt = stoneContext.effectiveMaterial || effectiveFamilyForPrompt || "";
 
+  const rawFoundObj = pieceData.found_object ?? pieceData["custom.found_object"];
+  const foundPolarity = classifyFoundObjectPolarity(rawFoundObj);
+  const provenanceRuleLine =
+    foundPolarity === "purchased"
+      ? `- Provenance Status: Purchased material (found_object=${String(rawFoundObj)}). This piece was bought/acquired${originSegment ? ` (${originSegment})` : ""}, NOT river-collected or field-collected. Do NOT claim it was pulled from a river or found in the wild, even if Collection Name is "${fullCollectionTitle}". Purchase source does not establish geological origin.`
+      : foundPolarity === "wild_found"
+        ? `- Provenance Status: Field-collected (found_object=${String(rawFoundObj)}).`
+        : `- Provenance Status: Use only explicitly supplied origin/provenance facts; do not invent river/field-collection claims from collection membership alone.`;
+
   return `You are writing a product description for Rockhound Studio, a lapidary art studio run by Bob and Janyce, married 34 years, both artists, both rockhounds. They cut and polish every stone themselves in Spokane Valley WA.
 ${getSharedFactualContract()}
 
@@ -888,6 +1085,7 @@ DETAILS:
 - Stone Family: ${effectiveFamilyForPrompt}
 - Stone Variety / Material: ${effectiveVarietyForPrompt}
 - Origin / Location: ${originSegment}
+${provenanceRuleLine}
 - Origin Lore: ${extractedStory}
 - Collection Name: ${fullCollectionTitle} (Canonical Name: Use this exact name in prose instead of legacy titles found in the lore text)
 - Collection Lore: ${collectionStory}
@@ -902,12 +1100,14 @@ DETAILS:
 - Secondary Medium (Metal): ${pieceData.secondary_medium || "N/A"}
 - Surface Finish: ${pieceData.surface_finish || ""}
 - Dimensions: ${pieceData.dimensions_mm || "N/A"}
+- Overall Solid Length (in): ${pieceData.overall_solid_length_in || "N/A"}
 - Stone Weight: ${pieceData.weight_grams ? pieceData.weight_grams + " g" : "N/A"}
 - Shipping Weight: ${pieceData.shipping_weight_oz ? pieceData.shipping_weight_oz + " oz" : "N/A"}
 - Geology display: Geological facts are already presented in the product-page geology drawer table. Do not repeat geology in this description.
 - Preserve geological data unchanged outside this description; this output does not replace the geology table.
 - One-of-a-Kind (is_one_of_a_kind): ${ooakResolved.value || ""}
 - Primary Color: ${pieceData.primary_color || ""}
+- Secondary Colors: ${pieceData.secondary_colors || ""}
 - Color Pattern: ${pieceData.color_pattern || ""}
 - Character Marks: ${pieceData.character_marks || ""}
 - Honest Flaws and Character: ${pieceData.honest_flaws_and_character || ""}
@@ -933,6 +1133,7 @@ VOICE RULES (CRITICAL):
 - No sales language, flourish, or invented activity.
 - Use only source-supported physical observations.
 - Do not transfer another stone's events or details to this piece.
+- If Provenance Status indicates purchased material, state the purchase/acquisition honestly without claiming river or wild field collection, and do not treat the purchase venue as geological origin.
 - Counts, dates, and trip details require source support.
 - If context is insufficient, flag it for review rather than invent.
 - Weave physical facts naturally into the physical description. Never output labels or missing-value placeholders.
@@ -945,10 +1146,10 @@ DESCRIPTION STRUCTURE — follow this order exactly:
 Lead with specific, honest observations. Describe color, natural form, and finish. Do not output labels like "Bench Notes:".
 
 2. ORIGIN HOOK
-Select the source episode relevant to the current product from the Origin Lore. Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
+Select the source episode relevant to the current product from the Origin Lore or supplied provenance facts. Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page. Never invent a river find when the piece was purchased.
 
 3. COLLECTION HOOK
-1-2 short, source-supported sentences connecting this piece to the collection based on the Collection Lore. Use the exact Canonical Name provided above rather than any legacy title found in the lore text. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone).
+1-2 short, source-supported sentences connecting this piece to the collection based on the Collection Lore. Use the exact Canonical Name provided above rather than any legacy title found in the lore text. Preserve the referent of counts: stone types, pieces, people, stops, or trips must not be conflated (e.g., "three finds" refers to three stone types, not three pieces of this stone). Do not use collection membership to override purchased provenance.
 
 4. QUICK-REFERENCE SPECS
 Use a compact block instead of a paragraph for every pin. Do not print filler such as "Formation: Variable". Avoid repeating facts already stated in the prose. Include verified dimensions, stone weight, finish, and hardware when present.
@@ -961,7 +1162,7 @@ Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state 
 
 5. CHARACTER
 Geology: Do not output a geology row or geological properties; these belong in the existing product-page geology table.
-Do not repeat hardness, age, era, composition, formation, crystal system, mineral class, specific gravity, luster, cleavage, fracture or diaphaneity in the description.
+Do not repeat hardness, age, era, composition, formation, crystal system, mineral class, specific gravity, luster, cleavage, fracture, tenacity, or diaphaneity in the description.
 Character: [Include supported character_marks and honest_flaws_and_character distinctly; omit missing facts.]
 
 6. ARTIST CALLOUT — only if loose stone or setting ready
@@ -1032,15 +1233,16 @@ ${getSharedFactualContract()}
 SUPPLIED HUMAN / BENCH FACTS (Authoritative when nonblank; do not contradict or invent replacements):
 ${operatorFactsStr || "- No explicit operator overrides supplied."}
 
-TREATMENT & YES/NO TEXT PRESERVATION RULES:
+TREATMENT & YES/NO / PROVENANCE PRESERVATION RULES:
 - Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false".
+- Preserve supplied found_object values and polarity exactly as provided. Do not flip purchased material to field-found or vice versa.
 - Preserve supplied treatment and hardware phrases verbatim.
 - Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
 
 PHYSICAL FORM, HARDWARE & SETTING INFERENCE RULES:
 - Separate physical product form (mounted/wear-ready finished jewelry vs. loose/unmounted stone) from intended use.
 - Do not treat a loose, unmounted stone as finished jewelry merely because it is teardrop/pendant-shaped, could be set as a pendant, or has an unattached chain/cord nearby.
-- Require actual visible mounted/wear-ready evidence (such as an installed pinch bail, mounted setting with top loop, wire wrap, or finished drilled wear-ready hole/suspension) or explicit supplied bench facts before classifying a piece as a finished pendant or finished jewelry.
+- Require actual visible mounted/wear-ready evidence (such as an installed pinch bail, mounted setting with top loop, wire wrap, verified bezel setting, or finished drilled wear-ready hole/suspension) or explicit supplied bench facts before classifying a piece as a finished pendant or finished jewelry.
 - NEVER infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a front photo, decorative metal rim, or top chain loop alone. Front photos cannot establish whether a rimmed/backed setting is bezel-set or glue-on, nor can they establish metal alloy fineness or plating.
 - When a stone is visibly mounted in a metal rim/backing with a top loop but fastening is not explicitly specified in SUPPLIED HUMAN / BENCH FACTS, use neutral supported values ("Yes" for setting_ready and bail_included, and neutral wording in alt_text / generated_description such as "in a metal setting with a top loop") and omit jewelry_finding_type rather than guessing bezel or glue-on.
 - When a pinch bail is visibly gripping a drilled hole in the stone, use "Silver Plated Pinch Bail" (or supplied pinch-bail wording).
@@ -1048,8 +1250,10 @@ PHYSICAL FORM, HARDWARE & SETTING INFERENCE RULES:
 
 REQUIRED JSON KEYS:
 - primary_color
+- secondary_colors: Visible secondary or accent colors in the stone (plain text, e.g., "Cream, Rust Red, Charcoal"); omit if monochromatic or if image evidence does not clearly show secondary colors. Never invent colors.
 - color_pattern: Select EXACTLY one: Green, Black, Blue flash, Red, White, Multicolor, Gold, Pink, Yellow, Silver, Purple, Striped, Clear, Yellow veins, None
 - surface_finish
+- overall_solid_length_in: Photo-based measurement in decimal inches (number only, e.g. 1.75) read directly from a measuring tape or ruler deliberately aligned with the product in the photo. Require readable tape/ruler markings, identifiable units, and both solid-product endpoints visible (from the bottom tip of the stone/piece to the top of the solid setting or bail, strictly excluding any flexible necklace chain or cord; necklace chain/cord is a separate confirmed 18 inches). Omit completely if no tape/ruler is visible or if markings, units, or endpoints cannot be read reliably. Never calculate from dimensions_mm alone.
 - honest_flaws_and_character
 - character_marks
 - secondary_medium: Metal/setting hardware medium only when explicitly supplied in bench facts or unambiguously known; do not guess alloy or plating from a photo.
@@ -1061,17 +1265,17 @@ REQUIRED JSON KEYS:
 - jewelry_finding_type: INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Preserve explicitly supplied construction descriptions verbatim. Do NOT guess "Bezel Setting", "Integrated Bezel Bail", or "Glue-On Bail" from a front photo alone; omit if fastening method is not visually certain (e.g., pinch bail) or explicitly supplied.
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. Select "N/A" when the piece is an unmounted loose stone, cabochon, display piece, or specimen without mounted/wear-ready evidence or explicit finished-jewelry bench facts.
 - google_product_category: "Apparel & Accessories > Jewelry"
-- origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY. Return geographic name ONLY. Do not invent an origin if unknown.
+- origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY and supplied bench facts. Return geographic name ONLY. Do not invent an origin if unknown, and never override an explicit purchased source with a title or collection name. Purchase source does not establish geological origin.
 - primary_use: Select EXACTLY one from the supported dropdown vocabulary: "Wearable Art", "Pendant", "Display Piece", "Cabochon — Setting Ready", "Collector Specimen". Use "Pendant" or "Wearable Art" ONLY when mounted/wear-ready evidence or explicit bench facts support it; use "Cabochon — Setting Ready", "Display Piece", or "Collector Specimen" for loose/unmounted stones as supported by form.
 - primary_medium: Must be the STONE/MINERAL identity or variety ONLY (never the bare word "Stone", and NEVER metal, plating, wire, alloy, or setting hardware). Keep stone family (e.g. Agate) and variety (e.g. Botswana Agate) distinct when applicable; omit if stone identity is unknown.
 - alt_text: Descriptive for THIS single photo only, max 125 chars. Describe visible stone, decorative rim, or top loop/pinch bail truthfully; never claim "bezel" or "glue-on" unless explicitly supplied in bench facts.
-- found_object: Yes/No
-- seo_title: Max 70 chars. Customer-facing title/pitch based on Vision, origin-page content, and supplied human facts. Never use or overwrite the internal human piece_name ID. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce ("Ground out the miles" describes travel, not stone grinding; never cite it as craftsmanship evidence).
-- poetic_hook: Optional short, plain customer-facing hook (under 160 chars) grounded in the photo, origin page, and human facts. Never replace the internal piece_name ID.
+- found_object: Preserve supplied value/polarity if provided; otherwise omit if unknown (never guess from appearance or collection).
+- seo_title: Max 70 chars. Customer-facing title/pitch based on Vision, origin-page content, and supplied human facts. Never use or overwrite the internal human piece_name ID. Never write "Found at..." or river-collected claims when found_object or bench facts indicate purchased material. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce ("Ground out the miles" describes travel, not stone grinding; never cite it as craftsmanship evidence).
+- poetic_hook: Optional short, plain customer-facing hook (under 160 chars) grounded in the photo, origin page, and human facts. Never claim river/field collection for purchased material. Never replace the internal piece_name ID.
 - standardized_candidates: Object containing supported review candidates among ["chain-link-type", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.
 - generated_description: Write in Bob's plain, honest voice (past tense). No salesy language, poetic geology, or grand claims. Never invent bezel or glue-on claims not in bench facts. Short sentences. 7-BLOCK FORMAT:
   1. Stone Description: Honest flaws, finish, flash. Lead with specific observations.
-  2. Origin Hook: Select the source episode matching "${stoneFamily}". Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page.
+  2. Origin Hook: Select the source episode matching "${stoneFamily}" and supplied provenance. Aim for 2-4 short sentences containing the relevant setup and outcome. Tease the story; do not retell the whole page. Never invent a river find if purchased.
   3. Collection Hook: 1-2 short, source-supported sentences connecting the product to the actual collection narrative based on "${fullCollectionTitle}". Do not conflate counts (e.g., "three finds" means three stone types).
   4. Signature: — Bob and Janyce, Rockhound Studio, Spokane Valley WA
   5. Stone Data: Specs.
@@ -1125,7 +1329,7 @@ function buildTab3VisionPrompt({
     }
     if (
       hasValidProvenance &&
-      CLASSIFICATION_OVERRIDE_KEYS.has(k) &&
+      (CLASSIFICATION_OVERRIDE_KEYS.has(k) || PASSIVE_PROVENANCE_AND_SEO_KEYS.has(k)) &&
       passiveStoredSet.has(k) &&
       !operatorLockedSet.has(k)
     ) {
@@ -1167,12 +1371,12 @@ ${currentDataStr || "- No explicit operator-locked data provided."}
 PASSIVE STORED HARDWARE / SETTING CONTEXT (Stored product context; NOT operator-locked — if an explicit operator-locked value in CURRENT KNOWN DATA contradicts a passive stored value, CURRENT KNOWN DATA takes priority; never treat hardware/metal in primary_medium as stone identity):
 ${passiveHardwareStr || "- None."}
 
-PASSIVE STORED CLASSIFICATIONS (Fallback only; not operator-locked — re-evaluate against physical/visual evidence and authoritative hardware facts; if fresh evidence clearly shows a different physical form or use, propose the corrected value; if fresh evidence is insufficient, omit or retain as fallback):
+PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS (Fallback only; not operator-locked — re-evaluate against physical/visual evidence and authoritative human provenance/hardware facts; if fresh evidence or locked human provenance contradicts a stale carried value, propose the corrected value; if fresh evidence is insufficient, omit or retain as fallback):
 ${passiveClassificationsStr || "- None."}
 
 CRITICAL RULES FOR TAB 3:
-1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored hardware/classifications and image inference.
-2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them.
+1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored hardware/classifications, image inference, product titles, and collection names.
+​2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS, re-evaluate against the photos and authoritative human facts so stale carried "Pendant" labels do not force a loose stone into finished jewelry and stale AI river-origin/SEO drafts do not contradict human-confirmed purchase provenance.
 3. Never infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a decorative rim, backing frame, front photo, or top chain loop alone. Do not infer metal alloy fineness or plating from photos.
 4. STONE IDENTITY VS. SETTING MATERIAL: primary_medium, material, and stone_family must NEVER contain metal, plating, alloy, wire, or setting hardware (such as "Silver Plated", "Sterling Silver", "Silver Alloy", "Copper Wire", or "Pinch Bail"). Keep mineral family (stone_family, e.g., "Agate") and stone variety (material / primary_medium, e.g., "Botswana Agate") distinct when evidenced; do not force them to be identical. If stone identity is uncertain, omit primary_medium rather than guessing.
 5. Preserve pinch-bail construction ("Silver Plated Pinch Bail", whose pins pass through a drilled hole) when visibly present or stated in facts.
@@ -1182,20 +1386,24 @@ CRITICAL RULES FOR TAB 3:
 9. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 10. Never write "None" or "Unknown" as filler.
 11. Do not invent details or lived history. Leave unknown fields entirely unset.
-12. Distinguish physical finished form from intended pendant/jewelry use: set product_format to "Pendant" (or similar finished wearable form) ONLY when authoritative hardware/mounting facts (such as an installed bail, mounted setting with loop, wire wrap, or finished drilled wear-ready form) or clear visible mounted hardware establish a finished piece. A bare passive "Pendant" label in primary_use, jewelry_type, or necklace_design, or an unattached chain/cord alone, does NOT establish finished jewelry or force product_format to "Pendant".
-13. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve supplied treatment and operator-locked hardware phrases verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
+12. Distinguish physical finished form from intended pendant/jewelry use: set product_format to "Pendant" (or similar finished wearable form) ONLY when authoritative hardware/mounting facts (such as an installed bail, mounted setting with loop, wire wrap, verified bezel setting, or finished drilled wear-ready form) or clear visible mounted hardware establish a finished piece. A bare passive "Pendant" label in primary_use, jewelry_type, or necklace_design, or an unattached chain/cord alone, does NOT establish finished jewelry or force product_format to "Pendant".
+13. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve supplied found_object values and polarity verbatim. Preserve supplied treatment and operator-locked hardware phrases verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
+14. PURCHASE VS. FIELD COLLECTION PROVENANCE: When CURRENT KNOWN DATA indicates purchased material (e.g., found_object is false/"No"/"No — purchased rough" or an explicit operator-locked purchase source is provided), NEVER write "Found at..." or river/field-collection claims in seo_title or poetic_hook, and NEVER override the purchase source with a river or collection name. Purchase location does not establish geological origin.
+15. PHOTO-BASED SOLID LENGTH MEASUREMENT (overall_solid_length_in): Read the measuring tape or ruler markings, identifiable units, and both solid-product endpoints from the photo where the product is deliberately aligned with the tape/ruler. Return decimal inches (including setting/bail, excluding any flexible necklace chain/cord; necklace chain/cord is a separate confirmed 18 inches). Preserve any existing nonblank overall_solid_length_in in CURRENT KNOWN DATA. If the markings, units, or solid endpoints are not clearly readable in the photo(s), omit overall_solid_length_in completely (never guess or derive from dimensions_mm text).
 
 Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "piece_name", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", "rarity", or "authenticity".
 
-Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSIVE STORED CLASSIFICATION or updating PASSIVE STORED HARDWARE when supported by operator-locked facts or clear evidence):
+Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSIVE STORED CLASSIFICATION/PROVENANCE entry or updating PASSIVE STORED HARDWARE when supported by operator-locked facts or clear evidence):
 - is_one_of_a_kind: Propose "Yes" only when supported by existing product facts; do not overwrite an explicit operator value.
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone).
 - craftsmanship: Propose exactly "Handcrafted" only when supplied product facts identify the work as handcrafted by Bob & Janyce. ("Ground out the miles" describes travel, not stone grinding; never cite that idiom as craftsmanship evidence. Do not place "Handcrafted" in standardized construction candidates.)
-- poetic_hook: Write one short, plain, factual hook based on the origin page (under 160 characters) when origin page context is present.
-- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce.
+- poetic_hook: Write one short, plain, factual hook based on the supported provenance/origin context and physical piece (under 160 characters). Never claim river/field collection when the material was purchased.
+- seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. Never claim "Found at..." or river collection when purchased. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce.
 - dimensions_mm: Leave unchanged if provided.
+- overall_solid_length_in: Photo-based measurement in decimal inches read from the visible measuring tape/ruler markings, identifiable units, and both solid-product endpoints (including setting/bail, excluding flexible 18-inch chain/cord). Leave unchanged if already provided in CURRENT KNOWN DATA; omit if tape markings, units, or endpoints cannot be read reliably.
 - surface_finish: High Polish, Matte, Satin, Natural/Raw, Tumbled.
 - primary_color
+- secondary_colors: Visible secondary or accent colors in the stone (plain text); omit if monochromatic or unsupported by image evidence.
 - color_pattern
 - honest_flaws_and_character
 - character_marks
@@ -1206,11 +1414,12 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - cleavage
 - luster
 - diaphaneity
+- tenacity
 - mineral_class
 - geological_era
 - rock_formation
 - stone_family: Derived mineral family from supported picklist only (never setting metal/hardware).
-- origin_location: Geographic name ONLY based on "${originSegment}".
+- origin_location: Geographic name ONLY based on "${originSegment}" when supported; never override an operator-locked origin_location or invent a river origin for purchased material.
 - origin_handle
 - collection_name
 - collection_location
@@ -1238,12 +1447,8 @@ ${collectionStory}
 `;
 }
 
-export const action = async ({ request }) => {
+export async function executeAutofill(intent, body, admin) {
   try {
-    const { admin } = await authenticate.admin(request);
-    const body = await request.formData();
-    const intent = body.get("intent");
-
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
       const geoFields = await getGeoData(admin, stoneFamily); 
@@ -1251,7 +1456,13 @@ export const action = async ({ request }) => {
     }
 
     if (intent === "titleParse") {
-      const pieceNameInput = (body.get("pieceName") || "").replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—").replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—").replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—").replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—").trim();
+      const pieceNameInput = (body.get("pieceName") || "")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬ ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
+        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
+        .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
+        .trim();
       const segments = splitSegmentedTitle(pieceNameInput);
 
       // Only parse a segmented title when it actually contains 3 title segments.
@@ -1265,18 +1476,43 @@ export const action = async ({ request }) => {
         }, { status: 400 });
       }
 
+      const provenance = resolveTab3FieldProvenance(body);
+      const explicitOriginLocation = (body.get("origin_location") || "").trim();
+      const explicitCollectionName = (body.get("collection_name") || body.get("collectionName") || "").trim();
+      const rawFoundObject = body.get("found_object") ?? body.get("custom.found_object");
+      const foundPolarity = classifyFoundObjectPolarity(rawFoundObject);
+      const isPurchasedProvenance = foundPolarity === "purchased";
+      const isOriginLocked = provenance.hasValidProvenance && provenance.operatorLockedSet.has("origin_location") && Boolean(explicitOriginLocation);
+
       const segment1 = resolvePicklistStoneFamily(segments[0] || "");
-      const segment2 = resolveEvidencedOriginLocation(segments[1] || "");
+      // When explicit human/locked provenance establishes purchased material or locks origin_location,
+      // do not let the middle title segment override origin_location with a river/field location.
+      const segment2 = isOriginLocked
+        ? explicitOriginLocation
+        : isPurchasedProvenance
+          ? (explicitOriginLocation ? resolveEvidencedOriginLocation(explicitOriginLocation) : "")
+          : resolveEvidencedOriginLocation(explicitOriginLocation || segments[1] || "");
       const segment3 = segments[segments.length - 1] || "";
 
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
-      const resolvedHandle = resolveOriginHandle(segment2, pagesList);
-      const collectionData = resolveCollectionData(segment2, resolvedHandle, collectionsList);
+      const resolvedHandle = isPurchasedProvenance
+        ? resolveOriginHandle(segment2, pagesList, (body.get("origin_handle") || body.get("origin_page_handle") || "").trim())
+        : resolveOriginHandle(segment2, pagesList);
+      const collectionData = resolveCollectionData(
+        isPurchasedProvenance ? "" : segment2,
+        resolvedHandle,
+        collectionsList,
+        explicitCollectionName
+      );
 
       const matchedPage = resolvedHandle ? pagesList.find(p => p.handle === resolvedHandle || p.url.includes(resolvedHandle)) : null;
       const extractedStory = matchedPage ? matchedPage.excerpt : "";
 
       const validFamilies = (DROPDOWN_OPTIONS?.stone_family || []).map(o => typeof o === "object" ? (o.value || o.label) : o);
+      const provenanceInstruction = isPurchasedProvenance
+        ? `2. Purchased Provenance Authority: This piece was purchased (found_object="${String(rawFoundObject).trim()}"). Do NOT infer field/river collection from the title segment "${segments[1] || ""}" or collection membership. Set 'origin_location' to "${segment2}" (leave "" if empty). Never write "Found at..." or river-collected claims in 'seo_title'. Purchase source does not establish geological origin.`
+        : `2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry when evidenced; do not invent collection names or handles.`;
+
       const promptText = `
 ${getSharedFactualContract()}
 
@@ -1284,6 +1520,7 @@ Analyze these segments:
 - Family: "${segment1}"
 - Origin: "${segment2}"
 - Human Identifier (preserve exact, do not alter): "${segment3}"
+${rawFoundObject !== null && rawFoundObject !== undefined && String(rawFoundObject).trim() !== "" ? `- Found Object: "${String(rawFoundObject).trim()}"` : ""}
 
 LIVE STORE DIRECTORY:
 PAGES: ${pagesList.map(p => p.handle).join(", ")}
@@ -1291,7 +1528,7 @@ COLLECTIONS: ${collectionsList.map(c => c.handle).join(", ")}
 
 INSTRUCTIONS:
 1. Keep title parsing focused on identity. SEO must use supported facts and must not compete with later factual SEO generation.
-2. Origin ("${segment2}") is the AUTHORITY. Set 'origin_location' to the clean geographic name. Match 'collection_name' and 'collection_location' to the live store entry when evidenced; do not invent collection names or handles.
+${provenanceInstruction}
 3. 'stone_family' must match an entry from the supported list: ${validFamilies.join(", ")}. Do not force unsupported titles into guessed minerals.
 4. Never alter or replace 'piece_name'; it must remain "${segment3}".
 
@@ -1315,10 +1552,25 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         const verifiedFamily = resolvePicklistStoneFamily(parsed.stone_family || segment1) || segment1;
         const dbGeoData = await getGeoData(admin, verifiedFamily);
-        const correctedOriginLoc = resolveEvidencedOriginLocation(segment2 || parsed.origin_location);
-        const finalCollectionName = collectionData.name || (collectionsList.some(c => c.title === parsed.collection_name) ? parsed.collection_name : "");
+        const correctedOriginLoc = isOriginLocked
+          ? explicitOriginLocation
+          : isPurchasedProvenance
+            ? segment2
+            : resolveEvidencedOriginLocation(segment2 || parsed.origin_location);
+        const finalCollectionName = collectionData.name || (!isPurchasedProvenance && collectionsList.some(c => c.title === parsed.collection_name) ? parsed.collection_name : "");
 
         const explicitOoak = resolveCanonicalOoakFromInputs(Object.fromEntries(body.entries()));
+
+        let resolvedSeoTitle = typeof parsed.seo_title === "string" ? parsed.seo_title.trim() : "";
+        if (isPurchasedProvenance) {
+          if (!resolvedSeoTitle || hasRiverOrFieldCollectionClaim(resolvedSeoTitle)) {
+            resolvedSeoTitle = buildSafePurchasedSeoTitle(verifiedFamily);
+          }
+        } else if (!resolvedSeoTitle) {
+          resolvedSeoTitle = verifiedFamily && correctedOriginLoc
+            ? `${verifiedFamily} — Found at ${correctedOriginLoc} — Rockhound Studio`
+            : "";
+        }
 
         const finalParse = sanitizeObject({
           ...parsed,
@@ -1329,9 +1581,14 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           origin_story: extractedStory,
           origin_location: correctedOriginLoc,
           collection_name: finalCollectionName,
-          collection_location: mapCollectionLocation(finalCollectionName || correctedOriginLoc),
+          collection_location: isPurchasedProvenance
+            ? (correctedOriginLoc ? mapCollectionLocation(correctedOriginLoc) : "")
+            : mapCollectionLocation(finalCollectionName || correctedOriginLoc),
           canonical_title: [verifiedFamily, correctedOriginLoc, segment3].filter(Boolean).join(" — "),
-          seo_title: parsed.seo_title || (verifiedFamily && correctedOriginLoc ? `${verifiedFamily} — Found at ${correctedOriginLoc} — Rockhound Studio` : ""),
+          seo_title: resolvedSeoTitle,
+          ...(rawFoundObject !== null && rawFoundObject !== undefined && String(rawFoundObject).trim() !== ""
+            ? { found_object: String(rawFoundObject).trim() }
+            : {}),
           ...dbGeoData,
           ...(explicitOoak.value ? { is_one_of_a_kind: explicitOoak.value } : {}),
           age_group: "adult",
@@ -1350,11 +1607,17 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
     if (intent === "visionScan" || intent === "fullRescan" || intent === "tab2AutoFill") {
       const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
-      const idOrigin = parseIdentityAndOriginInputs(body);
+      const provenance = resolveTab3FieldProvenance(body);
+      const idOrigin = parseIdentityAndOriginInputs(body, provenance);
 
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const defaultOriginSlug = resolveOriginHandle(idOrigin.originSegment, pagesList, idOrigin.explicitOriginHandle);
-      const defaultCollection = resolveCollectionData(idOrigin.originSegment, defaultOriginSlug, collectionsList, idOrigin.explicitCollectionName);
+      const defaultCollection = resolveCollectionData(
+        idOrigin.isPurchasedProvenance ? "" : idOrigin.originSegment,
+        defaultOriginSlug,
+        collectionsList,
+        idOrigin.explicitCollectionName
+      );
 
       const matchedPage = defaultOriginSlug
         ? pagesList.find(p => p.handle === defaultOriginSlug || p.url.includes(defaultOriginSlug))
@@ -1452,6 +1715,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         }
 
+        // Validate photo-based solid length measurement (decimal inches, strictly excluding 18" necklace chain/cord)
+        if (parsedVision.overall_solid_length_in !== undefined) {
+          const validSolidLen = parseValidPhotoSolidLengthInches(parsedVision.overall_solid_length_in);
+          if (validSolidLen) {
+            parsedVision.overall_solid_length_in = validSolidLen;
+          } else {
+            delete parsedVision.overall_solid_length_in;
+          }
+        }
+
         const validatedCandidates = validateStandardizedCandidates(
           parsedVision.standardized_candidates,
           {
@@ -1483,12 +1756,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           reviewProposals.stone_identity_warning = `Setting/metal value in ${stoneIdentityContext.contaminatedFields.join(", ")} is not a valid stone identity; verify stone family/material before saving.`;
         }
         const explicitOperatorKeys = [
-          "dimensions_mm", "weight_grams", "shipping_weight_oz", "price",
+          "dimensions_mm", "overall_solid_length_in", "weight_grams", "shipping_weight_oz", "price",
           "honest_flaws_and_character", "character_marks", "wire_material",
-          "surface_finish", "primary_color", "color_pattern", "primary_use",
+          "surface_finish", "primary_color", "secondary_colors", "color_pattern", "primary_use",
           "primary_medium", "secondary_medium", "setting_ready", "bail_included",
           "jewelry_finding_type", "chain_material", "chain_link_type",
-          "necklace_design", "jewelry_type", "treated", "treatment_status", "alt_text"
+          "necklace_design", "jewelry_type", "treated", "treatment_status", "alt_text",
+          "found_object", "origin_location", "collection_name", "collection_location"
         ];
         for (const key of explicitOperatorKeys) {
           if (currentInputFacts[key] !== undefined && currentInputFacts[key] !== "") {
@@ -1500,11 +1774,29 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         }
 
         const resolvedFamily = effectiveStoneFamilyForScan || resolvePicklistStoneFamily(parsedVision.stone_family) || "";
-        const resolvedOriginLoc = idOrigin.originSegment || resolveEvidencedOriginLocation(parsedVision.origin_location) || "";
+        const resolvedOriginLoc = idOrigin.isOriginOperatorLocked
+          ? idOrigin.originSegment
+          : idOrigin.isPurchasedProvenance
+            ? (idOrigin.originSegment || "")
+            : (idOrigin.originSegment || resolveEvidencedOriginLocation(parsedVision.origin_location) || "");
         const finalOriginSlug = defaultOriginSlug || resolveOriginHandle(resolvedOriginLoc, pagesList);
         const finalCollection = defaultCollection.name
           ? defaultCollection
-          : resolveCollectionData(resolvedOriginLoc, finalOriginSlug, collectionsList);
+          : resolveCollectionData(
+              idOrigin.isPurchasedProvenance ? "" : resolvedOriginLoc,
+              finalOriginSlug,
+              collectionsList
+            );
+
+        // Ensure generated SEO does not contradict explicit purchased provenance
+        if (idOrigin.isPurchasedProvenance) {
+          if (typeof parsedVision.seo_title === "string" && hasRiverOrFieldCollectionClaim(parsedVision.seo_title)) {
+            parsedVision.seo_title = buildSafePurchasedSeoTitle(resolvedFamily, parsedVision.product_format);
+          }
+          if (typeof parsedVision.poetic_hook === "string" && hasRiverOrFieldCollectionClaim(parsedVision.poetic_hook)) {
+            delete parsedVision.poetic_hook;
+          }
+        }
 
         const ooakResult = resolveCanonicalOoakFromInputs(currentInputFacts, parsedVision);
         delete parsedVision.is_ooak;
@@ -1528,9 +1820,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           ...(resolvedOriginLoc ? { origin_location: resolvedOriginLoc } : {}),
           ...(finalOriginSlug ? { origin_handle: finalOriginSlug, origin_page_handle: finalOriginSlug } : {}),
           ...(finalCollection.name ? { collection_name: finalCollection.name } : {}),
-          ...(finalCollection.name || resolvedOriginLoc
-            ? { collection_location: mapCollectionLocation(finalCollection.name || resolvedOriginLoc) }
-            : {}),
+          ...(idOrigin.isPurchasedProvenance
+            ? (currentInputFacts.collection_location
+                ? { collection_location: currentInputFacts.collection_location }
+                : (resolvedOriginLoc ? { collection_location: mapCollectionLocation(resolvedOriginLoc) } : {}))
+            : (finalCollection.name || resolvedOriginLoc
+                ? { collection_location: mapCollectionLocation(finalCollection.name || resolvedOriginLoc) }
+                : {})),
           ...(extractedStory ? { origin_story: extractedStory } : {}),
           ...(resolvedMaterialVariety ? { material: resolvedMaterialVariety } : {}),
           ...geoFields,
@@ -1569,8 +1865,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
     if (intent === "tab3FullRescan") {
       const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
-      const idOrigin = parseIdentityAndOriginInputs(body);
       const provenance = resolveTab3FieldProvenance(body);
+      const idOrigin = parseIdentityAndOriginInputs(body, provenance);
 
       const currentData = Object.fromEntries(
         Array.from(body.entries())
@@ -1578,9 +1874,18 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           .map(([k, v]) => [k, v.trim()])
       );
 
+      const isOriginPassive =
+        provenance.hasValidProvenance &&
+        provenance.passiveStoredSet.has("origin_location") &&
+        !provenance.operatorLockedSet.has("origin_location");
+
       const stoneIdentityContext = resolveVerifiedStoneIdentityContext(currentData, idOrigin.derivedFamily);
       const effectiveFamily = stoneIdentityContext.effectiveFamily || idOrigin.derivedFamily || "";
-      const effectiveOriginLoc = idOrigin.originSegment || resolveEvidencedOriginLocation(currentData.origin_location) || "";
+      const effectiveOriginLoc = idOrigin.isOriginOperatorLocked
+        ? idOrigin.originSegment
+        : idOrigin.isPurchasedProvenance
+          ? (isOriginPassive ? "" : (idOrigin.originSegment || ""))
+          : (idOrigin.originSegment || resolveEvidencedOriginLocation(currentData.origin_location) || "");
 
       const geoFields = await getGeoData(admin, effectiveFamily);
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
@@ -1590,7 +1895,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         idOrigin.explicitOriginHandle || currentData.origin_handle || currentData.origin_page_handle
       );
       const defaultCollection = resolveCollectionData(
-        effectiveOriginLoc,
+        idOrigin.isPurchasedProvenance ? "" : effectiveOriginLoc,
         defaultOriginSlug,
         collectionsList,
         idOrigin.explicitCollectionName || currentData.collection_name
@@ -1765,15 +2070,27 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         }
 
+        // Validate photo-based solid length measurement (decimal inches, strictly excluding 18" necklace chain/cord)
+        if (parsedVision.overall_solid_length_in !== undefined) {
+          const validSolidLen = parseValidPhotoSolidLengthInches(parsedVision.overall_solid_length_in);
+          if (validSolidLen) {
+            parsedVision.overall_solid_length_in = validSolidLen;
+          } else {
+            delete parsedVision.overall_solid_length_in;
+          }
+        }
+
         // Preserve genuinely operator-locked facts field-by-field; allow fresh evidence to propose corrections for
-        // passive classification keys, passive hardware/construction keys, and hardware-contaminated stone identity fields.
+        // passive classification keys, passive hardware/construction keys, passive provenance/SEO keys, and hardware-contaminated stone identity fields.
         const protectedKeys = [
-          "color_pattern", "primary_color", "dimensions_mm", "honest_flaws_and_character",
-          "surface_finish", "jewelry_finding_type", "bail_included", "chain_material",
-          "wire_material", "secondary_medium", "primary_medium", "material", "primary_use",
-          "product_format", "jewelry_type", "necklace_design", "chain_link_type",
+          "color_pattern", "primary_color", "secondary_colors", "dimensions_mm", "overall_solid_length_in",
+          "honest_flaws_and_character", "surface_finish", "jewelry_finding_type", "bail_included",
+          "chain_material", "wire_material", "secondary_medium", "primary_medium", "material",
+          "primary_use", "product_format", "jewelry_type", "necklace_design", "chain_link_type",
           "character_marks", "setting_ready", "craftsmanship", "poetic_hook",
-          "seo_title", "alt_text", "google_product_category", "treated", "treatment_status"
+          "seo_title", "alt_text", "google_product_category", "treated", "treatment_status",
+          "found_object", "origin_location", "origin_handle", "origin_page_handle",
+          "collection_name", "collection_location"
         ];
 
         const reviewProposals = {};
@@ -1816,6 +2133,10 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               isMarkedPassive &&
               PASSIVE_CONSTRUCTION_REVIEW_KEYS.has(k);
 
+            const isPassiveProvenanceOrSeo =
+              isMarkedPassive &&
+              PASSIVE_PROVENANCE_AND_SEO_KEYS.has(k);
+
             const rawProposedVal =
               parsedVision[k] !== undefined && parsedVision[k] !== null
                 ? String(parsedVision[k]).trim()
@@ -1824,7 +2145,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               rawProposedVal !== "" &&
               !INVALID_CANDIDATE_FILLERS.has(rawProposedVal.toLowerCase());
 
-            if (isPassiveClassification || isPassiveConstruction) {
+            if (isPassiveClassification || isPassiveConstruction || isPassiveProvenanceOrSeo) {
               if (hasFreshProposal && rawProposedVal !== currentData[k]) {
                 parsedVision[k] = rawProposedVal;
                 reviewProposals[k] = rawProposedVal;
@@ -1857,7 +2178,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         const geoKeys = [
           "mohs_hardness", "luster", "fracture_pattern", "cleavage", 
-          "specific_gravity", "diaphaneity", "crystal_system", 
+          "specific_gravity", "diaphaneity", "tenacity", "crystal_system", 
           "geological_era", "mineral_class", "rock_composition", "rock_formation", "geological_age"
         ];
         const verifiedGeoValues = {};
@@ -1887,11 +2208,49 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete parsedVision.is_one_of_a_kind;
 
         const finalFamily = effectiveFamily || resolvePicklistStoneFamily(parsedVision.stone_family) || "";
-        const finalOriginLoc = effectiveOriginLoc || resolveEvidencedOriginLocation(parsedVision.origin_location) || "";
+        const finalOriginLoc = idOrigin.isOriginOperatorLocked
+          ? idOrigin.originSegment
+          : idOrigin.isPurchasedProvenance
+            ? (effectiveOriginLoc || "")
+            : (effectiveOriginLoc || resolveEvidencedOriginLocation(parsedVision.origin_location) || "");
         const finalOriginSlug = defaultOriginSlug || resolveOriginHandle(finalOriginLoc, pagesList);
         const finalCollection = defaultCollection.name
           ? defaultCollection
-          : resolveCollectionData(finalOriginLoc, finalOriginSlug, collectionsList);
+          : resolveCollectionData(
+              idOrigin.isPurchasedProvenance ? "" : finalOriginLoc,
+              finalOriginSlug,
+              collectionsList
+            );
+
+        // Enforce purchase provenance consistency on SEO outputs when not operator-locked
+        const isSeoTitleOperatorLocked =
+          provenance.hasValidProvenance &&
+          provenance.operatorLockedSet.has("seo_title") &&
+          Boolean(currentData.seo_title);
+        const isPoeticHookOperatorLocked =
+          provenance.hasValidProvenance &&
+          provenance.operatorLockedSet.has("poetic_hook") &&
+          Boolean(currentData.poetic_hook);
+
+        if (idOrigin.isPurchasedProvenance) {
+          if (!isSeoTitleOperatorLocked && typeof parsedVision.seo_title === "string" && hasRiverOrFieldCollectionClaim(parsedVision.seo_title)) {
+            parsedVision.seo_title = buildSafePurchasedSeoTitle(finalFamily, parsedVision.product_format);
+          }
+          if (!isPoeticHookOperatorLocked && typeof parsedVision.poetic_hook === "string" && hasRiverOrFieldCollectionClaim(parsedVision.poetic_hook)) {
+            delete parsedVision.poetic_hook;
+          }
+        }
+
+        const isCollectionLocationOperatorLocked =
+          provenance.hasValidProvenance &&
+          provenance.operatorLockedSet.has("collection_location") &&
+          Boolean(currentData.collection_location);
+
+        const resolvedCollectionLocation = isCollectionLocationOperatorLocked
+          ? currentData.collection_location
+          : idOrigin.isPurchasedProvenance
+            ? (finalOriginLoc ? mapCollectionLocation(finalOriginLoc) : "")
+            : (currentData.collection_location || (finalCollection.name || finalOriginLoc ? mapCollectionLocation(finalCollection.name || finalOriginLoc) : ""));
 
         const payload = sanitizeObject({
           pieceId,
@@ -1903,13 +2262,18 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           ...(finalOriginLoc ? { origin_location: finalOriginLoc } : {}),
           ...(finalOriginSlug ? { origin_handle: finalOriginSlug, origin_page_handle: finalOriginSlug } : {}),
           ...(finalCollection.name ? { collection_name: finalCollection.name } : {}),
-          ...(finalCollection.name || finalOriginLoc
-            ? { collection_location: currentData.collection_location || mapCollectionLocation(finalCollection.name || finalOriginLoc) }
-            : {}),
+          ...(resolvedCollectionLocation ? { collection_location: resolvedCollectionLocation } : {}),
           ...(extractedStory ? { origin_story: extractedStory } : {}),
           ...(ooakResult.value ? { is_one_of_a_kind: ooakResult.value } : {}),
           ...(ooakResult.conflict ? { ooak_conflict: "Conflicting OOAK values supplied; verify before saving." } : {})
         });
+
+        if (idOrigin.isPurchasedProvenance && !finalOriginLoc && !idOrigin.isOriginOperatorLocked) {
+          delete payload.origin_location;
+        }
+        if (idOrigin.isPurchasedProvenance && !resolvedCollectionLocation && !isCollectionLocationOperatorLocked) {
+          delete payload.collection_location;
+        }
 
         delete payload.is_ooak;
         delete payload.rarity;
@@ -2009,6 +2373,9 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           } else {
             delete mergedPieceForPrompt.primary_medium;
           }
+
+          const rawFoundObj = pieceData.found_object ?? pieceData["custom.found_object"] ?? sharedFields.found_object ?? sharedFields["custom.found_object"];
+          const isPurchasedProvenance = classifyFoundObjectPolarity(rawFoundObj) === "purchased";
           
           const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
@@ -2042,7 +2409,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             canonicalCollectionName = "Yakima River Canyon";
           }
 
-          const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList, canonicalCollectionName);
+          const collectionData = resolveCollectionData(
+            isPurchasedProvenance ? "" : originSegment,
+            targetOriginHandle,
+            collectionsList,
+            canonicalCollectionName
+          );
           diagCollectionSlug = collectionData.slug || "None";
           if (!canonicalCollectionName && collectionData.name) {
             canonicalCollectionName = collectionData.name;
@@ -2121,6 +2493,9 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         
         if (pieceDataStr) {
           const pieceData = JSON.parse(pieceDataStr);
+          const rawFoundObj = pieceData.found_object ?? pieceData["custom.found_object"] ?? sharedFields.found_object ?? sharedFields["custom.found_object"];
+          const isPurchasedProvenance = classifyFoundObjectPolarity(rawFoundObj) === "purchased";
+
           const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
           
@@ -2134,7 +2509,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           
           const explicitOriginHandle = sharedFields.origin_handle || sharedFields.origin_page_handle || pieceData.origin_handle || pieceData.origin_page_handle || "";
           const targetOriginHandle = resolveOriginHandle(originSegment, pagesList, explicitOriginHandle);
-          const collectionData = resolveCollectionData(originSegment, targetOriginHandle, collectionsList, fullCollectionTitle);
+          const collectionData = resolveCollectionData(
+            isPurchasedProvenance ? "" : originSegment,
+            targetOriginHandle,
+            collectionsList,
+            fullCollectionTitle
+          );
           
           let dwellButtonsHTML = `<br><br>`;
           
@@ -2172,7 +2552,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
             
             if (collectionsList.some(c => c.handle === "the-3-000-mile-run-1")) {
-              dwellButtonsHTML += `<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
+              dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
             }
           }
 
@@ -2190,4 +2570,4 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
   } catch (error) {
     return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
   }
-};
+}

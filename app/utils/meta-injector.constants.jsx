@@ -449,12 +449,7 @@ export const UNVERIFIED_PROPOSED_MEASUREMENT_KEYS = Object.freeze([
   "custom.fitting_opening_mm"
 ]);
 
-export const PRODUCER_ALIGNMENT_PENDING_KEYS = Object.freeze([
-  "secondary_colors",
-  "custom.secondary_colors",
-  "tenacity",
-  "custom.tenacity"
-]);
+export const PRODUCER_ALIGNMENT_PENDING_KEYS = Object.freeze([]);
 
 const STANDARDIZED_ATTRIBUTE_KEYS = [
   "age-group",
@@ -962,8 +957,7 @@ export const FIELD_CATALOG = [
     registryIdentity: "custom.secondary_colors",
     registryRole: "PRIMARY_CANDIDATE_DESTINATION",
     applicability: "all_products",
-    producerAlignmentPending: true,
-    capabilityNote: "Definition/type alignment with producer/writer contract pending verification.",
+    capabilityNote: "Secondary colors supplied by Vision/Gemini as single_line_text_field.",
     mappingStatus: "active"
   },
   {
@@ -1097,7 +1091,7 @@ export const FIELD_CATALOG = [
     storageVerified: false,
     writerVerified: false,
     mappingStatus: "pending_read_only",
-    capabilityNote: "Proposed number_decimal (inches), including setting/bail but excluding chain. Storage/writer verification pending."
+    capabilityNote: 'Gemini reads a measurement from the product deliberately aligned with a measuring tape/ruler. Source: "Measured from photo". Read visible markings, identifiable units and both solid-product endpoints. Decimal inches, including setting/bail but excluding flexible chain/cord. If unreadable, omit the output for review. No dimensions-only fallback. Storage/writer verification pending.'
   },
   {
     key: "whole_product_weight_grams",
@@ -1323,8 +1317,7 @@ export const FIELD_CATALOG = [
     registryIdentity: "custom.tenacity",
     registryRole: "PRIMARY_CANDIDATE_DESTINATION",
     applicability: "stone_bearing_products",
-    producerAlignmentPending: true,
-    capabilityNote: "Definition/type alignment with producer/writer contract pending verification.",
+    capabilityNote: "Deterministic geology lookup (single_line_text_field).",
     mappingStatus: "active"
   },
   {

@@ -53,6 +53,7 @@ const OPERATOR_AUTHORITATIVE_DESTINATIONS = new Set([
   "price",
   "custom.weight_grams",
   "custom.dimensions_mm",
+  "custom.overall_solid_length_in",
   "custom.shipping_weight_oz",
   "native_shipping_weight",
   "custom.treated",
@@ -87,6 +88,22 @@ const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
 const isGenericBareStoneToken = (rawVal) => {
   if (rawVal === undefined || rawVal === null) return false;
   return String(rawVal).trim().toLowerCase() === "stone";
+};
+
+const parseStrictCompletePositiveSolidLengthInClient = (rawVal) => {
+  if (typeof rawVal !== "number" && typeof rawVal !== "string") return "";
+  let num;
+  if (typeof rawVal === "number") {
+    num = rawVal;
+  } else {
+    const trimmed = rawVal.trim();
+    if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed)) return "";
+    num = Number(trimmed);
+  }
+  if (!Number.isFinite(num) || num <= 0) return "";
+  const rounded = Number(num.toFixed(4));
+  if (rounded <= 0) return "";
+  return String(rounded);
 };
 
 // Client-side mirror of setting/metal/plating/hardware detector for stone identity fields
@@ -133,8 +150,8 @@ const classifyFoundObjectPolarityClient = (rawVal) => {
     lower.startsWith("no ") ||
     lower.startsWith("no—") ||
     lower.startsWith("no -") ||
+    lower.startsWith("no ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â") ||
     lower.startsWith("no ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") ||
-    lower.startsWith("no ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â") ||
     /\b(purchased|bought)\b/i.test(lower)
   ) {
     return "purchased";
@@ -146,8 +163,8 @@ const classifyFoundObjectPolarityClient = (rawVal) => {
     lower.startsWith("yes ") ||
     lower.startsWith("yes—") ||
     lower.startsWith("yes -") ||
+    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â") ||
     lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") ||
-    lower.startsWith("yes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â") ||
     /\bfound in the wild\b/i.test(lower)
   ) {
     return "wild_found";
@@ -197,8 +214,8 @@ const normalizeOoakEquivalentValue = (rawVal, expectedType = "single_line_text_f
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â") ||
-    lower.startsWith("yes ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â")
+    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â") ||
+    lower.startsWith("yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -474,6 +491,7 @@ const buildProductBenchProvenancePacket = (manifest, productManualEdits = {}, pr
     "primary_use", "jewelry_type", "setting_ready",
     "chain_material", "chain_link_type", "wire_material", "character_marks",
     "primary_color", "secondary_colors", "color_pattern", "cut_type", "surface_finish",
+    "overall_solid_length_in",
     "treatment_status", "treated", "necklace_design",
     "found_object", "origin_location", "origin_page_handle",
     "collection_name", "collection_location", "collection_date",
@@ -665,7 +683,7 @@ const normalizeLoadedPlanAndAliases = (rawPlan, currentMetafields = {}, manualPr
     const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
     if (cfg?.type) return cfg.type;
     if (destKey === "custom.character_marks" || destKey === "custom.stone_story") return "list.single_line_text_field";
-    if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz") return "number_decimal";
+    if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz" || destKey === "custom.overall_solid_length_in") return "number_decimal";
     if (destKey === "custom.honest_flaws_and_character" || destKey === "custom.origin_story" || destKey === "custom.generated_description") return "multi_line_text_field";
     return "single_line_text_field";
   };
@@ -2900,7 +2918,7 @@ export function useMetaInjectorExecution({
                   const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
                   if (cfg?.type) return cfg.type;
                   if (destKey === "custom.character_marks" || destKey === "custom.stone_story") return "list.single_line_text_field";
-                  if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz") return "number_decimal";
+                  if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz" || destKey === "custom.overall_solid_length_in") return "number_decimal";
                   if (destKey === "custom.honest_flaws_and_character" || destKey === "custom.origin_story" || destKey === "custom.generated_description") return "multi_line_text_field";
                   return "single_line_text_field";
                 };
@@ -2912,6 +2930,14 @@ export function useMetaInjectorExecution({
                       manualEdits[targetId]?.["alt_text"] === true ||
                       approvals[targetId]?.["custom.alt_text"] !== undefined ||
                       approvals[targetId]?.["alt_text"] !== undefined
+                    );
+                  }
+                  if (destKey === "custom.overall_solid_length_in") {
+                    return (
+                      manualEdits[targetId]?.["custom.overall_solid_length_in"] === true ||
+                      manualEdits[targetId]?.["overall_solid_length_in"] === true ||
+                      approvals[targetId]?.["custom.overall_solid_length_in"] !== undefined ||
+                      approvals[targetId]?.["overall_solid_length_in"] !== undefined
                     );
                   }
                   if (manualEdits[targetId]?.[destKey] === true) return true;
@@ -2934,6 +2960,12 @@ export function useMetaInjectorExecution({
                   }
                   if (destKey === "custom.alt_text") {
                     return productHasExistingGeneralAlt;
+                  }
+                  if (destKey === "custom.overall_solid_length_in") {
+                    return (
+                      hasNonBlankValue(existing.currentMetafields?.["custom.overall_solid_length_in"]) ||
+                      hasNonBlankValue(existing.currentMetafields?.["overall_solid_length_in"])
+                    );
                   }
                   if (hasNonBlankValue(existing.currentMetafields?.[destKey])) return true;
                   const companions = ALIAS_COMPANION_LOOKUP[destKey] || [];
@@ -3015,6 +3047,35 @@ export function useMetaInjectorExecution({
                     newMetadata[targetKey] = {
                       source: sourceMeta.source || "Vision",
                       stage: sourceMeta.stage || "resolveStandardizedCandidates"
+                    };
+                    return;
+                  }
+
+                  // Dedicated photo-measurement staging branch for custom.overall_solid_length_in:
+                  // Only stages into an eligible blank destination when a complete finite positive numeric value in inches
+                  // is supplied by the photo measurement pass (while preserving writer/storage holds in constants/matrix-domain).
+                  if (targetKey === "custom.overall_solid_length_in") {
+                    const strictPhotoInches = parseStrictCompletePositiveSolidLengthInClient(rawAiValue);
+                    if (!strictPhotoInches) return;
+                    if (stagedByCanonicalInThisPass[targetKey] !== undefined) {
+                      const priorStaged = stagedByCanonicalInThisPass[targetKey];
+                      if (priorStaged.value !== strictPhotoInches) {
+                        newConflicts[targetKey] = {
+                          expected: priorStaged.value,
+                          actual: `${rawKeyName}: ${strictPhotoInches}`
+                        };
+                      }
+                      return;
+                    }
+                    stagedByCanonicalInThisPass[targetKey] = {
+                      value: strictPhotoInches,
+                      rawKey: rawKeyName,
+                      isDirectCanonical: rawKeyName === targetKey || rawKeyName === "overall_solid_length_in"
+                    };
+                    newPlan[targetKey] = strictPhotoInches;
+                    newMetadata[targetKey] = {
+                      source: "Measured from photo",
+                      stage: sourceMeta.stage || "tab3FullRescan"
                     };
                     return;
                   }
@@ -3125,6 +3186,9 @@ export function useMetaInjectorExecution({
 
                 const resolveFieldSourceMeta = (rawKey, defaultSource, defaultStage) => {
                   const bare = rawKey.replace(/^custom\./, "");
+                  if (bare === "overall_solid_length_in") {
+                    return { source: "Measured from photo", stage: defaultStage };
+                  }
                   if (GEOLOGY_FIELD_KEYS.has(bare)) {
                     if (isVerifiedDbOrLibraryGeo && Object.prototype.hasOwnProperty.call(sanitizedVerifiedGeo, bare)) {
                       return { source: geoSourceName === "library" ? "Geo Library" : "Database", stage: defaultStage };

@@ -143,6 +143,136 @@ const parseStrictExactMetaobjectGidJsonArray = (rawVal) => {
   return gids;
 };
 
+const parseStrictCompletePositiveSolidLengthInDomain = (rawVal) => {
+  if (typeof rawVal !== "number" && typeof rawVal !== "string") return null;
+  let num;
+  if (typeof rawVal === "number") {
+    num = rawVal;
+  } else {
+    const trimmed = rawVal.trim();
+    if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed)) return null;
+    num = Number(trimmed);
+  }
+  if (!Number.isFinite(num) || num <= 0) return null;
+  const rounded = Number(num.toFixed(4));
+  if (rounded <= 0) return null;
+  return rounded;
+};
+
+const readEffectiveFieldTextFromManifest = (safeData, fullKey, bareKey = "") => {
+  const planVal =
+    safeData?.repairPlan && typeof safeData.repairPlan === "object"
+      ? (safeData.repairPlan[fullKey] !== undefined
+          ? safeData.repairPlan[fullKey]
+          : (bareKey ? safeData.repairPlan[bareKey] : undefined))
+      : undefined;
+  if (planVal !== undefined && planVal !== null && String(planVal).trim() !== "") {
+    return String(planVal).trim();
+  }
+  const storedVal =
+    safeData?.currentMetafields && typeof safeData.currentMetafields === "object"
+      ? (safeData.currentMetafields[fullKey] !== undefined
+          ? safeData.currentMetafields[fullKey]
+          : (bareKey ? safeData.currentMetafields[bareKey] : undefined))
+      : undefined;
+  if (storedVal !== undefined && storedVal !== null && String(storedVal).trim() !== "") {
+    return String(storedVal).trim();
+  }
+  return "";
+};
+
+const isAffirmativeFeatureToken = (val) => {
+  const trimmed = String(val || "").trim();
+  if (!trimmed) return false;
+  if (/^(no|false|0|none|n\/a|unknown|not\s+applicable)$/i.test(trimmed)) return false;
+  return true;
+};
+
+const evaluateMissingMeasurementFeatureContext = (targetKey, safeData) => {
+  if (!safeData || typeof safeData !== "object") {
+    return { applicable: false, reason: "" };
+  }
+
+  const materialVal =
+    readEffectiveFieldTextFromManifest(safeData, "custom.material", "material") ||
+    readEffectiveFieldTextFromManifest(safeData, "custom.stone_family", "stone_family") ||
+    readEffectiveFieldTextFromManifest(safeData, "custom.primary_medium", "primary_medium");
+  const hasStoneIdentity =
+    Boolean(materialVal) && !isSettingOrHardwareMediumTokenInDomain(materialVal);
+
+  const settingReadyVal = readEffectiveFieldTextFromManifest(safeData, "custom.setting_ready", "setting_ready");
+  const bailIncludedVal = readEffectiveFieldTextFromManifest(safeData, "custom.bail_included", "bail_included");
+  const findingTypeVal = readEffectiveFieldTextFromManifest(safeData, "custom.jewelry_finding_type", "jewelry_finding_type");
+  const wireMaterialVal = readEffectiveFieldTextFromManifest(safeData, "custom.wire_material", "wire_material");
+  const chainMaterialVal = readEffectiveFieldTextFromManifest(safeData, "custom.chain_material", "chain_material");
+  const chainLinkVal = readEffectiveFieldTextFromManifest(safeData, "custom.chain_link_type", "chain_link_type");
+  const jewelryTypeVal = readEffectiveFieldTextFromManifest(safeData, "custom.jewelry_type", "jewelry_type");
+  const dimensionsVal = readEffectiveFieldTextFromManifest(safeData, "custom.dimensions_mm", "dimensions_mm");
+  const weightGramsVal = readEffectiveFieldTextFromManifest(safeData, "custom.weight_grams", "weight_grams");
+
+  const hasMountedOrSolidHardwareFeature =
+    isAffirmativeFeatureToken(settingReadyVal) ||
+    isAffirmativeFeatureToken(bailIncludedVal) ||
+    isAffirmativeFeatureToken(findingTypeVal) ||
+    isAffirmativeFeatureToken(wireMaterialVal) ||
+    (isAffirmativeFeatureToken(jewelryTypeVal) && /^(pendant|necklace|artisan\s+jewelry|fine\s+jewelry)$/i.test(jewelryTypeVal.trim()));
+
+  const hasChainOrCordFeature =
+    isAffirmativeFeatureToken(chainMaterialVal) ||
+    isAffirmativeFeatureToken(chainLinkVal);
+
+  const hasBailOrFindingFeature =
+    isAffirmativeFeatureToken(bailIncludedVal) ||
+    isAffirmativeFeatureToken(findingTypeVal);
+
+  if (targetKey === "custom.dimensions_mm" || targetKey === "dimensions_mm") {
+    if (hasStoneIdentity || isAffirmativeFeatureToken(weightGramsVal)) {
+      return {
+        applicable: true,
+        reason: "Missing measurement requires review: stone/product dimensions (mm) are blank on a stone-bearing product."
+      };
+    }
+  }
+
+  if (targetKey === "custom.weight_grams" || targetKey === "weight_grams") {
+    if (hasStoneIdentity || isAffirmativeFeatureToken(dimensionsVal)) {
+      return {
+        applicable: true,
+        reason: "Missing measurement requires review: stone weight (grams) is blank on a stone-bearing product."
+      };
+    }
+  }
+
+  if (targetKey === "custom.overall_solid_length_in" || targetKey === "overall_solid_length_in") {
+    if (hasMountedOrSolidHardwareFeature) {
+      return {
+        applicable: true,
+        reason: "Missing measurement requires review: overall solid-product length (in) was not readable from a photo measuring tape and no measured value is present."
+      };
+    }
+  }
+
+  if (targetKey === "custom.chain_cord_length_in" || targetKey === "chain_cord_length_in") {
+    if (hasChainOrCordFeature) {
+      return {
+        applicable: true,
+        reason: "Missing measurement requires review: chain/cord hardware is present on this product, but chain_cord_length_in is blank."
+      };
+    }
+  }
+
+  if (targetKey === "custom.fitting_opening_mm" || targetKey === "fitting_opening_mm") {
+    if (hasBailOrFindingFeature) {
+      return {
+        applicable: true,
+        reason: "Missing measurement requires review: bail/finding hardware is present on this product, but fitting_opening_mm is blank."
+      };
+    }
+  }
+
+  return { applicable: false, reason: "" };
+};
+
 export const hasVerifiedLoadedDestinationBaseline = (destKey, data, expectedProductId) => {
   if (!data || typeof data !== "object") return false;
   if (!isExactProductGidString(expectedProductId)) return false;
@@ -417,7 +547,7 @@ const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field"
     lower === "one of a kind" ||
     lower.startsWith("yes —") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â")
+    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -1958,6 +2088,11 @@ export const evaluateFieldMetadata = ({
     key === "alt_text" ||
     targetKeyForProposal === "custom.alt_text" ||
     approvalStorageKey === "custom.alt_text";
+  const isOverallSolidLengthField =
+    key === "custom.overall_solid_length_in" ||
+    key === "overall_solid_length_in" ||
+    targetKeyForProposal === "custom.overall_solid_length_in" ||
+    approvalStorageKey === "custom.overall_solid_length_in";
   const isNativeImageAlt = key.startsWith("native_image_alts_");
   const isImageAltCapabilityPlaceholder = key === "native_image_alt";
   const isShippingWeightField = key === "native_shipping_weight" || key === "custom.shipping_weight_oz";
@@ -2137,8 +2272,8 @@ export const evaluateFieldMetadata = ({
     (isDestinationSpecificApprovalField
       ? (ownerManualEditsMap[key] === true || ownerManualEditsMap[approvalStorageKey] === true)
       : (ownerManualEditsMap[key] === true ||
-          ownerManualEditsMap[targetKeyForProposal] === true ||
-          (approvalStorageKey && ownerManualEditsMap[approvalStorageKey] === true)))
+         ownerManualEditsMap[targetKeyForProposal] === true ||
+         (approvalStorageKey && ownerManualEditsMap[approvalStorageKey] === true)))
   );
 
   let currentVal = "";
@@ -2240,6 +2375,7 @@ export const evaluateFieldMetadata = ({
   let isProposed = false;
   let propVal = "";
   let shippingProposalState = null;
+  let invalidOverallSolidLengthProposal = false;
 
   if (isImageAltCapabilityPlaceholder || isParkedExcluded) {
       isProposed = false;
@@ -2252,6 +2388,31 @@ export const evaluateFieldMetadata = ({
           } else if (Object.prototype.hasOwnProperty.call(safeData.repairPlan, "alt_text")) {
               isProposed = true;
               propVal = serializeFieldValueByType(safeData.repairPlan["alt_text"], expectedType, "custom.alt_text");
+          }
+      }
+  } else if (isOverallSolidLengthField) {
+      // Allow a staged custom.overall_solid_length_in proposal (e.g. from "Measured from photo" or manual bench edit)
+      // to surface in the review system while preserving its storage/writer hold.
+      if (safeData.repairPlan && typeof safeData.repairPlan === "object") {
+          const hasFullProp = Object.prototype.hasOwnProperty.call(safeData.repairPlan, "custom.overall_solid_length_in");
+          const hasBareProp = Object.prototype.hasOwnProperty.call(safeData.repairPlan, "overall_solid_length_in");
+          if (hasFullProp || hasBareProp) {
+              const rawSolidProp = hasFullProp
+                ? safeData.repairPlan["custom.overall_solid_length_in"]
+                : safeData.repairPlan["overall_solid_length_in"];
+              const rawSolidStr = rawSolidProp === undefined || rawSolidProp === null ? "" : String(rawSolidProp).trim();
+              isProposed = true;
+              if (rawSolidStr !== "") {
+                  const strictParsedIn = parseStrictCompletePositiveSolidLengthInDomain(rawSolidProp);
+                  if (strictParsedIn !== null) {
+                      propVal = String(strictParsedIn);
+                  } else {
+                      propVal = rawSolidStr;
+                      invalidOverallSolidLengthProposal = true;
+                  }
+              } else {
+                  propVal = "";
+              }
           }
       }
   } else if (key === "native_description") {
@@ -2321,24 +2482,26 @@ export const evaluateFieldMetadata = ({
           : {}) ||
         {})
     : (safeData.metadata?.[key] || safeData.metadata?.[targetKeyForProposal] || {});
-  let source =
-    fieldMeta.source ||
-    (isVerifiedStdDest && isProposed
-      ? "Vision"
-      : shippingProposalState?.isDerived
-        ? "Derived"
-        : isManuallyEdited
-          ? "Manual"
-          : "Not reported");
-  let stage =
-    fieldMeta.stage ||
-    (isVerifiedStdDest && isProposed
-      ? "resolveStandardizedCandidates"
-      : shippingProposalState?.isDerived
-        ? "complete_product_weight_calculation"
-        : isManuallyEdited
-          ? "ManualEdit"
-          : "Not reported");
+  let source = isManuallyEdited
+    ? "Manual"
+    : (fieldMeta.source ||
+        (isVerifiedStdDest && isProposed
+          ? "Vision"
+          : shippingProposalState?.isDerived
+            ? "Derived"
+            : (isOverallSolidLengthField && isProposed && String(propVal ?? "").trim() !== ""
+                ? "Measured from photo"
+                : "Not reported")));
+  let stage = isManuallyEdited
+    ? "ManualEdit"
+    : (fieldMeta.stage ||
+        (isVerifiedStdDest && isProposed
+          ? "resolveStandardizedCandidates"
+          : shippingProposalState?.isDerived
+            ? "complete_product_weight_calculation"
+            : (isOverallSolidLengthField && isProposed && String(propVal ?? "").trim() !== ""
+                ? "tab3FullRescan"
+                : "Not reported")));
 
   const isOneTimeCleanupStaged = stage === "OneTimeStockBezelCleanup";
 
@@ -2364,6 +2527,14 @@ export const evaluateFieldMetadata = ({
 
   const isEqualToCurrent = (() => {
     if (!currentExists || !proposalExists) return false;
+    if (isOverallSolidLengthField) {
+      const currIn = parseStrictCompletePositiveSolidLengthInDomain(currentVal);
+      const propIn = parseStrictCompletePositiveSolidLengthInDomain(propVal);
+      if (currIn !== null && propIn !== null) {
+        return currIn === propIn;
+      }
+      return currentVal === propVal;
+    }
     if (key === "native_shipping_weight" && isSingleVariant) {
       const w = variants[0]?.node?.inventoryItem?.measurement?.weight;
       const propNum = Number(propVal);
@@ -2427,7 +2598,7 @@ export const evaluateFieldMetadata = ({
     !isUnselectedDraftMode &&
     !isImageAltCapabilityPlaceholder &&
     !isParkedExcluded &&
-    !hasContractOrOwnerHold &&
+    (!hasContractOrOwnerHold || isOverallSolidLengthField) &&
     hasLoadedBaseline &&
     proposalExists &&
     !isEqualToCurrent &&
@@ -2440,8 +2611,8 @@ export const evaluateFieldMetadata = ({
       proposalExists
     });
 
-  // Never auto-preapprove description destinations, custom.alt_text compatibility fields, one-time cleanup staged proposals,
-  // standardized reference proposals, image-alt placeholders, parked fields, or fields under contract/owner hold.
+  // Never auto-preapprove description destinations, custom.alt_text compatibility fields, photo-based solid length measurements,
+  // one-time cleanup staged proposals, standardized reference proposals, image-alt placeholders, parked fields, or fields under contract/owner hold.
   if (
     !hasContractOrOwnerHold &&
     !isParkedExcluded &&
@@ -2449,6 +2620,7 @@ export const evaluateFieldMetadata = ({
     !isImageAltCapabilityPlaceholder &&
     !isDescriptionDestination &&
     !isGeneralAltCompatField &&
+    !isOverallSolidLengthField &&
     !isOneTimeCleanupStaged
   ) {
       if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
@@ -2485,10 +2657,13 @@ export const evaluateFieldMetadata = ({
     targetKeyForProposal === "price" ||
     targetKeyForProposal === "custom.weight_grams" ||
     targetKeyForProposal === "custom.dimensions_mm" ||
+    targetKeyForProposal === "custom.overall_solid_length_in" ||
     hasExplicitStorageHold
   );
   
-  // Destination-specific approval lookup: mutually exclusive with a valid Keep-Original decision
+  // Destination-specific approval lookup: mutually exclusive with a valid Keep-Original decision.
+  // For custom.overall_solid_length_in, preserve exact-value operator approval (and invalidation on edit)
+  // even while the storage/writer hold remains active.
   const exactApprovalVal = effectiveApprovalLookupId
     ? (isDestinationSpecificApprovalField
         ? currentApprovals?.[effectiveApprovalLookupId]?.[approvalStorageKey]
@@ -2503,8 +2678,9 @@ export const evaluateFieldMetadata = ({
     !isKeepOriginalSelected &&
     !isParkedExcluded &&
     !isImageAltCapabilityPlaceholder &&
-    !hasContractOrOwnerHold &&
+    (!hasContractOrOwnerHold || isOverallSolidLengthField) &&
     (hasLoadedBaseline || isUnselectedDraftMode) &&
+    (!isOverallSolidLengthField || !invalidOverallSolidLengthProposal) &&
     (!isVerifiedStdDest || (Boolean(stdEvaluation?.isTechnicallyEligible) && isCategoryEligible)) &&
     exactApprovalVal !== undefined &&
     String(exactApprovalVal) === propVal &&
@@ -2535,11 +2711,12 @@ export const evaluateFieldMetadata = ({
   let contentNeedsReview = false;
 
   // Require explicit exact-value operator approval for changed proposals on native_description, custom.generated_description,
-  // custom.alt_text, one-time cleanup staged proposals, custom.jewelry_type, custom.wire_material, and native_seo_description.
+  // custom.alt_text, custom.overall_solid_length_in, one-time cleanup staged proposals, custom.jewelry_type, custom.wire_material, and native_seo_description.
   if (
     !isParkedExcluded &&
     (isDescriptionDestination ||
       isGeneralAltCompatField ||
+      isOverallSolidLengthField ||
       isOneTimeCleanupStaged ||
       targetKeyForProposal === "custom.jewelry_type" ||
       targetKeyForProposal === "custom.wire_material" ||
@@ -2573,6 +2750,15 @@ export const evaluateFieldMetadata = ({
   }
   
   if (isIntegration) reasons.push("Integration owned");
+
+  if (!isParkedExcluded && isOverallSolidLengthField && proposalExists) {
+      if (invalidOverallSolidLengthProposal) {
+          hasTechnicalBlock = true;
+          reasons.push("Overall solid-product length must be a complete finite positive numeric value in decimal inches (excluding 18-inch chain/cord).");
+      } else if (source === "Measured from photo") {
+          reasons.push(`Measured from photo (${stage}) — verify measuring tape markings, units, and solid-product endpoints`);
+      }
+  }
 
   if (isParkedExcluded) {
       hasTechnicalBlock = true;
@@ -2715,6 +2901,12 @@ export const evaluateFieldMetadata = ({
       }
   }
 
+  // Evaluate missing measurement review requirement when the relevant physical feature is present on the product
+  const missingMeasurementContext =
+    !isParkedExcluded && !currentExists && !proposalExists
+      ? evaluateMissingMeasurementFeatureContext(targetKeyForProposal, safeData)
+      : { applicable: false, reason: "" };
+
   // Content Review Status Evaluation
   if (isParkedExcluded) {
       fieldStatus = currentExists ? "Unchanged" : "Optional blank";
@@ -2748,8 +2940,17 @@ export const evaluateFieldMetadata = ({
       }
   } else {
       if (!proposalExists) {
-          fieldStatus = isRequired ? "Required missing" : "Optional blank";
-          if (isRequired) reasons.push("Required missing");
+          if (isRequired || missingMeasurementContext.applicable) {
+              fieldStatus = "Required missing";
+              contentNeedsReview = true;
+              if (missingMeasurementContext.applicable && missingMeasurementContext.reason) {
+                  reasons.push(missingMeasurementContext.reason);
+              } else {
+                  reasons.push("Required missing");
+              }
+          } else {
+              fieldStatus = "Optional blank";
+          }
       } else {
           if (source === "Not reported") {
               contentNeedsReview = true;
@@ -2802,7 +3003,7 @@ export const evaluateFieldMetadata = ({
     proposalExists &&
     !isEqualToCurrent &&
     !isManualOnly &&
-    !hasContractOrOwnerHold &&
+    (!hasContractOrOwnerHold || isOverallSolidLengthField) &&
     !apiBlockReason &&
     !conflictData &&
     !nativeDescConflictData
@@ -2815,7 +3016,7 @@ export const evaluateFieldMetadata = ({
               reasons.push("Use original saved value selected (suggestion rejected; omitted from save payload)");
           }
       } else if (isApproved) {
-          if (hasTechnicalBlock) {
+          if (hasTechnicalBlock || hasContractOrOwnerHold) {
               fieldStatus = "Approved, blocked";
               isBlockedAction = true;
           } else {
@@ -2824,7 +3025,7 @@ export const evaluateFieldMetadata = ({
               contentNeedsReview = false;
           }
       } else if (isContentPreApproved) {
-          if (hasTechnicalBlock) {
+          if (hasTechnicalBlock || hasContractOrOwnerHold) {
               fieldStatus = "Pre-approved, blocked";
               isBlockedAction = true;
           } else {
@@ -2833,7 +3034,7 @@ export const evaluateFieldMetadata = ({
               contentNeedsReview = false;
           }
       } else {
-          if (contentNeedsReview || hasTechnicalBlock) {
+          if (contentNeedsReview || hasTechnicalBlock || hasContractOrOwnerHold) {
               isBlockedAction = true;
           } else {
               isBlockedAction = false; 
@@ -2861,7 +3062,7 @@ export const evaluateFieldMetadata = ({
     !isUnselectedDraftMode &&
     !isParkedExcluded &&
     !isImageAltCapabilityPlaceholder &&
-    !hasContractOrOwnerHold &&
+    (!hasContractOrOwnerHold || isOverallSolidLengthField) &&
     !isManualOnly &&
     hasLoadedBaseline &&
     baselineDescriptor.evidenceAvailable &&
@@ -2879,7 +3080,7 @@ export const evaluateFieldMetadata = ({
     isBlockedAction && 
     !isManualOnly && 
     !isImageAltCapabilityPlaceholder &&
-     (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow)) &&
+    (!isPendingReadOnly || (isVerifiedStdDest && hasStagedCandidateForRow) || (isOverallSolidLengthField && proposalExists && !isEqualToCurrent)) &&
     (!isStandardizedAttribute || isVerifiedStdDest) &&
     !treatAsHiddenContext && 
     ((proposalExists && !isEqualToCurrent) || (isVerifiedStdDest && hasStagedCandidateForRow && hasTechnicalBlock));
@@ -2892,12 +3093,12 @@ export const evaluateFieldMetadata = ({
     !proposalExists &&
     !isParkedExcluded &&
     !isImageAltCapabilityPlaceholder &&
-    !hasContractOrOwnerHold &&
+    (!hasContractOrOwnerHold || isOverallSolidLengthField) &&
     !isManualOnly &&
     isKnownKey
   );
 
-  // Only report Applicable/Inapplicable when explicit existing evidence (e.g. category eligibility) proves it; never infer from blank/false/zero
+  // Only report Applicable/Inapplicable when explicit existing evidence (e.g. category eligibility or physical feature context) proves it; never infer from blank/false/zero
   const applicabilityState = isParkedExcluded
     ? {
         status: "Parked / Excluded",
@@ -2907,7 +3108,7 @@ export const evaluateFieldMetadata = ({
     : isGeneralAltCompatField
       ? {
           status: hasExistingGeneralAltOnProduct ? "Applicable" : "Not evaluated",
-          tone: hasExistingGeneralAltOnProduct ? "info" : "info",
+          tone: "info",
           reason: hasExistingGeneralAltOnProduct
             ? "Existing product-level general alt compatibility metafield (custom.alt_text)"
             : "Compatibility representation (absent on this product)"
@@ -2924,11 +3125,17 @@ export const evaluateFieldMetadata = ({
                 tone: "success",
                 reason: categoryEligibility.reason || "Confirmed eligible for this product's taxonomy category"
               })
-        : {
-            status: "Not evaluated",
-            tone: "info",
-            reason: "Applicability not evaluated"
-          };
+        : missingMeasurementContext.applicable
+          ? {
+              status: "Applicable",
+              tone: "warning",
+              reason: missingMeasurementContext.reason
+            }
+          : {
+              status: "Not evaluated",
+              tone: "info",
+              reason: "Applicability not evaluated"
+            };
 
   return { 
     currentVal, propVal, isProposed, fieldStatus, proposalStatus, source, stage, 
@@ -3171,11 +3378,15 @@ export const computeDiagnosticsStats = ({
 
           if (meta.isManualOnly) stats.manualOnly++;
 
+          const isInspectableHeldSolidLength =
+            (k === "custom.overall_solid_length_in" || k === "overall_solid_length_in") &&
+            meta.proposalExists &&
+            meta.currentVal !== meta.propVal;
+
           const eligibleForStats =
             !meta.isParkedExcluded &&
             !meta.isImageAltCapabilityPlaceholder &&
-            !meta.isPendingReadOnly &&
-            !meta.hasExplicitStorageHold &&
+            ((!meta.isPendingReadOnly && !meta.hasExplicitStorageHold) || isInspectableHeldSolidLength) &&
             !meta.hasExplicitProducerHold &&
             !meta.isChannelFlagReadOnly &&
             !meta.isVariantMetafieldHold &&
@@ -3192,7 +3403,8 @@ export const computeDiagnosticsStats = ({
               meta.fieldStatus === "Approved, not saved" ||
               meta.fieldStatus === "Approved, blocked" ||
               meta.fieldStatus === "Pre-approved, not saved" ||
-              meta.fieldStatus === "Pre-approved, blocked")
+              meta.fieldStatus === "Pre-approved, blocked" ||
+              (isInspectableHeldSolidLength && meta.fieldStatus === "Blocked"))
           ) {
               stats.proposed++;
           }
@@ -3239,6 +3451,8 @@ export const computeDiagnosticsStats = ({
               meta.fieldStatus === "Pre-approved, not saved") &&
             !meta.isKeepOriginalSelected &&
             !meta.isBlockedAction &&
+            !meta.hasExplicitStorageHold &&
+            !meta.isPendingReadOnly &&
             eligibleForStats &&
             !HIDDEN_CONTEXT_FIELDS.includes(k)
           ) {
