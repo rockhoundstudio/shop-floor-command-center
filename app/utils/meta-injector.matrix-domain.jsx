@@ -151,7 +151,7 @@ const parseStrictCompletePositiveSolidLengthInDomain = (rawVal) => {
   } else {
     const trimmed = rawVal.trim();
     if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed)) return null;
-    num = Number(trimmed);
+     num = Number(trimmed);
   }
   if (!Number.isFinite(num) || num <= 0) return null;
   const rounded = Number(num.toFixed(4));
@@ -545,9 +545,9 @@ const normalizeOoakComparable = (rawVal, expectedType = "single_line_text_field"
     lower === "1" ||
     lower === "one-of-a-kind" ||
     lower === "one of a kind" ||
-    lower.startsWith("yes —") ||
+    lower.startsWith("yes \u2014") ||
     lower.startsWith("yes -") ||
-    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â")
+    lower.startsWith("yes ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬ ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â")
   ) {
     return expectedType === "boolean" ? "true" : "Yes";
   }
@@ -1422,10 +1422,10 @@ const transformPlainTextBezelClaims = (rawText) => {
       }
     },
     {
-      regex: /\bbezel\s+setting\s*[—–-]\s*ready\s+to\s+wear\b/gi,
+      regex: /\bbezel\s+setting\s*[\u2014\u2013-]\s*ready\s+to\s+wear\b/gi,
       replace: (m) => {
         matchedPhrases.push(m);
-        return applyCaseAwareReplacement(m, "glue-on setting — ready to wear");
+        return applyCaseAwareReplacement(m, "glue-on setting \u2014 ready to wear");
       }
     },
     {
@@ -1615,7 +1615,7 @@ const evaluateHardwareFieldBezelCleanup = (destKey, rawStoredVal) => {
   }
 
   if (destKey === "custom.setting_ready") {
-    if (/^bezel\s+setting\s*[—–-]\s*ready\s+to\s+wear$/i.test(strVal) || /^bezel\s+setting$/i.test(strVal)) {
+    if (/^bezel\s+setting\s*[\u2014\u2013-]\s*ready\s+to\s+wear$/i.test(strVal) || /^bezel\s+setting$/i.test(strVal)) {
       return {
         status: "replaced",
         after: "Yes",
@@ -2477,11 +2477,37 @@ export const evaluateFieldMetadata = ({
   let fieldMeta = isDestinationSpecificApprovalField
     ? (safeData.metadata?.[key] ||
         safeData.metadata?.[approvalStorageKey] ||
-        (key === "native_description" && !Object.prototype.hasOwnProperty.call(safeData.repairPlan || {}, "native_description")
+        (key === "native_description" &&
+        !Object.prototype.hasOwnProperty.call(safeData.repairPlan || {}, "native_description") &&
+        safeData.metadata?.["custom.generated_description"]?.destinationOnly !== true
           ? safeData.metadata?.["custom.generated_description"]
-          : {}) ||
+          : null) ||
+        (key === "native_seo_title" &&
+        !Object.prototype.hasOwnProperty.call(safeData.repairPlan || {}, "native_seo_title")
+          ? safeData.metadata?.["custom.seo_title"]
+          : null) ||
         {})
     : (safeData.metadata?.[key] || safeData.metadata?.[targetKeyForProposal] || {});
+
+  // Recognize JSON-import provenance across the field key, canonical proposal target, and destination approval key
+  // (respecting destinationOnly on custom.generated_description so independent cleanup proposals do not bleed across destinations).
+  const isJsonCorrectionImportStaged = Boolean(
+    !isParkedExcluded &&
+    !isImageAltCapabilityPlaceholder &&
+    (fieldMeta?.stage === "Tab3JsonCorrectionImport" ||
+      safeData.metadata?.[key]?.stage === "Tab3JsonCorrectionImport" ||
+      safeData.metadata?.[approvalStorageKey]?.stage === "Tab3JsonCorrectionImport" ||
+      (!isDestinationSpecificApprovalField &&
+        safeData.metadata?.[targetKeyForProposal]?.stage === "Tab3JsonCorrectionImport") ||
+      (key === "native_description" &&
+        !Object.prototype.hasOwnProperty.call(safeData.repairPlan || {}, "native_description") &&
+        safeData.metadata?.["custom.generated_description"]?.destinationOnly !== true &&
+        safeData.metadata?.["custom.generated_description"]?.stage === "Tab3JsonCorrectionImport") ||
+      (key === "native_seo_title" &&
+        !Object.prototype.hasOwnProperty.call(safeData.repairPlan || {}, "native_seo_title") &&
+        safeData.metadata?.["custom.seo_title"]?.stage === "Tab3JsonCorrectionImport"))
+  );
+
   let source = isManuallyEdited
     ? "Manual"
     : (fieldMeta.source ||
@@ -2492,16 +2518,18 @@ export const evaluateFieldMetadata = ({
             : (isOverallSolidLengthField && isProposed && String(propVal ?? "").trim() !== ""
                 ? "Measured from photo"
                 : "Not reported")));
-  let stage = isManuallyEdited
-    ? "ManualEdit"
-    : (fieldMeta.stage ||
-        (isVerifiedStdDest && isProposed
-          ? "resolveStandardizedCandidates"
-          : shippingProposalState?.isDerived
-            ? "complete_product_weight_calculation"
-            : (isOverallSolidLengthField && isProposed && String(propVal ?? "").trim() !== ""
-                ? "tab3FullRescan"
-                : "Not reported")));
+  let stage = isJsonCorrectionImportStaged
+    ? "Tab3JsonCorrectionImport"
+    : isManuallyEdited
+      ? "ManualEdit"
+      : (fieldMeta.stage ||
+          (isVerifiedStdDest && isProposed
+            ? "resolveStandardizedCandidates"
+            : shippingProposalState?.isDerived
+              ? "complete_product_weight_calculation"
+              : (isOverallSolidLengthField && isProposed && String(propVal ?? "").trim() !== ""
+                  ? "tab3FullRescan"
+                  : "Not reported")));
 
   const isOneTimeCleanupStaged = stage === "OneTimeStockBezelCleanup";
 
@@ -2612,7 +2640,8 @@ export const evaluateFieldMetadata = ({
     });
 
   // Never auto-preapprove description destinations, custom.alt_text compatibility fields, photo-based solid length measurements,
-  // one-time cleanup staged proposals, standardized reference proposals, image-alt placeholders, parked fields, or fields under contract/owner hold.
+  // one-time cleanup staged proposals, JSON correction import staged proposals, standardized reference proposals, image-alt placeholders,
+  // parked fields, or fields under contract/owner hold.
   if (
     !hasContractOrOwnerHold &&
     !isParkedExcluded &&
@@ -2621,7 +2650,8 @@ export const evaluateFieldMetadata = ({
     !isDescriptionDestination &&
     !isGeneralAltCompatField &&
     !isOverallSolidLengthField &&
-    !isOneTimeCleanupStaged
+    !isOneTimeCleanupStaged &&
+    !isJsonCorrectionImportStaged
   ) {
       if (targetKeyForProposal === "custom.google_product_category" && proposalExists) {
           isContentPreApproved = true;
@@ -2691,6 +2721,7 @@ export const evaluateFieldMetadata = ({
         currentVal, propVal, isProposed, fieldStatus: "Hidden Source", proposalStatus, source, stage,
         isBlockedAction: true, reasons: ["Hidden Context"], currentExists, proposalExists, isApproved: false,
         isManuallyEdited: false, isTemporarilyClearedManualEdit: false,
+        isJsonCorrectionImportStaged: false,
         isKeepOriginalSelected: false, keepOriginalDecision: null, canKeepOriginal: false,
         isParkedExcluded: true, registryRole: templateConfig?.registryRole || "EXCLUDED_INPUT",
         registryOwner: templateConfig?.registryOwner || "PRODUCT",
@@ -2711,13 +2742,15 @@ export const evaluateFieldMetadata = ({
   let contentNeedsReview = false;
 
   // Require explicit exact-value operator approval for changed proposals on native_description, custom.generated_description,
-  // custom.alt_text, custom.overall_solid_length_in, one-time cleanup staged proposals, custom.jewelry_type, custom.wire_material, and native_seo_description.
+  // custom.alt_text, custom.overall_solid_length_in, one-time cleanup staged proposals, JSON correction import staged proposals,
+  // custom.jewelry_type, custom.wire_material, and native_seo_description.
   if (
     !isParkedExcluded &&
     (isDescriptionDestination ||
       isGeneralAltCompatField ||
       isOverallSolidLengthField ||
       isOneTimeCleanupStaged ||
+      isJsonCorrectionImportStaged ||
       targetKeyForProposal === "custom.jewelry_type" ||
       targetKeyForProposal === "custom.wire_material" ||
       key === "native_seo_description") &&
@@ -2738,7 +2771,7 @@ export const evaluateFieldMetadata = ({
       reasons.push(
         isGeneralAltCompatField
           ? "custom.alt_text compatibility metafield is not present on this product (only existing custom.alt_text values can be edited/saved)"
-          : `Baseline not loaded or unverified for ${approvalStorageKey} — reload product data before saving`
+          : `Baseline not loaded or unverified for ${approvalStorageKey} \u2014 reload product data before saving`
       );
   }
 
@@ -2756,7 +2789,7 @@ export const evaluateFieldMetadata = ({
           hasTechnicalBlock = true;
           reasons.push("Overall solid-product length must be a complete finite positive numeric value in decimal inches (excluding 18-inch chain/cord).");
       } else if (source === "Measured from photo") {
-          reasons.push(`Measured from photo (${stage}) — verify measuring tape markings, units, and solid-product endpoints`);
+          reasons.push(`Measured from photo (${stage}) \u2014 verify measuring tape markings, units, and solid-product endpoints`);
       }
   }
 
@@ -2765,8 +2798,8 @@ export const evaluateFieldMetadata = ({
       const ownerTag = templateConfig?.registryOwner || (isVariantMetafieldHold ? "PRODUCTVARIANT" : "PRODUCT");
       const identTag = templateConfig?.registryIdentity || key;
       const parkedReason = isVariantMetafieldHold
-        ? `Parked / excluded variant inventory (${ownerTag}:${identTag} — role: EXCLUDED_INPUT). Read-only inspection only; generation, approval, and writes disabled.`
-        : `Parked / excluded inventory (${ownerTag}:${identTag} — role: EXCLUDED_INPUT). Read-only inspection only; generation, approval, and writes disabled.`;
+        ? `Parked / excluded variant inventory (${ownerTag}:${identTag} \u2014 role: EXCLUDED_INPUT). Read-only inspection only; generation, approval, and writes disabled.`
+        : `Parked / excluded inventory (${ownerTag}:${identTag} \u2014 role: EXCLUDED_INPUT). Read-only inspection only; generation, approval, and writes disabled.`;
       reasons.push(parkedReason);
       if (!baselineDescriptor.evidenceAvailable && isVariantMetafieldHold) {
           reasons.push("Variant-owned metafield value is not loaded in product-level currentMetafields (reported as unavailable/absent, never fabricated).");
@@ -2798,11 +2831,11 @@ export const evaluateFieldMetadata = ({
               const catReason = typeof categoryEligibility.reason === "string" && categoryEligibility.reason.trim() !== ""
                 ? ` (${categoryEligibility.reason.trim()})`
                 : "";
-              reasons.push(`Standardized attribute read-only (pending_read_only) — Category-eligible for this product${catReason}`);
+              reasons.push(`Standardized attribute read-only (pending_read_only) \u2014 Category-eligible for this product${catReason}`);
           } else if (categoryEligibility.isComplete === true && categoryEligibility.isEligible === false) {
               reasons.push(stdEvaluation?.blockReason || "Blocked by product category constraint (Standardized attribute also pending_read_only)");
           } else {
-              reasons.push(stdEvaluation?.blockReason || "Standardized attribute read-only (pending_read_only) — Category eligibility check incomplete");
+              reasons.push(stdEvaluation?.blockReason || "Standardized attribute read-only (pending_read_only) \u2014 Category eligibility check incomplete");
           }
       } else {
           reasons.push("Standardized attribute read-only (pending_read_only)");
@@ -3142,6 +3175,7 @@ export const evaluateFieldMetadata = ({
     isBlockedAction, reasons, currentExists, proposalExists, isApproved,
     isManuallyEdited,
     isTemporarilyClearedManualEdit,
+    isJsonCorrectionImportStaged,
     isKeepOriginalSelected,
     keepOriginalDecision: isKeepOriginalSelected ? rawKeepOriginalDecision : null,
     canKeepOriginal,
@@ -3453,6 +3487,7 @@ export const computeDiagnosticsStats = ({
             !meta.isBlockedAction &&
             !meta.hasExplicitStorageHold &&
             !meta.isPendingReadOnly &&
+            (!meta.isJsonCorrectionImportStaged || meta.isApproved) &&
             eligibleForStats &&
             !HIDDEN_CONTEXT_FIELDS.includes(k)
           ) {
@@ -3571,6 +3606,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               !titleMeta.isKeepOriginalSelected &&
               !titleMeta.isBlockedAction &&
               !titleMeta.hasTechnicalBlock &&
+              (!titleMeta.isJsonCorrectionImportStaged || titleMeta.isApproved) &&
               titleMeta.proposalExists &&
               titleMeta.propVal !== titleMeta.currentVal
           ) {
@@ -3695,7 +3731,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               !nativeSeoMeta.isKeepOriginalSelected &&
               !nativeSeoMeta.isBlockedAction &&
               !nativeSeoMeta.hasTechnicalBlock &&
-              (nativeSeoMeta.isContentPreApproved || nativeSeoMeta.isApproved) &&
+              (nativeSeoMeta.isApproved || (!nativeSeoMeta.isJsonCorrectionImportStaged && nativeSeoMeta.isContentPreApproved)) &&
               nativeSeoMeta.proposalExists &&
               nativeSeoMeta.propVal !== nativeSeoMeta.currentVal
           ) {
@@ -3714,7 +3750,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
               !customSeoMeta.isKeepOriginalSelected &&
               !customSeoMeta.isBlockedAction &&
               !customSeoMeta.hasTechnicalBlock &&
-              (customSeoMeta.isContentPreApproved || customSeoMeta.isApproved) &&
+              (customSeoMeta.isApproved || (!customSeoMeta.isJsonCorrectionImportStaged && customSeoMeta.isContentPreApproved)) &&
               customSeoMeta.proposalExists &&
               customSeoMeta.propVal !== customSeoMeta.currentVal
           ) {
@@ -3760,6 +3796,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
           meta.owner === "variant_metafield"
       ) return;
       if (!meta.isSupported || meta.isManualOnly || meta.hasTechnicalBlock || meta.isBlockedAction) return;
+      if (meta.isJsonCorrectionImportStaged && !meta.isApproved) return;
       if (HIDDEN_CONTEXT_FIELDS.includes(key) || RETIRED_KEYS.includes(key) || NON_ORDINARY_COMPAT_AND_EXCLUDED_SET.has(key)) return;
       if (!meta.proposalExists) return;
 
@@ -3802,6 +3839,7 @@ export const buildRepairPayload = (manifest, product, currentId, currentApproval
                       !meta.isKeepOriginalSelected &&
                       !meta.isBlockedAction &&
                       !meta.hasTechnicalBlock &&
+                      (!meta.isJsonCorrectionImportStaged || meta.isApproved) &&
                       meta.proposalExists &&
                       meta.propVal !== meta.currentVal
                   ) {
