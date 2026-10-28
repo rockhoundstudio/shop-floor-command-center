@@ -57,6 +57,12 @@ import {
   useLiveBenchTelemetrySync
 } from "../utils/meta-injector.live-bench-sync.jsx";
 import {
+  MAX_CORRECTION_FILE_BYTES,
+  validateAndPlanTab3CorrectionImport,
+  applyPlannedCorrectionPatchToManifest,
+  verifyCommittedCorrectionPatch
+} from "../utils/meta-injector.correction-import.jsx";
+import {
   buildAndCopyMatrixTelemetry,
   copyCapturedTelemetryPart,
   downloadCapturedTelemetryReport
@@ -173,8 +179,21 @@ export function OperationsMatrixTab({ products }) {
   const [stockCleanupOutcomeReport, setStockCleanupOutcomeReport] = useState(null);
   const [stockCleanupInlineFeedback, setStockCleanupInlineFeedback] = useState(null);
 
+  // Merchant-Operated JSON Correction-File Import State
+  const [isCorrectionImportBusy, setIsCorrectionImportBusy] = useState(false);
+  const [correctionImportFeedback, setCorrectionImportFeedback] = useState(null);
+
   const stockCleanupFeedbackRef = useRef(null);
   const lastScrolledFeedbackIdRef = useRef(null);
+
+  const correctionFileInputRef = useRef(null);
+  const correctionImportFeedbackRef = useRef(null);
+  const lastScrolledCorrectionFeedbackIdRef = useRef(null);
+  const correctionImportLockRef = useRef(false);
+  const activeCorrectionReadTokenRef = useRef(null);
+  const pendingCorrectionCommitRef = useRef(null);
+  const importedCorrectionPacketsRef = useRef(new Map());
+  const latestCorrectionStateSnapshotRef = useRef(null);
 
   const isComponentMountedRef = useRef(true);
   const blurClearTimersRef = useRef(new Map());
@@ -195,6 +214,12 @@ export function OperationsMatrixTab({ products }) {
     return () => {
       isComponentMountedRef.current = false;
       clearPendingEditorBlurTimers(null);
+      activeCorrectionReadTokenRef.current = null;
+      if (pendingCorrectionCommitRef.current?.timeoutId) {
+        clearTimeout(pendingCorrectionCommitRef.current.timeoutId);
+      }
+      pendingCorrectionCommitRef.current = null;
+      correctionImportLockRef.current = false;
     };
   }, [clearPendingEditorBlurTimers]);
 
@@ -218,6 +243,26 @@ export function OperationsMatrixTab({ products }) {
       }
     }
   }, [stockCleanupInlineFeedback]);
+
+  // Bring the inline JSON correction import feedback banner into view once per explicit action if outside viewport
+  useEffect(() => {
+    if (!correctionImportFeedback?.id) return;
+    if (lastScrolledCorrectionFeedbackIdRef.current === correctionImportFeedback.id) return;
+    lastScrolledCorrectionFeedbackIdRef.current = correctionImportFeedback.id;
+
+    const node = correctionImportFeedbackRef.current;
+    if (!node || typeof node.getBoundingClientRect !== "function") return;
+    const rect = node.getBoundingClientRect();
+    const viewportHeight =
+      typeof window !== "undefined" && typeof window.innerHeight === "number"
+        ? window.innerHeight
+        : 800;
+    if (rect.top < 16 || rect.bottom > viewportHeight - 16) {
+      if (typeof node.scrollIntoView === "function") {
+        node.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }, [correctionImportFeedback]);
 
   const activeBenchIdRef = useRef(selectedBenchId);
   useEffect(() => {
@@ -590,6 +635,14 @@ export function OperationsMatrixTab({ products }) {
     setSelectedBenchId((prevId) => {
       if (prevId !== id) {
         activeDraftSeedRequestIdRef.current = null;
+        activeCorrectionReadTokenRef.current = null;
+        if (pendingCorrectionCommitRef.current?.timeoutId) {
+          clearTimeout(pendingCorrectionCommitRef.current.timeoutId);
+        }
+        pendingCorrectionCommitRef.current = null;
+        correctionImportLockRef.current = false;
+        setIsCorrectionImportBusy(false);
+        setCorrectionImportFeedback(null);
         clearPendingEditorBlurTimers(null);
         setRetainedFieldEditorsByOwner({});
         handleLiveSyncOnProductSwitch(prevId, id);
@@ -613,9 +666,17 @@ export function OperationsMatrixTab({ products }) {
       setTelemetryPublishNotice(null);
       clearPendingEditorBlurTimers(null);
       setRetainedFieldEditorsByOwner({});
+      activeCorrectionReadTokenRef.current = null;
+      if (pendingCorrectionCommitRef.current?.timeoutId) {
+        clearTimeout(pendingCorrectionCommitRef.current.timeoutId);
+      }
+      pendingCorrectionCommitRef.current = null;
+      correctionImportLockRef.current = false;
+      setIsCorrectionImportBusy(false);
     }
     if (isLoadingData) {
       setKeepOriginalDecisions({});
+      importedCorrectionPacketsRef.current.clear();
     }
     if (isLoadingData && !lastNotifiedSelectionClearRef.current) {
       sendLiveBenchSelectionClear();
@@ -809,6 +870,15 @@ export function OperationsMatrixTab({ products }) {
 
   const clearBench = useCallback(() => {
     activeDraftSeedRequestIdRef.current = null;
+    activeCorrectionReadTokenRef.current = null;
+    if (pendingCorrectionCommitRef.current?.timeoutId) {
+      clearTimeout(pendingCorrectionCommitRef.current.timeoutId);
+    }
+    pendingCorrectionCommitRef.current = null;
+    correctionImportLockRef.current = false;
+    importedCorrectionPacketsRef.current.clear();
+    setIsCorrectionImportBusy(false);
+    setCorrectionImportFeedback(null);
     clearPendingEditorBlurTimers(null);
     setRetainedFieldEditorsByOwner({});
     handleLiveSyncOnClearBench();
@@ -1260,7 +1330,7 @@ export function OperationsMatrixTab({ products }) {
         id: `cleanup_fb_${Date.now()}`,
         kind: "no_selection",
         tone: "warning",
-        title: "0 candidates selected — nothing staged",
+        title: "0 candidates selected â€” nothing staged",
         message: "No previewed cleanup candidates are selected. Expand Candidate Details below and check at least one candidate, or click 'Select All Candidates'."
       });
       return;
@@ -1378,7 +1448,7 @@ export function OperationsMatrixTab({ products }) {
         return;
       }
 
-      // Preserve existing manual edits, explicit approvals, and Keep Original decisions — never overwrite them!
+      // Preserve existing manual edits, explicit approvals, and Keep Original decisions â€” never overwrite them!
       const prodManualMap = validObj(manualEdits?.[productId]);
       const prodApprovalsMap = validObj(approvals?.[productId]);
       const prodKeepMap = validObj(keepOriginalDecisions?.[productId]);
@@ -1428,7 +1498,7 @@ export function OperationsMatrixTab({ products }) {
           productTitle,
           destinationKey,
           fieldLabel,
-          reason: `Existing diverging proposal ("${liveMeta.propVal.slice(0, 80)}${liveMeta.propVal.length > 80 ? "…" : ""}") preserved; cleanup candidate was not staged over it.`
+          reason: `Existing diverging proposal ("${liveMeta.propVal.slice(0, 80)}${liveMeta.propVal.length > 80 ? "â€¦" : ""}") preserved; cleanup candidate was not staged over it.`
         });
         return;
       }
@@ -1534,12 +1604,12 @@ export function OperationsMatrixTab({ products }) {
     } else if (staleCount > 0 && preservedCount === 0) {
       feedbackTone = "critical";
       feedbackKind = "zero_staged_stale";
-      feedbackTitle = `0 proposals staged — ${staleCount} rejected as stale`;
+      feedbackTitle = `0 proposals staged â€” ${staleCount} rejected as stale`;
       feedbackMessage = "Underlying product baseline changed since the preview was captured. Click Preview again to refresh.";
     } else {
       feedbackTone = "warning";
       feedbackKind = "zero_staged_preserved";
-      feedbackTitle = `0 proposals staged — ${preservedCount} skipped (existing approval, edit, or AI proposal preserved)${staleCount > 0 ? ` | ${staleCount} stale` : ""}`;
+      feedbackTitle = `0 proposals staged â€” ${preservedCount} skipped (existing approval, edit, or AI proposal preserved)${staleCount > 0 ? ` | ${staleCount} stale` : ""}`;
       feedbackMessage = "Staging never overwrites an existing approval, manual edit, Keep Original choice, or diverging AI proposal. Expand skipped details below to see which fields were preserved.";
     }
 
@@ -2176,7 +2246,7 @@ export function OperationsMatrixTab({ products }) {
       let detailSummary = " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
       if (categoryBlockedDestinations.length > 0 || blockedDestList.length > 0) {
         const blockedDisplay = blockedDestList.length > 0 ? blockedDestList : categoryBlockedDestinations;
-        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} — candidate evidence and matched entries preserved).`;
+        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} â€” candidate evidence and matched entries preserved).`;
       }
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
@@ -3271,6 +3341,450 @@ export function OperationsMatrixTab({ products }) {
         !Object.prototype.hasOwnProperty.call(activeBenchData.repairPlan || {}, "native_description")))
   );
 
+  // ========================================================================
+  // MERCHANT-OPERATED JSON CORRECTION-FILE IMPORT HANDLERS & COMMIT CHECK
+  // ========================================================================
+
+  // Keep a live reference to React state & callbacks on every render; sync refs
+  // (`benchSessionIdRef`, `lastLiveStateRevisionRef`, `lastLiveStateDigestRef`, `lastLiveSyncedDigestRef`)
+  // are read directly from `.current` at validation time so they are never captured as stale primitives.
+  latestCorrectionStateSnapshotRef.current = {
+    selectedBenchId,
+    liveBenchSyncStatus,
+    isLoadingData,
+    isExecuting,
+    pendingOperation,
+    batchFetcherState: batchFetcher.state,
+    referenceMatchFetcherState: referenceMatchFetcher.state,
+    pendingReferenceMatch,
+    manifestData,
+    productStates,
+    approvals,
+    keepOriginalDecisions,
+    manualEdits,
+    repairHistory,
+    submittedPayloads,
+    standardizedCandidatesByProduct,
+    referenceMatchResultsByProduct,
+    referenceMatchStatusByProduct,
+    sectionAuditMeasurements,
+    hasIndependentDescriptionProposalsOnBench,
+    getStandardizedEvaluationForField,
+    releaseRetainedFieldEditorKeys
+  };
+
+  // Post-render commit verification for staged JSON correction imports
+  useEffect(() => {
+    const pendingCommit = pendingCorrectionCommitRef.current;
+    if (!pendingCommit) return;
+
+    const { patchPlan, timeoutId } = pendingCommit;
+    if (
+      !isComponentMountedRef.current ||
+      selectedBenchId !== patchPlan.productId ||
+      benchSessionIdRef.current !== patchPlan.benchSessionId
+    ) {
+      if (timeoutId) clearTimeout(timeoutId);
+      pendingCorrectionCommitRef.current = null;
+      correctionImportLockRef.current = false;
+      setIsCorrectionImportBusy(false);
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "critical",
+        status: "rejected",
+        title: "Import interrupted before commit verification",
+        message: "Active product or bench session changed before staged corrections could be verified.",
+        packetId: patchPlan.packetId,
+        fileName: patchPlan.fileName,
+        appliedItems: [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    const verifyRes = verifyCommittedCorrectionPatch({
+      plan: patchPlan,
+      selectedBenchId,
+      benchSessionId: benchSessionIdRef.current,
+      manifestData,
+      manualEdits,
+      approvals,
+      keepOriginalDecisions
+    });
+
+    if (!verifyRes.committed) {
+      return;
+    }
+
+    if (timeoutId) clearTimeout(timeoutId);
+    pendingCorrectionCommitRef.current = null;
+    correctionImportLockRef.current = false;
+    setIsCorrectionImportBusy(false);
+
+    // Record replay entry using the exact structure expected by validateAndPlanTab3CorrectionImport
+    importedCorrectionPacketsRef.current.set(patchPlan.replayKey, {
+      packetId: patchPlan.packetId,
+      productId: patchPlan.productId,
+      benchSessionId: patchPlan.benchSessionId,
+      contentDigest: patchPlan.contentDigest,
+      appliedTargets: patchPlan.appliedTargetsForReplay,
+      validatedItems: patchPlan.validatedItems,
+      importedAt: new Date().toISOString()
+    });
+
+    const appliedCount = patchPlan.validatedItems.length;
+    setCorrectionImportFeedback({
+      id: `corr_fb_${Date.now()}`,
+      tone: "success",
+      status: "applied",
+      title: `Staged ${appliedCount} draft correction${appliedCount === 1 ? "" : "s"} from "${patchPlan.fileName}" (Packet: ${patchPlan.packetId})`,
+      message:
+        "Corrections are staged in browser draft state as unapproved review items. Inspect the updated fields below, check Approve on each desired field, and click 'Execute Single Repair' to save to Shopify.",
+      packetId: patchPlan.packetId,
+      fileName: patchPlan.fileName,
+      appliedItems: patchPlan.validatedItems,
+      rejectedItems: []
+    });
+  }, [
+    selectedBenchId,
+    manifestData,
+    manualEdits,
+    approvals,
+    keepOriginalDecisions,
+    benchSessionIdRef
+  ]);
+
+  const handleOpenCorrectionFilePicker = useCallback(() => {
+    if (
+      correctionImportLockRef.current ||
+      pendingCorrectionCommitRef.current !== null ||
+      isCorrectionImportBusy ||
+      isLoadingData ||
+      isExecuting
+    ) {
+      return;
+    }
+    if (correctionFileInputRef.current) {
+      correctionFileInputRef.current.value = "";
+      correctionFileInputRef.current.click();
+    }
+  }, [isCorrectionImportBusy, isLoadingData, isExecuting]);
+
+  const handleCorrectionFileSelected = useCallback(async (event) => {
+    const inputNode = event?.target || correctionFileInputRef.current;
+    const selectedFile = inputNode?.files?.[0] || null;
+    if (inputNode) {
+      inputNode.value = "";
+    }
+    if (!selectedFile) {
+      return;
+    }
+
+    const safeName =
+      typeof selectedFile.name === "string" && selectedFile.name.trim()
+        ? selectedFile.name.trim()
+        : "corrections.json";
+
+    if (
+      correctionImportLockRef.current ||
+      pendingCorrectionCommitRef.current !== null
+    ) {
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "warning",
+        status: "rejected",
+        title: "Import already in progress",
+        message: "Wait for the current correction file import to finish before selecting another file.",
+        packetId: null,
+        fileName: safeName,
+        appliedItems: [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    const fileByteSize =
+      typeof selectedFile.size === "number" && Number.isFinite(selectedFile.size)
+        ? selectedFile.size
+        : null;
+
+    if (fileByteSize !== null && fileByteSize === 0) {
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "critical",
+        status: "rejected",
+        title: `Rejected "${safeName}" (empty_file)`,
+        message: `Correction file "${safeName}" is empty (0 bytes). No draft fields were modified.`,
+        packetId: null,
+        fileName: safeName,
+        appliedItems: [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    if (fileByteSize !== null && fileByteSize > MAX_CORRECTION_FILE_BYTES) {
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "critical",
+        status: "rejected",
+        title: `Rejected "${safeName}" (file_too_large)`,
+        message: `Correction file "${safeName}" (${fileByteSize} bytes) exceeds the ${MAX_CORRECTION_FILE_BYTES}-byte (256 KB) limit. No draft fields were modified.`,
+        packetId: null,
+        fileName: safeName,
+        appliedItems: [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    correctionImportLockRef.current = true;
+    const readToken = `corr_read_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    activeCorrectionReadTokenRef.current = readToken;
+    setIsCorrectionImportBusy(true);
+
+    let rawJsonText = "";
+    try {
+      rawJsonText = await selectedFile.text();
+    } catch (readErr) {
+      if (activeCorrectionReadTokenRef.current === readToken) {
+        activeCorrectionReadTokenRef.current = null;
+        correctionImportLockRef.current = false;
+        if (isComponentMountedRef.current) {
+          setIsCorrectionImportBusy(false);
+          setCorrectionImportFeedback({
+            id: `corr_fb_${Date.now()}`,
+            tone: "critical",
+            status: "rejected",
+            title: `Failed to read "${safeName}"`,
+            message: `Browser could not read "${safeName}": ${readErr?.message || "file read error"}. No draft fields were modified.`,
+            packetId: null,
+            fileName: safeName,
+            appliedItems: [],
+            rejectedItems: []
+          });
+        }
+      }
+      return;
+    }
+
+    // Verify component is still mounted and this read was not superseded by a product switch, clearBench, or load/execute start
+    if (
+      !isComponentMountedRef.current ||
+      activeCorrectionReadTokenRef.current !== readToken
+    ) {
+      return;
+    }
+    activeCorrectionReadTokenRef.current = null;
+
+    // Reacquire CURRENT live state and sync refs immediately after async file reading
+    const currentSnap = latestCorrectionStateSnapshotRef.current;
+    if (!currentSnap) {
+      correctionImportLockRef.current = false;
+      setIsCorrectionImportBusy(false);
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "critical",
+        status: "rejected",
+        title: "Bench state unavailable",
+        message: "Tab 3 live state snapshot is unavailable. No draft fields were modified.",
+        packetId: null,
+        fileName: safeName,
+        appliedItems: [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    const liveContext = {
+      selectedBenchId: activeBenchIdRef.current,
+      benchSessionId: benchSessionIdRef.current,
+      lastLiveStateRevision: lastLiveStateRevisionRef.current,
+      lastLiveStateDigest: lastLiveStateDigestRef.current,
+      lastLiveSyncedDigest: lastLiveSyncedDigestRef.current,
+      liveBenchSyncStatus: currentSnap.liveBenchSyncStatus,
+      isLoadingData: currentSnap.isLoadingData,
+      isExecuting: currentSnap.isExecuting,
+      pendingOperation: currentSnap.pendingOperation,
+      batchFetcherState: currentSnap.batchFetcherState,
+      referenceMatchFetcherState: currentSnap.referenceMatchFetcherState,
+      pendingReferenceMatch: currentSnap.pendingReferenceMatch,
+      manifestData: currentSnap.manifestData,
+      productStates: currentSnap.productStates,
+      approvals: currentSnap.approvals,
+      keepOriginalDecisions: currentSnap.keepOriginalDecisions,
+      manualEdits: currentSnap.manualEdits,
+      repairHistory: currentSnap.repairHistory,
+      submittedPayloads: currentSnap.submittedPayloads,
+      standardizedCandidatesByProduct: currentSnap.standardizedCandidatesByProduct,
+      referenceMatchResultsByProduct: currentSnap.referenceMatchResultsByProduct,
+      referenceMatchStatusByProduct: currentSnap.referenceMatchStatusByProduct,
+      sectionAuditMeasurements: sectionAuditMeasurementsRef.current,
+      hasIndependentDescriptionProposalsOnBench:
+        currentSnap.hasIndependentDescriptionProposalsOnBench,
+      getStandardizedEvaluationForField: currentSnap.getStandardizedEvaluationForField,
+      importedPacketsMap: importedCorrectionPacketsRef.current
+    };
+
+    const planResult = validateAndPlanTab3CorrectionImport({
+      rawJsonText,
+      fileByteSize,
+      fileName: safeName,
+      liveContext
+    });
+
+    if (!planResult.ok || planResult.status === "rejected") {
+      correctionImportLockRef.current = false;
+      setIsCorrectionImportBusy(false);
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "critical",
+        status: "rejected",
+        title: `Rejected "${safeName}" (${planResult.code || "validation_failed"})`,
+        message: planResult.message || "Correction file failed validation. No draft fields were modified.",
+        packetId: planResult.packetId || null,
+        fileName: safeName,
+        appliedItems: [],
+        rejectedItems: Array.isArray(planResult.rejectedItems) ? planResult.rejectedItems : []
+      });
+      return;
+    }
+
+    if (planResult.status === "already_imported") {
+      correctionImportLockRef.current = false;
+      setIsCorrectionImportBusy(false);
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "info",
+        status: "already_imported",
+        title: `Already imported "${safeName}" (Packet: ${planResult.packetId})`,
+        message: planResult.message,
+        packetId: planResult.packetId || null,
+        fileName: safeName,
+        appliedItems: Array.isArray(planResult.validatedItems) ? planResult.validatedItems : [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    const { patchPlan } = planResult;
+    if (!patchPlan || !Array.isArray(patchPlan.validatedItems) || patchPlan.validatedItems.length === 0) {
+      correctionImportLockRef.current = false;
+      setIsCorrectionImportBusy(false);
+      setCorrectionImportFeedback({
+        id: `corr_fb_${Date.now()}`,
+        tone: "critical",
+        status: "rejected",
+        title: `Rejected "${safeName}" (empty_patch_plan)`,
+        message: "Validation returned no actionable field corrections. No draft fields were modified.",
+        packetId: planResult.packetId || null,
+        fileName: safeName,
+        appliedItems: [],
+        rejectedItems: []
+      });
+      return;
+    }
+
+    const targetProductId = patchPlan.productId;
+
+    // Release retained editor focus keys only for the validated fields being updated
+    patchPlan.validatedItems.forEach((item) => {
+      currentSnap.releaseRetainedFieldEditorKeys(targetProductId, item.fieldKey);
+    });
+
+    const timeoutId = setTimeout(() => {
+      if (pendingCorrectionCommitRef.current?.patchPlan === patchPlan) {
+        pendingCorrectionCommitRef.current = null;
+        correctionImportLockRef.current = false;
+        if (isComponentMountedRef.current) {
+          setIsCorrectionImportBusy(false);
+          setCorrectionImportFeedback({
+            id: `corr_fb_${Date.now()}`,
+            tone: "warning",
+            status: "pending_timeout",
+            title: `Import commit verification timed out for "${safeName}"`,
+            message:
+              "Draft state updates were dispatched, but post-render commit verification did not complete before timeout. Inspect the bench fields below before proceeding.",
+            packetId: patchPlan.packetId,
+            fileName: safeName,
+            appliedItems: [],
+            rejectedItems: []
+          });
+        }
+      }
+    }, 2500);
+
+    pendingCorrectionCommitRef.current = {
+      patchPlan,
+      timeoutId
+    };
+
+    // Apply coordinated functional state updates preserving all unrelated state and metadata
+    setManualEdits((prev) => {
+      const next = { ...prev };
+      const prodEdits = { ...(next[targetProductId] || {}) };
+      Object.entries(patchPlan.manualEditsPatch || {}).forEach(([k, val]) => {
+        if (val === true) {
+          prodEdits[k] = true;
+        }
+      });
+      next[targetProductId] = prodEdits;
+      return next;
+    });
+
+    setApprovals((prev) => {
+      const prodApp = prev?.[targetProductId];
+      if (!prodApp) return prev;
+      let changed = false;
+      const nextProdApp = { ...prodApp };
+      (patchPlan.invalidatedKeys || []).forEach((kToDel) => {
+        if (nextProdApp[kToDel] !== undefined) {
+          delete nextProdApp[kToDel];
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      const next = { ...prev };
+      if (Object.keys(nextProdApp).length === 0) {
+        delete next[targetProductId];
+      } else {
+        next[targetProductId] = nextProdApp;
+      }
+      return next;
+    });
+
+    setKeepOriginalDecisions((prevKeep) => {
+      const prodKeep = prevKeep?.[targetProductId];
+      if (!prodKeep) return prevKeep;
+      let changed = false;
+      const nextProdKeep = { ...prodKeep };
+      (patchPlan.invalidatedKeys || []).forEach((kToDel) => {
+        if (nextProdKeep[kToDel] !== undefined) {
+          delete nextProdKeep[kToDel];
+          changed = true;
+        }
+      });
+      if (!changed) return prevKeep;
+      const nextKeep = { ...prevKeep };
+      if (Object.keys(nextProdKeep).length === 0) {
+        delete nextKeep[targetProductId];
+      } else {
+        nextKeep[targetProductId] = nextProdKeep;
+      }
+      return nextKeep;
+    });
+
+    setManifestData((prev) => {
+      const existingManifest = prev?.[targetProductId];
+      if (!existingManifest) return prev;
+      const updatedManifest = applyPlannedCorrectionPatchToManifest(existingManifest, patchPlan);
+      return {
+        ...prev,
+        [targetProductId]: updatedManifest
+      };
+    });
+  }, []);
+
   // Authoritative shared selection for Description Review and all 11 ManifestSectionCard drawers
   const currentBenchOrDraftTargetId = activeBenchData ? selectedBenchId : null;
   const descriptionReviewVisibility = effectiveManifestForSections
@@ -3378,7 +3892,7 @@ export function OperationsMatrixTab({ products }) {
     <BlockStack gap="600">
       <BlockStack gap="200">
         <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub — Accessible Diagnostic View</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub â€” Accessible Diagnostic View</Text>
       </BlockStack>
 
       <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: "24px", alignItems: "start", boxSizing: "border-box", maxWidth: "100%" }}>
@@ -3650,12 +4164,12 @@ export function OperationsMatrixTab({ products }) {
                                 {stockCleanupOutcomeReport.stagedEntries.length > 0 && (
                                   <details>
                                     <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#166534" }}>
-                                      {`Staged for Review (${stockCleanupOutcomeReport.stagedEntries.length}) — Click to view destinations`}
+                                      {`Staged for Review (${stockCleanupOutcomeReport.stagedEntries.length}) â€” Click to view destinations`}
                                     </summary>
                                     <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#166534" }}>
                                       {stockCleanupOutcomeReport.stagedEntries.map((st, idx) => (
                                         <div key={`staged-${idx}`} style={{ wordBreak: "break-word" }}>
-                                          • <strong>{st.productTitle}</strong> (<code>{st.destinationKey}</code>) — Staged for explicit approval below.
+                                          â€¢ <strong>{st.productTitle}</strong> (<code>{st.destinationKey}</code>) â€” Staged for explicit approval below.
                                         </div>
                                       ))}
                                     </div>
@@ -3665,12 +4179,12 @@ export function OperationsMatrixTab({ products }) {
                                 {stockCleanupOutcomeReport.preservedOperatorEntries.length > 0 && (
                                   <details open={stockCleanupOutcomeReport.stagedEntries.length === 0}>
                                     <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#854d0e" }}>
-                                      {`Skipped to Preserve Existing Approval / Edit / AI Proposal (${stockCleanupOutcomeReport.preservedOperatorEntries.length}) — Click to view reasons`}
+                                      {`Skipped to Preserve Existing Approval / Edit / AI Proposal (${stockCleanupOutcomeReport.preservedOperatorEntries.length}) â€” Click to view reasons`}
                                     </summary>
                                     <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#713f12" }}>
                                       {stockCleanupOutcomeReport.preservedOperatorEntries.map((p, idx) => (
                                         <div key={`pres-${idx}`} style={{ wordBreak: "break-word" }}>
-                                          • <strong>{p.productTitle}</strong> — <code>{p.destinationKey}</code> ({p.fieldLabel}): {p.reason}
+                                          â€¢ <strong>{p.productTitle}</strong> â€” <code>{p.destinationKey}</code> ({p.fieldLabel}): {p.reason}
                                         </div>
                                       ))}
                                     </div>
@@ -3680,12 +4194,12 @@ export function OperationsMatrixTab({ products }) {
                                 {stockCleanupOutcomeReport.rejectedStaleEntries.length > 0 && (
                                   <details open={stockCleanupOutcomeReport.stagedEntries.length === 0}>
                                     <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#991b1b" }}>
-                                      {`Rejected Stale Candidates (${stockCleanupOutcomeReport.rejectedStaleEntries.length}) — Click to view reasons`}
+                                      {`Rejected Stale Candidates (${stockCleanupOutcomeReport.rejectedStaleEntries.length}) â€” Click to view reasons`}
                                     </summary>
                                     <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#991b1b" }}>
                                       {stockCleanupOutcomeReport.rejectedStaleEntries.map((r, idx) => (
                                         <div key={`stale-${idx}`} style={{ wordBreak: "break-word" }}>
-                                          • <strong>{r.productTitle}</strong> — <code>{r.destinationKey}</code> ({r.fieldLabel}): {r.reason}
+                                          â€¢ <strong>{r.productTitle}</strong> â€” <code>{r.destinationKey}</code> ({r.fieldLabel}): {r.reason}
                                         </div>
                                       ))}
                                     </div>
@@ -3699,7 +4213,7 @@ export function OperationsMatrixTab({ products }) {
                           {totalCleanupCandidateCount > 0 ? (
                             <details style={{ border: "1px solid #cbd5e1", borderRadius: "6px", padding: "8px 10px", backgroundColor: "#f8fafc" }}>
                               <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "13px", color: "#0f172a" }}>
-                                {`Review & Select Eligible Replacement Candidates (${selectedCleanupCandidateCount} of ${totalCleanupCandidateCount} selected — Click to expand Before/After table)`}
+                                {`Review & Select Eligible Replacement Candidates (${selectedCleanupCandidateCount} of ${totalCleanupCandidateCount} selected â€” Click to expand Before/After table)`}
                               </summary>
                               <div style={{ marginTop: "10px", overflowX: "auto" }}>
                                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", backgroundColor: "#ffffff" }}>
@@ -3742,7 +4256,7 @@ export function OperationsMatrixTab({ products }) {
                                             {isLongBefore ? (
                                               <details>
                                                 <summary style={{ cursor: "pointer", fontWeight: "600" }}>
-                                                  {`${cand.beforeValue.slice(0, 180)}… (Click for full ${cand.beforeValue.length} chars)`}
+                                                  {`${cand.beforeValue.slice(0, 180)}â€¦ (Click for full ${cand.beforeValue.length} chars)`}
                                                 </summary>
                                                 <div style={{ marginTop: "6px" }}>{cand.beforeValue}</div>
                                               </details>
@@ -3754,7 +4268,7 @@ export function OperationsMatrixTab({ products }) {
                                             {isLongAfter ? (
                                               <details>
                                                 <summary style={{ cursor: "pointer", fontWeight: "600" }}>
-                                                  {`${cand.afterValue.slice(0, 180)}… (Click for full ${cand.afterValue.length} chars)`}
+                                                  {`${cand.afterValue.slice(0, 180)}â€¦ (Click for full ${cand.afterValue.length} chars)`}
                                                 </summary>
                                                 <div style={{ marginTop: "6px" }}>{cand.afterValue}</div>
                                               </details>
@@ -3796,11 +4310,11 @@ export function OperationsMatrixTab({ products }) {
                                   <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
                                     <BlockStack gap="100">
                                       <Text as="p" variant="bodySm" fontWeight="bold" tone="critical">
-                                        Flagged Ambiguous or Contradictory Bezel Mentions ({stockCleanupPreview.flaggedItems.length} — Not Staged; Resolve Manually):
+                                        Flagged Ambiguous or Contradictory Bezel Mentions ({stockCleanupPreview.flaggedItems.length} â€” Not Staged; Resolve Manually):
                                       </Text>
                                       {stockCleanupPreview.flaggedItems.map((flg, idx) => (
                                         <div key={`${flg.productId}-${flg.destinationKey}-${idx}`} style={{ fontSize: "12px", wordBreak: "break-word" }}>
-                                          • <strong>{flg.productTitle}</strong> (<code>{flg.productId}</code>) — <code>{flg.destinationKey}</code>: {flg.reason} [Current: &quot;{flg.beforeValue.length > 160 ? `${flg.beforeValue.slice(0, 160)}…` : flg.beforeValue}&quot;]
+                                          â€¢ <strong>{flg.productTitle}</strong> (<code>{flg.productId}</code>) â€” <code>{flg.destinationKey}</code>: {flg.reason} [Current: &quot;{flg.beforeValue.length > 160 ? `${flg.beforeValue.slice(0, 160)}â€¦` : flg.beforeValue}&quot;]
                                         </div>
                                       ))}
                                     </BlockStack>
@@ -3815,7 +4329,7 @@ export function OperationsMatrixTab({ products }) {
                                       </Text>
                                       {stockCleanupPreview.stoneIdentityDiagnostics.map((diag) => (
                                         <div key={diag.productId} style={{ fontSize: "12px", wordBreak: "break-word" }}>
-                                          • <strong>{diag.productTitle}</strong> (<code>{diag.productId}</code>) — Saved <code>custom.material</code>: <code>{String(diag.savedMaterial ?? "blank")}</code> | Saved <code>custom.primary_medium</code>: <code>{String(diag.savedPrimaryMedium ?? "blank")}</code> | Saved <code>custom.stone_family</code>: <code>{String(diag.savedStoneFamily ?? "blank")}</code>. <strong>Unresolved Writer Limitation:</strong> {diag.compatibilityWriterLimitation}
+                                          â€¢ <strong>{diag.productTitle}</strong> (<code>{diag.productId}</code>) â€” Saved <code>custom.material</code>: <code>{String(diag.savedMaterial ?? "blank")}</code> | Saved <code>custom.primary_medium</code>: <code>{String(diag.savedPrimaryMedium ?? "blank")}</code> | Saved <code>custom.stone_family</code>: <code>{String(diag.savedStoneFamily ?? "blank")}</code>. <strong>Unresolved Writer Limitation:</strong> {diag.compatibilityWriterLimitation}
                                         </div>
                                       ))}
                                     </BlockStack>
@@ -4134,7 +4648,7 @@ export function OperationsMatrixTab({ products }) {
 
                     {isNeedsReviewEmptyState && (
                       <Card padding="400">
-                        <Banner tone="success" title="Review complete — no fields currently require review in this view">
+                        <Banner tone="success" title="Review complete â€” no fields currently require review in this view">
                           <BlockStack gap="100">
                             <Text as="p" variant="bodyMd">
                               All review items in this unselected draft view are currently resolved. <strong>Review complete does not mean saved to Shopify.</strong>
@@ -4208,7 +4722,33 @@ export function OperationsMatrixTab({ products }) {
                             <span style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>GID Lock: {selectedBenchId}</span>
                         </Text>
                     </div>
-                    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", minWidth: 0, alignItems: "center" }}>
+                      <input
+                        ref={correctionFileInputRef}
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={handleCorrectionFileSelected}
+                        style={{ display: "none" }}
+                        aria-label="Choose Sidekick JSON correction file for active bench product"
+                      />
+                      <Button
+                        size="large"
+                        variant="secondary"
+                        icon={ClipboardIcon}
+                        onClick={handleOpenCorrectionFilePicker}
+                        loading={isCorrectionImportBusy}
+                        disabled={
+                          isCorrectionImportBusy ||
+                          isLoadingData ||
+                          isExecuting ||
+                          batchFetcher.state !== "idle" ||
+                          referenceMatchFetcher.state !== "idle" ||
+                          pendingOperation !== null ||
+                          pendingReferenceMatch !== null
+                        }
+                      >
+                        Import Corrections JSON
+                      </Button>
                       <Button 
                         size="large" 
                         variant="primary" 
@@ -4229,6 +4769,65 @@ export function OperationsMatrixTab({ products }) {
                         Execute Single Repair
                       </Button>
                     </div>
+                </div>
+
+                {/* ACCESSIBLE INLINE OUTCOME BANNER FOR JSON CORRECTION IMPORT */}
+                <div
+                  ref={correctionImportFeedbackRef}
+                  role={correctionImportFeedback?.tone === "critical" ? "alert" : "status"}
+                  aria-live={correctionImportFeedback?.tone === "critical" ? "assertive" : "polite"}
+                  aria-atomic="true"
+                >
+                  {correctionImportFeedback && (
+                    <Banner
+                      tone={correctionImportFeedback.tone || "info"}
+                      title={correctionImportFeedback.title}
+                      onDismiss={() => setCorrectionImportFeedback(null)}
+                    >
+                      <BlockStack gap="150">
+                        <Text as="p" variant="bodySm">
+                          {correctionImportFeedback.message}
+                        </Text>
+
+                        {Array.isArray(correctionImportFeedback.appliedItems) &&
+                          correctionImportFeedback.appliedItems.length > 0 && (
+                            <details open>
+                              <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#166534" }}>
+                                {`Staged Corrections (${correctionImportFeedback.appliedItems.length}) â€” Click to inspect field diffs`}
+                              </summary>
+                              <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", color: "#14532d" }}>
+                                {correctionImportFeedback.appliedItems.map((item, idx) => (
+                                  <div key={`corr-app-${idx}`} style={{ wordBreak: "break-word" }}>
+                                    â€¢ <strong>{item.fieldLabel || item.fieldKey}</strong> (<code>{item.fieldKey}</code> &rarr; <code>{item.targetKeyForProposal}</code>):{" "}
+                                    <strong>Proposed:</strong> &quot;{item.normalizedValue.length > 180 ? `${item.normalizedValue.slice(0, 180)}â€¦` : item.normalizedValue}&quot;{" "}
+                                    <span style={{ color: "#475569" }}>
+                                      [Reason: {item.reason}]
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+
+                        {Array.isArray(correctionImportFeedback.rejectedItems) &&
+                          correctionImportFeedback.rejectedItems.length > 0 && (
+                            <details open>
+                              <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#991b1b" }}>
+                                {`Rejected Items (${correctionImportFeedback.rejectedItems.length}) â€” Entire file rejected; 0 fields modified`}
+                              </summary>
+                              <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", color: "#991b1b" }}>
+                                {correctionImportFeedback.rejectedItems.map((rej, idx) => (
+                                  <div key={`corr-rej-${idx}`} style={{ wordBreak: "break-word" }}>
+                                    â€¢ <strong>{rej.fieldKey || `Item #${rej.index ?? idx}`}</strong>{" "}
+                                    (<code>{rej.code}</code>): {rej.reason}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                      </BlockStack>
+                    </Banner>
+                  )}
                 </div>
 
                 <BenchDiagnosticHeader
@@ -4263,7 +4862,7 @@ export function OperationsMatrixTab({ products }) {
 
                 {isNeedsReviewEmptyState && (
                   <Card padding="400">
-                    <Banner tone="success" title="Review complete — no fields currently require review">
+                    <Banner tone="success" title="Review complete â€” no fields currently require review">
                       <BlockStack gap="100">
                         <Text as="p" variant="bodyMd">
                           All review items for <code>{selectedBenchId}</code> are resolved in browser state ({activeApprovedWriteCount} field{activeApprovedWriteCount === 1 ? "" : "s"} approved for write, {activeKeepOriginalCount} keep-original decision{activeKeepOriginalCount === 1 ? "" : "s"}). <strong>Review complete does not mean saved to Shopify.</strong>
