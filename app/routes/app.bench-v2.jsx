@@ -8,26 +8,38 @@
 // 3. app/routes/app.meta-injector-api.jsx (138,970 chars — action intent="executeRepairPlan")
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars — action delegates to executeAutofill)
 // 5. app/utils/meta-injector.autofill.server.jsx (168,616 chars, SHA256: 039F7B2F8DED1E385A02A2640F540821B1638A8A95DAAC547AF83BC93C9E3AEF)
-// 6. app/routes/app.bench-v2.jsx (Retained Tab 3 Connector Route, SHA256: EF6B537D242E1A74874F3582441D880626C2A60707E885F0071352AC59894520)
+// 6. app/routes/app.bench-v2.jsx (Retained Route, SHA256: 8A4E9244DBA75631B857064DDA91A6F07B28E1BAE2925D835D09DF91FA43EEDA)
+// 7. app/routes/app.meta-injector.matrix.jsx (231,797 chars — filter behavior reference only; never imported)
+// 8. app/utils/meta-injector.matrix-domain.jsx (164,101 chars — FILTER_OPTIONS & predicate reference only; never imported)
 //
-// Bounded Tab 3 Presentation & Connector Guarantees:
-// - Restores 120px by 120px product thumbnails near top product controls
-//   from currentBaseline.nativeTargets.media.edges (preview.image.url, alt)
-//   for the exact selected product only, with fixed dimensions, flexShrink: 0,
-//   and objectFit: "cover" / objectPosition: "center".
-// - Carries actual producerProposals[destKey].source metadata through scan
-//   response processing into the AI Scan Field Breakdown and per-field
-//   Details (including suggestions that match saved baseline or are held),
-//   using "Source not reported" when absent without inferring provenance.
-// - Replaces "(Legacy OOAK field)" on custom.is_ooak with neutral
-//   "(Second OOAK field — custom.is_ooak)".
-// - Updates Drawer 11 subtitle to "Read-only parked and protected fields"
-//   instead of blanket "Connected in Batch 1".
-// - Preserves all business logic, request/response shapes, approvals,
-//   Keep Original, writer holds, and save reconciliation verbatim.
+// Authorized Combined Search / Product Picker / Drawer Filter Update:
+// - Replaces the dense dropdown of long marketing titles with an accessible,
+//   dyslexia/glaucoma-friendly Product Search & Picker:
+//   * Explicit Search and Clear controls; Enter submits (never fires on every keystroke).
+//   * Searches across inventory via lightweight paginated GraphQL read
+//     (products(first: 50, after: $cursor, query: $searchQuery)) selecting
+//     id, title, and actual pieceName: metafield(namespace: "custom", key: "piece_name") { value }.
+//   * Displays actual pieceName as the large primary mixed-case label when present,
+//     with the full product title as clear secondary context (never guessing which
+//     title fragment is the piece name when custom.piece_name is absent).
+//   * Uses a dedicated pickerFetcher for searching and paging so searching/paging
+//     never switches the active product, never reloads the full product baseline
+//     unnecessarily, never triggers AI, and never clears drafts or decisions.
+//   * Selection always uses the exact returned Shopify Product GID.
+//   * Selected product remains clearly identified at the top even when absent
+//     from the current search results page.
+// - Restores the 11 Tab 3 FILTER_OPTIONS from app/utils/meta-injector.matrix-domain.jsx
+//   ("All", "Needs review", "Proposed changes", "Conflicts", "Blank", "Shopify",
+//   "Gemini", "Vision", "Geo Library", "Derived", "Manual") adapted to Bench V2's
+//   real evaluated row state, with focus-retention so actively edited fields do not
+//   vanish mid-edit, an honest empty-filter message, and a one-click "Return to All Fields"
+//   button.
+// - Preserves fixed 120px by 120px thumbnails, initially collapsed drawers,
+//   Saved/Proposed layout, source labels, exact approvals, Keep Original,
+//   writer holds, and explicit Save/AI Scan interfaces verbatim.
 // ==========================================================================
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { loadSingleProductBaselineSnapshot } from "../utils/bench-v2.baseline.server.jsx";
@@ -49,6 +61,22 @@ import {
 } from "../utils/bench-v2.contract.jsx";
 
 export const CANYON_RED_PRODUCT_GID = "gid://shopify/Product/9226849616123";
+
+// Exact 11 FILTER_OPTIONS from app/utils/meta-injector.matrix-domain.jsx (lines 483-495)
+// with readable labels and "All" as default.
+export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
+  { label: "All Fields (Default)", value: "All" },
+  { label: "Needs Review", value: "Needs review" },
+  { label: "Proposed Changes", value: "Proposed changes" },
+  { label: "Conflicts & Held Alternatives", value: "Conflicts" },
+  { label: "Blank / Not Set", value: "Blank" },
+  { label: "Source: Shopify (Saved)", value: "Shopify" },
+  { label: "Source: Gemini", value: "Gemini" },
+  { label: "Source: Vision", value: "Vision" },
+  { label: "Source: Geo Library", value: "Geo Library" },
+  { label: "Source: Derived", value: "Derived" },
+  { label: "Source: Manual", value: "Manual" }
+]);
 
 // Exact 42 bare provenance keys allowed by parseProvenanceFieldSet in
 // app/utils/meta-injector.autofill.server.jsx (lines 433-444).
@@ -100,12 +128,12 @@ const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "is_ooak"
 ]);
 
-// Lightweight single-page product list query patterned directly from
-// GET_PRODUCTS_QUERY in app/utils/meta-injector.loader.jsx, stripped to
-// id and title only (no fetchAllProducts loop, no metafield/variant preload).
+// Lightweight single-page product list query patterned from Shopify Admin GraphQL
+// products(first: 50, after: $cursor, query: $searchQuery), fetching ONLY id, title,
+// and the single custom.piece_name metafield (zero whole-inventory manifest loading).
 const GET_LIGHTWEIGHT_PRODUCT_PAGE_QUERY = `
-  query GetLightweightProductsPage($cursor: String) {
-    products(first: 50, after: $cursor) {
+  query GetLightweightProductsPage($cursor: String, $searchQuery: String) {
+    products(first: 50, after: $cursor, query: $searchQuery) {
       pageInfo {
         hasNextPage
         endCursor
@@ -114,19 +142,36 @@ const GET_LIGHTWEIGHT_PRODUCT_PAGE_QUERY = `
         node {
           id
           title
+          pieceName: metafield(namespace: "custom", key: "piece_name") {
+            value
+          }
         }
       }
     }
   }
 `;
 
-async function loadLightweightProductPage(admin, cursor = null) {
+function buildShopifyProductTitleSearchQuery(rawSearch) {
+  if (typeof rawSearch !== "string") return null;
+  const trimmed = rawSearch.trim();
+  if (!trimmed) return null;
+  const escaped = trimmed.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `title:*${escaped}*`;
+}
+
+async function loadLightweightProductPage(admin, cursor = null, rawSearch = "") {
   const normalizedCursor =
     typeof cursor === "string" && cursor.trim() !== "" ? cursor.trim() : null;
+  const cleanSearch =
+    typeof rawSearch === "string" && rawSearch.trim() !== "" ? rawSearch.trim() : "";
+  const graphqlSearchQuery = buildShopifyProductTitleSearchQuery(cleanSearch);
 
   try {
     const res = await admin.graphql(GET_LIGHTWEIGHT_PRODUCT_PAGE_QUERY, {
-      variables: { cursor: normalizedCursor }
+      variables: {
+        cursor: normalizedCursor,
+        searchQuery: graphqlSearchQuery
+      }
     });
     const json = await res.json();
     if (json.errors?.length) {
@@ -142,9 +187,14 @@ async function loadLightweightProductPage(admin, cursor = null) {
     for (const edge of conn.edges) {
       const node = edge?.node;
       if (node && isExactProductGid(node.id)) {
+        const rawPieceName =
+          typeof node.pieceName?.value === "string" && node.pieceName.value.trim() !== ""
+            ? node.pieceName.value.trim()
+            : null;
         items.push({
           id: node.id,
-          title: typeof node.title === "string" && node.title.trim() !== "" ? node.title : node.id
+          title: typeof node.title === "string" && node.title.trim() !== "" ? node.title : node.id,
+          pieceName: rawPieceName
         });
       }
     }
@@ -160,6 +210,7 @@ async function loadLightweightProductPage(admin, cursor = null) {
             : null
       },
       requestedCursor: normalizedCursor,
+      appliedSearch: cleanSearch,
       error: null
     };
   } catch (err) {
@@ -171,7 +222,8 @@ async function loadLightweightProductPage(admin, cursor = null) {
         endCursor: null
       },
       requestedCursor: normalizedCursor,
-      error: `Failed to load product selector page: ${err.message}`
+      appliedSearch: cleanSearch,
+      error: `Failed to load product search/picker page: ${err.message}`
     };
   }
 }
@@ -244,8 +296,26 @@ export function checkExistingWriterStringFidelity(exactProposedValue) {
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
+  const isPickerOnly = url.searchParams.get("pickerOnly") === "1";
   const requestedProductId = url.searchParams.get("productId");
   const requestedCursor = url.searchParams.get("cursor");
+  const requestedSearch = url.searchParams.get("q") || "";
+
+  // Dedicated lightweight picker-only read path:
+  // When searching or paging the product picker via pickerFetcher, load ONLY the
+  // lightweight 50-item page without re-fetching the selected product's full baseline.
+  if (isPickerOnly) {
+    const selectorPageResult = await loadLightweightProductPage(
+      admin,
+      requestedCursor,
+      requestedSearch
+    );
+    return Response.json({
+      pickerOnly: true,
+      selectorPage: selectorPageResult,
+      loadedAt: new Date().toISOString()
+    });
+  }
 
   let targetProductId = CANYON_RED_PRODUCT_GID;
   let selectionError = null;
@@ -260,11 +330,12 @@ export const loader = async ({ request }) => {
   }
 
   const [selectorPageResult, loadResult] = await Promise.all([
-    loadLightweightProductPage(admin, requestedCursor),
+    loadLightweightProductPage(admin, requestedCursor, requestedSearch),
     loadSingleProductBaselineSnapshot(admin, targetProductId)
   ]);
 
   return Response.json({
+    pickerOnly: false,
     contractVersion: BENCH_V2_CONTRACT_VERSION,
     targetProductId,
     selectionError,
@@ -446,11 +517,144 @@ function getShortPlainNotice(row) {
   return null;
 }
 
+// Evaluates whether a Bench V2 evaluated row matches the selected Tab 3 filter
+// option from app/utils/meta-injector.matrix-domain.jsx + app/routes/app.meta-injector.matrix.jsx,
+// adapted honestly to Bench V2's actual row state and producerProposals source labels.
+export function matchesBenchV2Filter(row, activeFilter) {
+  if (!row || typeof row !== "object") return false;
+  if (!activeFilter || activeFilter === "All") return true;
+
+  const {
+    contract,
+    baselineObservation: obs,
+    hasProposalKey,
+    proposedValue,
+    proposalSource,
+    proposalOrigin,
+    heldAiAlternative,
+    scanProposalMeta,
+    validation,
+    isApproved,
+    isKeepOriginal,
+    isWriterHeld,
+    fidelityCheck,
+    hasSaveErrorOrConflict
+  } = row;
+
+  const isBlankBaseline =
+    obs.evidenceAvailable &&
+    (obs.presence === "absent" || obs.presence === "null" || obs.presence === "empty_string");
+  const isSavedPresent = obs.evidenceAvailable && obs.presence === "present";
+  const isRequiredMissing =
+    isBlankBaseline &&
+    (contract.destinationKey === "shopify_title" || contract.destinationKey === "native_price");
+
+  const hasChangedProposal =
+    hasProposalKey &&
+    proposedValue.trim() !== "" &&
+    !validation?.isUnchangedFromStored;
+
+  const isTemporarilyClearedManualEdit =
+    hasProposalKey && proposalOrigin === "Manual" && proposedValue.trim() === "";
+
+  const isBlockedOrInvalidProposal =
+    hasProposalKey &&
+    (!validation?.valid ||
+      !fidelityCheck.faithful ||
+      isWriterHeld ||
+      obs.metafieldsCompleteState !== "complete" ||
+      obs.defsCompleteState !== "complete" ||
+      Boolean(obs.destinationDefError));
+
+  if (activeFilter === "Blank") {
+    return isBlankBaseline;
+  }
+
+  if (activeFilter === "Proposed changes") {
+    return (
+      hasChangedProposal ||
+      Boolean(isApproved) ||
+      Boolean(isKeepOriginal) ||
+      Boolean(heldAiAlternative)
+    );
+  }
+
+  if (activeFilter === "Conflicts") {
+    const DisagreesWithStored =
+      isSavedPresent && hasChangedProposal && !isKeepOriginal;
+    return (
+      DisagreesWithStored ||
+      Boolean(heldAiAlternative) ||
+      Boolean(hasSaveErrorOrConflict)
+    );
+  }
+
+  if (activeFilter === "Needs review") {
+    if (hasSaveErrorOrConflict) return true;
+    if (contract.drawerId === "parked_excluded_protected") return false;
+    if (isRequiredMissing) return true;
+    if (Boolean(heldAiAlternative)) return true;
+    if (isKeepOriginal) return false;
+    if (isApproved && !isBlockedOrInvalidProposal) return false;
+    if (isTemporarilyClearedManualEdit) return true;
+    if (hasChangedProposal && (!isApproved || isBlockedOrInvalidProposal)) {
+      return true;
+    }
+    return false;
+  }
+
+  // Source-based filter options ("Shopify", "Gemini", "Vision", "Geo Library", "Derived", "Manual")
+  const activeSourceStr =
+    hasProposalKey && typeof proposalSource === "string" && proposalSource !== "None"
+      ? proposalSource
+      : heldAiAlternative && typeof heldAiAlternative.source === "string"
+        ? heldAiAlternative.source
+        : scanProposalMeta && typeof scanProposalMeta.source === "string"
+          ? scanProposalMeta.source
+          : "";
+
+  if (activeFilter === "Shopify") {
+    return isSavedPresent && !hasChangedProposal;
+  }
+
+  if (activeFilter === "Manual") {
+    return (
+      (hasProposalKey && (proposalOrigin === "Manual" || activeSourceStr === "Manual")) ||
+      isTemporarilyClearedManualEdit
+    );
+  }
+
+  if (activeFilter === "Vision") {
+    return /vision/i.test(activeSourceStr);
+  }
+
+  if (activeFilter === "Gemini") {
+    return (
+      /gemini/i.test(activeSourceStr) ||
+      (hasProposalKey && proposalOrigin === "AI") ||
+      Boolean(heldAiAlternative)
+    );
+  }
+
+  if (activeFilter === "Derived") {
+    return /title segment parse|store page directory|store collection directory|location mapping|derived/i.test(
+      activeSourceStr
+    );
+  }
+
+  if (activeFilter === "Geo Library") {
+    return /geo\s*library|geodata|mindat/i.test(activeSourceStr);
+  }
+
+  return activeSourceStr === activeFilter;
+}
+
 export default function BenchV2Route() {
   const loaderData = useLoaderData();
   const revalidator = useRevalidator();
   const writerFetcher = useFetcher();
   const aiScanFetcher = useFetcher();
+  const pickerFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const activeProductId = isExactProductGid(loaderData?.targetProductId)
@@ -466,29 +670,70 @@ export default function BenchV2Route() {
     return {};
   });
 
-  // 2. Known Product Titles Cache (Keyed by exact Product GID so selected product
-  // remains visible in the selector even when browsing another cursor page)
+  // 2. Known Product Metadata Cache (Keyed by exact Product GID so selected product
+  // remains clearly identified with pieceName + full title even when absent from search results)
   const [knownProductsById, setKnownProductsById] = useState(() => {
     const map = {
-      [CANYON_RED_PRODUCT_GID]: "Canyon Red"
+      [CANYON_RED_PRODUCT_GID]: {
+        id: CANYON_RED_PRODUCT_GID,
+        title: "Canyon Red",
+        pieceName: null
+      }
     };
     const pageItems = loaderData?.selectorPage?.items;
     if (Array.isArray(pageItems)) {
       for (const item of pageItems) {
-        if (item && isExactProductGid(item.id) && typeof item.title === "string") {
-          map[item.id] = item.title;
+        if (item && isExactProductGid(item.id)) {
+          map[item.id] = {
+            id: item.id,
+            title: typeof item.title === "string" ? item.title : item.id,
+            pieceName:
+              typeof item.pieceName === "string" && item.pieceName.trim() !== ""
+                ? item.pieceName.trim()
+                : null
+          };
         }
       }
     }
     const snap = loaderData?.baselineSnapshot;
-    if (snap && isExactProductGid(snap.productId) && snap.productTitle) {
-      map[snap.productId] = snap.productTitle;
+    if (snap && isExactProductGid(snap.productId)) {
+      const snapPieceName =
+        typeof snap.currentMetafields?.["custom.piece_name"] === "string" &&
+        snap.currentMetafields["custom.piece_name"].trim() !== ""
+          ? snap.currentMetafields["custom.piece_name"].trim()
+          : map[snap.productId]?.pieceName || null;
+      map[snap.productId] = {
+        id: snap.productId,
+        title: snap.productTitle || map[snap.productId]?.title || snap.productId,
+        pieceName: snapPieceName
+      };
     }
     return map;
   });
 
-  // 3. Cursor History Stack for Plain Previous / Next Page Navigation
-  const [cursorHistory, setCursorHistory] = useState([]);
+  // 3. Dedicated Product Search & Paginated Picker State
+  // Searching/paging uses pickerFetcher so it NEVER switches the selected product or reloads its baseline.
+  const [pickerPageState, setPickerPageState] = useState(() => {
+    return (
+      loaderData?.selectorPage || {
+        ok: false,
+        items: [],
+        pageInfo: { hasNextPage: false, endCursor: null },
+        requestedCursor: null,
+        appliedSearch: "",
+        error: null
+      }
+    );
+  });
+  const [searchInputText, setSearchInputText] = useState(
+    () => loaderData?.selectorPage?.appliedSearch || ""
+  );
+  const [committedSearchQuery, setCommittedSearchQuery] = useState(
+    () => loaderData?.selectorPage?.appliedSearch || ""
+  );
+  const [pickerCursorHistory, setPickerCursorHistory] = useState([]);
+  const [currentPickerCursor, setCurrentPickerCursor] = useState(null);
+  const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
 
   // 4. Staged Proposals State (Never pre-seeded from baseline, preserved per productId)
   // Each entry: { value, source, origin: "Manual" | "AI", updatedAt }
@@ -517,12 +762,103 @@ export default function BenchV2Route() {
   const processedAiScanRequestIdRef = useRef(null);
   const activeAiScanRequestRef = useRef(null);
 
-  // 10. Presentation-Only State: All drawers initially collapsed
+  // 10. Presentation-Only State: All drawers initially collapsed + View-Only Drawer Filter
   const [openDrawersById, setOpenDrawersById] = useState(() =>
     BENCH_V2_DRAWER_GROUPS.reduce((acc, drawer) => {
       acc[drawer.drawerId] = false;
       return acc;
     }, {})
+  );
+  const [activeFilter, setActiveFilter] = useState("All");
+
+  // 11. Focus Retention State for Filtered Views (so a row being edited does not vanish mid-edit)
+  const [retainedFieldEditorsByProduct, setRetainedFieldEditorsByProduct] = useState({});
+  const blurClearTimersRef = useRef(new Map());
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      for (const timerId of blurClearTimersRef.current.values()) {
+        clearTimeout(timerId);
+      }
+      blurClearTimersRef.current.clear();
+    };
+  }, []);
+
+  const handleFieldEditorFocus = useCallback(
+    (destinationKey) => {
+      if (typeof destinationKey !== "string" || !destinationKey.trim()) return;
+      const timerKey = `${activeProductId}::${destinationKey}`;
+      const existingTimer = blurClearTimersRef.current.get(timerKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        blurClearTimersRef.current.delete(timerKey);
+      }
+      setRetainedFieldEditorsByProduct((prev) => {
+        const prodMap = prev[activeProductId] || {};
+        if (prodMap[destinationKey] === true) return prev;
+        return {
+          ...prev,
+          [activeProductId]: {
+            ...prodMap,
+            [destinationKey]: true
+          }
+        };
+      });
+    },
+    [activeProductId]
+  );
+
+  const handleFieldEditorBlur = useCallback(
+    (destinationKey) => {
+      if (typeof destinationKey !== "string" || !destinationKey.trim()) return;
+      const timerKey = `${activeProductId}::${destinationKey}`;
+      const existingTimer = blurClearTimersRef.current.get(timerKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+      const timerId = setTimeout(() => {
+        blurClearTimersRef.current.delete(timerKey);
+        if (!isMountedRef.current) return;
+        setRetainedFieldEditorsByProduct((prev) => {
+          const prodMap = prev[activeProductId];
+          if (!prodMap || prodMap[destinationKey] === undefined) return prev;
+          const nextProdMap = { ...prodMap };
+          delete nextProdMap[destinationKey];
+          return {
+            ...prev,
+            [activeProductId]: nextProdMap
+          };
+        });
+      }, 200);
+      blurClearTimersRef.current.set(timerKey, timerId);
+    },
+    [activeProductId]
+  );
+
+  const releaseRetainedFieldEditor = useCallback(
+    (productId, destinationKey) => {
+      if (!productId || !destinationKey) return;
+      const timerKey = `${productId}::${destinationKey}`;
+      const existingTimer = blurClearTimersRef.current.get(timerKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        blurClearTimersRef.current.delete(timerKey);
+      }
+      setRetainedFieldEditorsByProduct((prev) => {
+        const prodMap = prev[productId];
+        if (!prodMap || prodMap[destinationKey] === undefined) return prev;
+        const nextProdMap = { ...prodMap };
+        delete nextProdMap[destinationKey];
+        return {
+          ...prev,
+          [productId]: nextProdMap
+        };
+      });
+    },
+    []
   );
 
   const handleToggleDrawer = (drawerId) => {
@@ -570,7 +906,7 @@ export default function BenchV2Route() {
     keepOriginalByProductRef.current = keepOriginalByProduct;
   }, [keepOriginalByProduct]);
 
-  // Synchronize fresh loader baseline snapshots and selector page titles
+  // Synchronize fresh loader baseline snapshots and initial selector page items
   // without erasing pending manual drafts, AI alternatives, or approvals for any product.
   useEffect(() => {
     const snap = loaderData?.baselineSnapshot;
@@ -581,22 +917,81 @@ export default function BenchV2Route() {
       }));
     }
 
+    if (loaderData?.selectorPage && !loaderData?.pickerOnly) {
+      setPickerPageState((prev) => {
+        // Only initialize from loaderData if picker hasn't already navigated to a custom search/page
+        if (
+          prev.appliedSearch === (loaderData.selectorPage.appliedSearch || "") &&
+          prev.requestedCursor === (loaderData.selectorPage.requestedCursor || null)
+        ) {
+          return loaderData.selectorPage;
+        }
+        return prev;
+      });
+    }
+
     setKnownProductsById((prev) => {
       const next = { ...prev };
       const pageItems = loaderData?.selectorPage?.items;
       if (Array.isArray(pageItems)) {
         for (const item of pageItems) {
-          if (item && isExactProductGid(item.id) && typeof item.title === "string") {
-            next[item.id] = item.title;
+          if (item && isExactProductGid(item.id)) {
+            const existing = next[item.id];
+            next[item.id] = {
+              id: item.id,
+              title: typeof item.title === "string" ? item.title : existing?.title || item.id,
+              pieceName:
+                typeof item.pieceName === "string" && item.pieceName.trim() !== ""
+                  ? item.pieceName.trim()
+                  : existing?.pieceName || null
+            };
           }
         }
       }
-      if (snap && isExactProductGid(snap.productId) && snap.productTitle) {
-        next[snap.productId] = snap.productTitle;
+      if (snap && isExactProductGid(snap.productId)) {
+        const existing = next[snap.productId];
+        const snapPieceName =
+          typeof snap.currentMetafields?.["custom.piece_name"] === "string" &&
+          snap.currentMetafields["custom.piece_name"].trim() !== ""
+            ? snap.currentMetafields["custom.piece_name"].trim()
+            : existing?.pieceName || null;
+        next[snap.productId] = {
+          id: snap.productId,
+          title: snap.productTitle || existing?.title || snap.productId,
+          pieceName: snapPieceName
+        };
       }
       return next;
     });
-  }, [loaderData?.baselineSnapshot, loaderData?.selectorPage, loaderData?.loadedAt]);
+  }, [loaderData?.baselineSnapshot, loaderData?.selectorPage, loaderData?.loadedAt, loaderData?.pickerOnly]);
+
+  // Synchronize pickerFetcher results when searching or paging product inventory
+  useEffect(() => {
+    if (pickerFetcher.state !== "idle" || !pickerFetcher.data) return;
+    const fetchedPage = pickerFetcher.data.selectorPage;
+    if (!fetchedPage || typeof fetchedPage !== "object") return;
+
+    setPickerPageState(fetchedPage);
+    if (Array.isArray(fetchedPage.items) && fetchedPage.items.length > 0) {
+      setKnownProductsById((prev) => {
+        const next = { ...prev };
+        for (const item of fetchedPage.items) {
+          if (item && isExactProductGid(item.id)) {
+            const existing = next[item.id];
+            next[item.id] = {
+              id: item.id,
+              title: typeof item.title === "string" ? item.title : existing?.title || item.id,
+              pieceName:
+                typeof item.pieceName === "string" && item.pieceName.trim() !== ""
+                  ? item.pieceName.trim()
+                  : existing?.pieceName || null
+            };
+          }
+        }
+        return next;
+      });
+    }
+  }, [pickerFetcher.state, pickerFetcher.data]);
 
   const currentBaseline =
     baselineByProduct[activeProductId] &&
@@ -620,41 +1015,28 @@ export default function BenchV2Route() {
   const isWriterBusy = writerFetcher.state !== "idle" || Boolean(activeSaveSubmission);
   const isAiScanBusy = aiScanFetcher.state !== "idle" || Boolean(activeAiScanRequest);
   const isBaselineReloading = revalidator.state !== "idle";
+  const isPickerLoading = pickerFetcher.state !== "idle";
   const isAnyOperationBusy = isWriterBusy || isAiScanBusy || isBaselineReloading;
 
-  const currentSelectorCursor = searchParams.get("cursor") || null;
-  const selectorPage = loaderData?.selectorPage || {
-    ok: false,
-    items: [],
-    pageInfo: { hasNextPage: false, endCursor: null },
-    requestedCursor: null,
-    error: null
-  };
-
-  // Build dropdown options from the current page of products, plus ensure the
-  // currently active product is always present as an option by exact GID.
-  const selectorOptions = React.useMemo(() => {
-    const pageItems = Array.isArray(selectorPage.items) ? selectorPage.items : [];
-    const hasActiveInPage = pageItems.some((item) => item.id === activeProductId);
-    const list = [...pageItems];
-
-    if (!hasActiveInPage && isExactProductGid(activeProductId)) {
-      const fallbackTitle =
-        currentBaseline?.productTitle ||
-        knownProductsById[activeProductId] ||
-        (activeProductId === CANYON_RED_PRODUCT_GID ? "Canyon Red" : activeProductId);
-      list.unshift({
-        id: activeProductId,
-        title: fallbackTitle
-      });
-    }
-    return list;
-  }, [selectorPage.items, activeProductId, currentBaseline?.productTitle, knownProductsById]);
+  // Selected product display metadata (pieceName when available, plus full title)
+  const activeProductKnownEntry = knownProductsById[activeProductId] || null;
+  const activeProductPieceName =
+    (typeof currentBaseline?.currentMetafields?.["custom.piece_name"] === "string" &&
+      currentBaseline.currentMetafields["custom.piece_name"].trim() !== ""
+      ? currentBaseline.currentMetafields["custom.piece_name"].trim()
+      : null) ||
+    activeProductKnownEntry?.pieceName ||
+    null;
 
   const activeProductTitle =
     currentBaseline?.productTitle ||
-    knownProductsById[activeProductId] ||
+    activeProductKnownEntry?.title ||
     (activeProductId === CANYON_RED_PRODUCT_GID ? "Canyon Red" : activeProductId);
+
+  const activeProductHeadline =
+    activeProductPieceName && activeProductPieceName !== activeProductTitle
+      ? `${activeProductPieceName} — ${activeProductTitle}`
+      : activeProductTitle;
 
   // Extract selected product's loaded MediaImage items strictly from currentBaseline
   // (where currentBaseline is already verified to match activeProductId).
@@ -679,6 +1061,64 @@ export default function BenchV2Route() {
     return list;
   }, [currentBaseline, activeProductId]);
 
+  // ==========================================================================
+  // LIGHTWEIGHT PRODUCT SEARCH & PAGINATION HANDLERS (via pickerFetcher)
+  // - Never switches activeProductId or reloads full baseline.
+  // - Resets cursor history when search changes.
+  // - Retains committed search query when paging.
+  // ==========================================================================
+  const submitPickerQuery = (targetSearch, targetCursor) => {
+    const params = new URLSearchParams();
+    params.set("pickerOnly", "1");
+    if (typeof targetSearch === "string" && targetSearch.trim() !== "") {
+      params.set("q", targetSearch.trim());
+    }
+    if (typeof targetCursor === "string" && targetCursor.trim() !== "") {
+      params.set("cursor", targetCursor.trim());
+    }
+    pickerFetcher.load(`/app/bench-v2?${params.toString()}`);
+  };
+
+  const handleSearchFormSubmit = (e) => {
+    if (e && typeof e.preventDefault === "function") {
+      e.preventDefault();
+    }
+    if (isAnyOperationBusy || isPickerLoading) return;
+    const cleanQuery = searchInputText.trim();
+    setCommittedSearchQuery(cleanQuery);
+    setPickerCursorHistory([]);
+    setCurrentPickerCursor(null);
+    setIsProductPickerOpen(true);
+    submitPickerQuery(cleanQuery, null);
+  };
+
+  const handleClearProductSearch = () => {
+    if (isAnyOperationBusy || isPickerLoading) return;
+    setSearchInputText("");
+    setCommittedSearchQuery("");
+    setPickerCursorHistory([]);
+    setCurrentPickerCursor(null);
+    submitPickerQuery("", null);
+  };
+
+  const handleNextProductPage = () => {
+    if (isAnyOperationBusy || isPickerLoading) return;
+    const nextCursor = pickerPageState?.pageInfo?.endCursor;
+    if (!pickerPageState?.pageInfo?.hasNextPage || !nextCursor) return;
+
+    setPickerCursorHistory((prev) => [...prev, currentPickerCursor]);
+    setCurrentPickerCursor(nextCursor);
+    submitPickerQuery(committedSearchQuery, nextCursor);
+  };
+
+  const handlePreviousProductPage = () => {
+    if (isAnyOperationBusy || isPickerLoading || pickerCursorHistory.length === 0) return;
+    const prevCursor = pickerCursorHistory[pickerCursorHistory.length - 1] ?? null;
+    setPickerCursorHistory((prev) => prev.slice(0, -1));
+    setCurrentPickerCursor(prevCursor);
+    submitPickerQuery(committedSearchQuery, prevCursor);
+  };
+
   // Product Selection Handler:
   // - Blocks switching during an active Save or active AI Scan.
   // - Selects strictly by exact Product GID.
@@ -700,38 +1140,26 @@ export default function BenchV2Route() {
       return;
     }
 
-    if (!isExactProductGid(nextProductGid) || nextProductGid === activeProductId) {
+    if (!isExactProductGid(nextProductGid)) {
+      return;
+    }
+
+    if (nextProductGid === activeProductId) {
+      setIsProductPickerOpen(false);
       return;
     }
 
     setClientPrevalidationBanner(null);
+    setIsProductPickerOpen(false);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set("productId", nextProductGid);
-    setSearchParams(nextParams);
-  };
-
-  // Pagination Handlers for Lightweight Product Selector (50 products per page)
-  const handleNextProductPage = () => {
-    if (isAnyOperationBusy) return;
-    const nextCursor = selectorPage?.pageInfo?.endCursor;
-    if (!selectorPage?.pageInfo?.hasNextPage || !nextCursor) return;
-
-    setCursorHistory((prev) => [...prev, currentSelectorCursor]);
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("productId", activeProductId);
-    nextParams.set("cursor", nextCursor);
-    setSearchParams(nextParams);
-  };
-
-  const handlePreviousProductPage = () => {
-    if (isAnyOperationBusy || cursorHistory.length === 0) return;
-    const prevCursor = cursorHistory[cursorHistory.length - 1] ?? null;
-    setCursorHistory((prev) => prev.slice(0, -1));
-
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("productId", activeProductId);
-    if (prevCursor) {
-      nextParams.set("cursor", prevCursor);
+    if (committedSearchQuery) {
+      nextParams.set("q", committedSearchQuery);
+    } else {
+      nextParams.delete("q");
+    }
+    if (currentPickerCursor) {
+      nextParams.set("cursor", currentPickerCursor);
     } else {
       nextParams.delete("cursor");
     }
@@ -1601,6 +2029,7 @@ export default function BenchV2Route() {
   // Clear Staged Draft Proposal Handler (Restores row to Unchanged without touching saved baseline)
   const handleClearDraftProposal = (destinationKey) => {
     setClientPrevalidationBanner(null);
+    releaseRetainedFieldEditor(activeProductId, destinationKey);
 
     setProposedByProduct((prev) => {
       const prodMap = { ...(prev[activeProductId] || {}) };
@@ -1624,6 +2053,7 @@ export default function BenchV2Route() {
   // Toggle Exact-Value Approval (Mutually exclusive with Keep Original)
   const handleToggleApproval = (destinationKey, currentlyApproved) => {
     setClientPrevalidationBanner(null);
+    releaseRetainedFieldEditor(activeProductId, destinationKey);
 
     if (currentlyApproved) {
       setApprovalsByProduct((prev) => {
@@ -1698,6 +2128,7 @@ export default function BenchV2Route() {
   // Toggle Keep Original Decision (Mutually exclusive with Approve; binds rejected proposal & baseline signature)
   const handleToggleKeepOriginal = (destinationKey, currentlyKeepOriginal) => {
     setClientPrevalidationBanner(null);
+    releaseRetainedFieldEditor(activeProductId, destinationKey);
 
     if (currentlyKeepOriginal) {
       setKeepOriginalByProduct((prev) => {
@@ -1750,19 +2181,25 @@ export default function BenchV2Route() {
     }));
   };
 
-  // Evaluate all rows across all 11 drawers for the selected product without visibility filters
+  const activeRetainedEditorsMap = retainedFieldEditorsByProduct[activeProductId] || {};
+  const activeSaveReportForCurrentProduct =
+    lastSaveReport && lastSaveReport.productId === activeProductId ? lastSaveReport : null;
+
+  // Evaluate all rows across all 11 drawers for the selected product, then compute
+  // view-only filter matches (never mutating underlying rows, drafts, or decisions).
   const evaluatedDrawerGroups = BENCH_V2_DRAWER_GROUPS.map((drawer) => {
     const evaluatedRows = drawer.fields.map((fieldContract) => {
+      const destKey = fieldContract.destinationKey;
       const baseEval = evaluateBenchV2FieldRow({
         productId: activeProductId,
-        destinationKey: fieldContract.destinationKey,
+        destinationKey: destKey,
         baselineSnapshot: currentBaseline,
         proposedMapForProduct: currentProposedMap,
         approvalsMapForProduct: currentApprovalsMap,
         keepOriginalMapForProduct: currentKeepOriginalMap
       });
 
-      const rawPropEntry = currentProposedMap[fieldContract.destinationKey];
+      const rawPropEntry = currentProposedMap[destKey];
       const proposalOrigin =
         rawPropEntry && typeof rawPropEntry === "object" && rawPropEntry.origin === "AI"
           ? "AI"
@@ -1770,14 +2207,32 @@ export default function BenchV2Route() {
             ? "Manual"
             : "None";
 
-      const heldAiAlternative = currentAiAlternativesMap[fieldContract.destinationKey] || null;
-      const scanProposalMeta = currentScanProposalsMetaMap[fieldContract.destinationKey] || null;
+      const heldAiAlternative = currentAiAlternativesMap[destKey] || null;
+      const scanProposalMeta = currentScanProposalsMetaMap[destKey] || null;
 
-      const writerHoldReason = getExistingWriterHoldReason(fieldContract.destinationKey);
+      const writerHoldReason = getExistingWriterHoldReason(destKey);
       const fidelityCheck =
         baseEval?.hasProposalKey && baseEval.proposedValue !== ""
           ? checkExistingWriterStringFidelity(baseEval.proposedValue)
           : { faithful: true, reason: null };
+
+      const hasSaveErrorOrConflict = Boolean(
+        activeSaveReportForCurrentProduct &&
+          (Object.prototype.hasOwnProperty.call(
+            activeSaveReportForCurrentProduct.blockedFields || {},
+            destKey
+          ) ||
+            Object.prototype.hasOwnProperty.call(
+              activeSaveReportForCurrentProduct.unresolvedChanges || {},
+              destKey
+            ) ||
+            Object.prototype.hasOwnProperty.call(
+              activeSaveReportForCurrentProduct.conflicts || {},
+              destKey
+            ) ||
+            (Array.isArray(activeSaveReportForCurrentProduct.unconfirmedDestinations) &&
+              activeSaveReportForCurrentProduct.unconfirmedDestinations.includes(destKey)))
+      );
 
       // Override connectionStatus and save readiness if held by existing writer skip/retirement list
       let effectiveConnectionStatus = baseEval.connectionStatus;
@@ -1803,11 +2258,12 @@ export default function BenchV2Route() {
         effectiveStatusReason = fidelityCheck.reason;
       }
 
-      return {
+      const enrichedRow = {
         ...baseEval,
         proposalOrigin,
         heldAiAlternative,
         scanProposalMeta,
+        hasSaveErrorOrConflict,
         isWriterHeld: Boolean(writerHoldReason),
         writerHoldReason,
         fidelityCheck,
@@ -1815,16 +2271,38 @@ export default function BenchV2Route() {
         effectiveReviewStatus,
         effectiveStatusReason
       };
+
+      const isEditorRetained = activeRetainedEditorsMap[destKey] === true;
+      const matchesCurrentFilter =
+        activeFilter === "All" ||
+        isEditorRetained ||
+        matchesBenchV2Filter(enrichedRow, activeFilter);
+
+      return {
+        ...enrichedRow,
+        isEditorRetained,
+        matchesCurrentFilter
+      };
     });
+
+    const visibleRows =
+      activeFilter === "All"
+        ? evaluatedRows
+        : evaluatedRows.filter((r) => r.matchesCurrentFilter);
 
     return {
       ...drawer,
-      evaluatedRows
+      evaluatedRows,
+      visibleRows
     };
   });
 
-  // Summarize selected product's Batch 1 review state
+  // Summarize selected product's Batch 1 review state across ALL rows (never reduced by view filter)
   const allEvaluatedRows = evaluatedDrawerGroups.flatMap((d) => d.evaluatedRows);
+  const totalVisibleFilteredRowCount = evaluatedDrawerGroups.reduce(
+    (acc, d) => acc + d.visibleRows.length,
+    0
+  );
   const stagedProposalRows = allEvaluatedRows.filter((r) => r.hasProposalKey);
   const validApprovedRows = allEvaluatedRows.filter(
     (r) => r.isApproved && !r.isWriterHeld && r.fidelityCheck.faithful
@@ -2014,11 +2492,16 @@ export default function BenchV2Route() {
 
   const hasBaselineErrors = Boolean(
     loaderData?.selectionError ||
-      loaderData?.selectorPage?.error ||
+      pickerPageState?.error ||
       loaderData?.loadError ||
       (Array.isArray(currentBaseline?.errors) && currentBaseline.errors.length > 0) ||
       currentBaseline?.metafieldsReadComplete !== true ||
       currentBaseline?.defsReadComplete !== true
+  );
+
+  const pickerItems = Array.isArray(pickerPageState?.items) ? pickerPageState.items : [];
+  const isSelectedProductInCurrentPickerPage = pickerItems.some(
+    (item) => item.id === activeProductId
   );
 
   return (
@@ -2034,7 +2517,7 @@ export default function BenchV2Route() {
       }}
     >
       <div style={{ maxWidth: "1140px", margin: "0 auto" }}>
-        {/* SHORT TOP SUMMARY BAR + COMPACT PAGINATED PRODUCT SELECTOR + 120x120 THUMBNAILS */}
+        {/* TOP SUMMARY BAR + ACCESSIBLE PRODUCT SEARCH / PICKER + 120x120 THUMBNAILS + DRAWER FILTER */}
         <header
           style={{
             backgroundColor: "#ffffff",
@@ -2053,9 +2536,26 @@ export default function BenchV2Route() {
               gap: "16px"
             }}
           >
-            <div>
-              <h1 style={{ margin: "0 0 6px 0", fontSize: "24px", fontWeight: 700 }}>
-                Product Bench: {activeProductTitle}
+            <div style={{ minWidth: 0, flex: "1 1 420px" }}>
+              <div
+                style={{
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "#15803d",
+                  marginBottom: "2px"
+                }}
+              >
+                Selected Product on Bench
+              </div>
+              <h1
+                style={{
+                  margin: "0 0 6px 0",
+                  fontSize: "24px",
+                  fontWeight: 700,
+                  wordBreak: "break-word"
+                }}
+              >
+                {activeProductHeadline}
               </h1>
               <div style={{ fontSize: "16px", color: "#1e293b" }}>
                 Drafts staged: <strong>{stagedProposalRows.length}</strong> &nbsp;|&nbsp; Approved
@@ -2145,126 +2645,6 @@ export default function BenchV2Route() {
             </div>
           </div>
 
-          {/* COMPACT LIGHTWEIGHT PAGINATED INVENTORY SELECTOR */}
-          <div
-            style={{
-              marginTop: "16px",
-              paddingTop: "14px",
-              borderTop: "1px solid #cbd5e1",
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: "12px"
-            }}
-          >
-            <label
-              htmlFor="bench-v2-product-selector"
-              style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}
-            >
-              Select Product:
-            </label>
-
-            <select
-              id="bench-v2-product-selector"
-              aria-label="Select Product"
-              value={activeProductId}
-              disabled={isAnyOperationBusy}
-              onChange={(e) => handleSelectProductGid(e.target.value)}
-              style={{
-                flex: "1 1 320px",
-                padding: "9px 12px",
-                fontSize: "16px",
-                fontWeight: 600,
-                backgroundColor: "#ffffff",
-                color: "#0f172a",
-                border: "2px solid #475569",
-                borderRadius: "8px",
-                cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
-              }}
-            >
-              {selectorOptions.map((item) => {
-                const draftCountForItem = Object.keys(proposedByProduct[item.id] || {}).length;
-                const suffix = draftCountForItem > 0 ? ` (${draftCountForItem} staged)` : "";
-                return (
-                  <option key={item.id} value={item.id}>
-                    {item.title}
-                    {suffix}
-                  </option>
-                );
-              })}
-            </select>
-
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <button
-                type="button"
-                onClick={handlePreviousProductPage}
-                disabled={isAnyOperationBusy || cursorHistory.length === 0}
-                style={{
-                  padding: "8px 14px",
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  backgroundColor:
-                    isAnyOperationBusy || cursorHistory.length === 0
-                      ? "#f1f5f9"
-                      : "#ffffff",
-                  color:
-                    isAnyOperationBusy || cursorHistory.length === 0
-                      ? "#64748b"
-                      : "#0f172a",
-                  border: "1px solid #64748b",
-                  borderRadius: "6px",
-                  cursor:
-                    isAnyOperationBusy || cursorHistory.length === 0
-                      ? "not-allowed"
-                      : "pointer"
-                }}
-              >
-                Previous 50
-              </button>
-
-              <span style={{ fontSize: "14px", fontWeight: 600, color: "#334155" }}>
-                Page {cursorHistory.length + 1}
-              </span>
-
-              <button
-                type="button"
-                onClick={handleNextProductPage}
-                disabled={
-                  isAnyOperationBusy ||
-                  !selectorPage?.pageInfo?.hasNextPage ||
-                  !selectorPage?.pageInfo?.endCursor
-                }
-                style={{
-                  padding: "8px 14px",
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  backgroundColor:
-                    isAnyOperationBusy ||
-                    !selectorPage?.pageInfo?.hasNextPage ||
-                    !selectorPage?.pageInfo?.endCursor
-                      ? "#f1f5f9"
-                      : "#ffffff",
-                  color:
-                    isAnyOperationBusy ||
-                    !selectorPage?.pageInfo?.hasNextPage ||
-                    !selectorPage?.pageInfo?.endCursor
-                      ? "#64748b"
-                      : "#0f172a",
-                  border: "1px solid #64748b",
-                  borderRadius: "6px",
-                  cursor:
-                    isAnyOperationBusy ||
-                    !selectorPage?.pageInfo?.hasNextPage ||
-                    !selectorPage?.pageInfo?.endCursor
-                      ? "not-allowed"
-                      : "pointer"
-                }}
-              >
-                Next 50
-              </button>
-            </div>
-          </div>
-
           {/* 120px BY 120px PRODUCT THUMBNAIL STRIP NEAR PRODUCT CONTROLS */}
           <div
             aria-label="Selected Product Photos"
@@ -2336,25 +2716,484 @@ export default function BenchV2Route() {
             )}
           </div>
 
-          {/* BRIEF CONNECTION NOTE & DRAWER EXPAND/COLLAPSE CONTROLS */}
+          {/* ACCESSIBLE PRODUCT SEARCH & READABLE PICKER (REPLACES DENSE SELECT DROPDOWN) */}
           <div
             style={{
-              marginTop: "14px",
+              marginTop: "16px",
+              paddingTop: "16px",
+              borderTop: "2px solid #cbd5e1"
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "12px"
+              }}
+            >
+              <form
+                onSubmit={handleSearchFormSubmit}
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: "10px",
+                  flex: "1 1 520px"
+                }}
+              >
+                <label
+                  htmlFor="bench-v2-product-search-input"
+                  style={{ fontWeight: 700, fontSize: "17px", color: "#0f172a" }}
+                >
+                  Find Product:
+                </label>
+
+                <input
+                  id="bench-v2-product-search-input"
+                  type="text"
+                  value={searchInputText}
+                  disabled={isAnyOperationBusy}
+                  placeholder="Type product or stone name, then press Enter or Search..."
+                  onChange={(e) => setSearchInputText(e.target.value)}
+                  style={{
+                    flex: "1 1 260px",
+                    padding: "10px 14px",
+                    fontSize: "16px",
+                    border: "2px solid #475569",
+                    borderRadius: "8px",
+                    backgroundColor: "#ffffff",
+                    color: "#0f172a"
+                  }}
+                />
+
+                <button
+                  type="submit"
+                  disabled={isAnyOperationBusy || isPickerLoading}
+                  style={{
+                    padding: "10px 18px",
+                    fontSize: "16px",
+                    fontWeight: 700,
+                    backgroundColor:
+                      isAnyOperationBusy || isPickerLoading ? "#cbd5e1" : "#0f172a",
+                    color: isAnyOperationBusy || isPickerLoading ? "#334155" : "#ffffff",
+                    border: "2px solid #0f172a",
+                    borderRadius: "8px",
+                    cursor:
+                      isAnyOperationBusy || isPickerLoading ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {isPickerLoading ? "Searching..." : "Search"}
+                </button>
+
+                {(searchInputText !== "" || committedSearchQuery !== "") && (
+                  <button
+                    type="button"
+                    onClick={handleClearProductSearch}
+                    disabled={isAnyOperationBusy || isPickerLoading}
+                    style={{
+                      padding: "10px 16px",
+                      fontSize: "16px",
+                      fontWeight: 600,
+                      backgroundColor: "#f8fafc",
+                      color: "#0f172a",
+                      border: "2px solid #64748b",
+                      borderRadius: "8px",
+                      cursor:
+                        isAnyOperationBusy || isPickerLoading ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    Clear Search
+                  </button>
+                )}
+              </form>
+
+              <button
+                type="button"
+                aria-expanded={isProductPickerOpen}
+                onClick={() => setIsProductPickerOpen((prev) => !prev)}
+                style={{
+                  padding: "10px 16px",
+                  fontSize: "16px",
+                  fontWeight: 700,
+                  backgroundColor: isProductPickerOpen ? "#334155" : "#f1f5f9",
+                  color: isProductPickerOpen ? "#ffffff" : "#0f172a",
+                  border: "2px solid #334155",
+                  borderRadius: "8px",
+                  cursor: "pointer"
+                }}
+              >
+                {isProductPickerOpen
+                  ? "Hide Product List"
+                  : `Browse Product List (${pickerItems.length} on Page ${
+                      pickerCursorHistory.length + 1
+                    })`}
+              </button>
+            </div>
+
+            {/* ALWAYS-VISIBLE CURRENTLY SELECTED PRODUCT SUMMARY WHEN ABSENT FROM RESULTS PAGE */}
+            {!isSelectedProductInCurrentPickerPage && (
+              <div
+                style={{
+                  marginTop: "10px",
+                  padding: "10px 14px",
+                  backgroundColor: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "8px",
+                  fontSize: "15px",
+                  color: "#14532d"
+                }}
+              >
+                <strong>Currently Selected on Bench:</strong>{" "}
+                {activeProductPieceName ? (
+                  <>
+                    <strong>{activeProductPieceName}</strong> ({activeProductTitle})
+                  </>
+                ) : (
+                  <strong>{activeProductTitle}</strong>
+                )}{" "}
+                — stays loaded while you search or browse other pages.
+              </div>
+            )}
+
+            {/* READABLE PRODUCT RESULTS LIST (LARGE MIXED-CASE LABELS, COMFORTABLE SPACING) */}
+            {isProductPickerOpen && (
+              <div
+                role="region"
+                aria-label="Product Search Results"
+                style={{
+                  marginTop: "14px",
+                  padding: "16px",
+                  backgroundColor: "#f8fafc",
+                  border: "2px solid #94a3b8",
+                  borderRadius: "10px"
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "12px",
+                    marginBottom: "12px"
+                  }}
+                >
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+                    {committedSearchQuery
+                      ? `Search Results for "${committedSearchQuery}" (${pickerItems.length} shown on Page ${
+                          pickerCursorHistory.length + 1
+                        })`
+                      : `Product Inventory — Page ${pickerCursorHistory.length + 1} (${pickerItems.length} products)`}
+                  </div>
+
+                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={handlePreviousProductPage}
+                      disabled={
+                        isAnyOperationBusy ||
+                        isPickerLoading ||
+                        pickerCursorHistory.length === 0
+                      }
+                      style={{
+                        padding: "8px 14px",
+                        fontSize: "15px",
+                        fontWeight: 600,
+                        backgroundColor:
+                          isAnyOperationBusy ||
+                          isPickerLoading ||
+                          pickerCursorHistory.length === 0
+                            ? "#e2e8f0"
+                            : "#ffffff",
+                        color:
+                          isAnyOperationBusy ||
+                          isPickerLoading ||
+                          pickerCursorHistory.length === 0
+                            ? "#64748b"
+                            : "#0f172a",
+                        border: "2px solid #64748b",
+                        borderRadius: "6px",
+                        cursor:
+                          isAnyOperationBusy ||
+                          isPickerLoading ||
+                          pickerCursorHistory.length === 0
+                            ? "not-allowed"
+                            : "pointer"
+                      }}
+                    >
+                      Previous 50
+                    </button>
+
+                    <span style={{ fontSize: "15px", fontWeight: 700, color: "#1e293b" }}>
+                      Page {pickerCursorHistory.length + 1}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={handleNextProductPage}
+                      disabled={
+                        isAnyOperationBusy ||
+                        isPickerLoading ||
+                        !pickerPageState?.pageInfo?.hasNextPage ||
+                        !pickerPageState?.pageInfo?.endCursor
+                      }
+                      style={{
+                        padding: "8px 14px",
+                        fontSize: "15px",
+                        fontWeight: 600,
+                        backgroundColor:
+                          isAnyOperationBusy ||
+                          isPickerLoading ||
+                          !pickerPageState?.pageInfo?.hasNextPage ||
+                          !pickerPageState?.pageInfo?.endCursor
+                            ? "#e2e8f0"
+                            : "#ffffff",
+                        color:
+                          isAnyOperationBusy ||
+                          isPickerLoading ||
+                          !pickerPageState?.pageInfo?.hasNextPage ||
+                          !pickerPageState?.pageInfo?.endCursor
+                            ? "#64748b"
+                            : "#0f172a",
+                        border: "2px solid #64748b",
+                        borderRadius: "6px",
+                        cursor:
+                          isAnyOperationBusy ||
+                          isPickerLoading ||
+                          !pickerPageState?.pageInfo?.hasNextPage ||
+                          !pickerPageState?.pageInfo?.endCursor
+                            ? "not-allowed"
+                            : "pointer"
+                      }}
+                    >
+                      Next 50
+                    </button>
+                  </div>
+                </div>
+
+                {pickerItems.length === 0 ? (
+                  <div
+                    style={{
+                      padding: "18px",
+                      backgroundColor: "#ffffff",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "8px",
+                      fontSize: "16px",
+                      color: "#334155"
+                    }}
+                  >
+                    No products matched{" "}
+                    {committedSearchQuery ? `"${committedSearchQuery}"` : "this page"}. Click{" "}
+                    <strong>Clear Search</strong> to browse all products.
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                      maxHeight: "420px",
+                      overflowY: "auto",
+                      paddingRight: "4px"
+                    }}
+                  >
+                    {pickerItems.map((item) => {
+                      const isCurrent = item.id === activeProductId;
+                      const stagedCountForItem = Object.keys(
+                        proposedByProduct[item.id] || {}
+                      ).length;
+                      const approvedCountForItem = Object.keys(
+                        approvalsByProduct[item.id] || {}
+                      ).length;
+                      const hasDistinctPieceName = Boolean(
+                        item.pieceName && item.pieceName !== item.title
+                      );
+                      const primaryDisplayLabel = item.pieceName || item.title;
+
+                      return (
+                        <div
+                          key={item.id}
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: "12px",
+                            padding: "12px 16px",
+                            backgroundColor: isCurrent ? "#f0fdf4" : "#ffffff",
+                            border: isCurrent
+                              ? "2px solid #15803d"
+                              : "1px solid #94a3b8",
+                            borderRadius: "8px"
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: "1 1 360px" }}>
+                            <div
+                              style={{
+                                fontSize: "18px",
+                                fontWeight: 700,
+                                color: "#0f172a",
+                                wordBreak: "break-word"
+                              }}
+                            >
+                              {primaryDisplayLabel}
+                              {isCurrent && (
+                                <span
+                                  style={{
+                                    marginLeft: "10px",
+                                    fontSize: "14px",
+                                    fontWeight: 700,
+                                    color: "#15803d"
+                                  }}
+                                >
+                                  (Selected on Bench)
+                                </span>
+                              )}
+                              {stagedCountForItem > 0 && (
+                                <span
+                                  style={{
+                                    marginLeft: "10px",
+                                    fontSize: "14px",
+                                    fontWeight: 600,
+                                    color: "#1d4ed8"
+                                  }}
+                                >
+                                  • {stagedCountForItem} draft
+                                  {stagedCountForItem === 1 ? "" : "s"}
+                                  {approvedCountForItem > 0
+                                    ? ` (${approvedCountForItem} approved)`
+                                    : ""}
+                                </span>
+                              )}
+                            </div>
+
+                            {hasDistinctPieceName && (
+                              <div
+                                style={{
+                                  fontSize: "15px",
+                                  color: "#334155",
+                                  marginTop: "4px",
+                                  wordBreak: "break-word"
+                                }}
+                              >
+                                Full Product Title: {item.title}
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isAnyOperationBusy || isCurrent}
+                            onClick={() => handleSelectProductGid(item.id)}
+                            style={{
+                              padding: "9px 18px",
+                              fontSize: "16px",
+                              fontWeight: 700,
+                              backgroundColor: isCurrent
+                                ? "#15803d"
+                                : isAnyOperationBusy
+                                  ? "#cbd5e1"
+                                  : "#0f172a",
+                              color:
+                                isCurrent || !isAnyOperationBusy ? "#ffffff" : "#334155",
+                              border: isCurrent
+                                ? "2px solid #14532d"
+                                : "2px solid #0f172a",
+                              borderRadius: "8px",
+                              cursor:
+                                isAnyOperationBusy || isCurrent
+                                  ? "not-allowed"
+                                  : "pointer",
+                              flexShrink: 0
+                            }}
+                          >
+                            {isCurrent ? "Selected" : "Select Product"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* RESTORED TAB 3 DRAWER FILTER BAR + DRAWER EXPAND/COLLAPSE CONTROLS */}
+          <div
+            style={{
+              marginTop: "16px",
               paddingTop: "14px",
               borderTop: "1px solid #cbd5e1",
               display: "flex",
               flexWrap: "wrap",
               justifyContent: "space-between",
               alignItems: "center",
-              gap: "12px",
-              fontSize: "15px",
-              color: "#334155"
+              gap: "14px"
             }}
           >
-            <div>
-              Drawers 1 to 4 are connected for manual edits and explicit Gemini AI Scan
-              suggestions (all AI suggestions stay unapproved until you check Approve). Four
-              fields (Is OOAK, Cut and Shape, Stone Shape, Color) remain on writer hold.
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "10px"
+              }}
+            >
+              <label
+                htmlFor="bench-v2-field-filter"
+                style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}
+              >
+                Filter Fields:
+              </label>
+
+              <select
+                id="bench-v2-field-filter"
+                aria-label="Filter Fields"
+                value={activeFilter}
+                onChange={(e) => setActiveFilter(e.target.value)}
+                style={{
+                  padding: "8px 12px",
+                  fontSize: "16px",
+                  fontWeight: 600,
+                  backgroundColor: "#ffffff",
+                  color: "#0f172a",
+                  border: "2px solid #475569",
+                  borderRadius: "8px",
+                  cursor: "pointer"
+                }}
+              >
+                {BENCH_V2_FILTER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+
+              {activeFilter !== "All" && (
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter("All")}
+                  style={{
+                    padding: "8px 14px",
+                    fontSize: "15px",
+                    fontWeight: 700,
+                    backgroundColor: "#eff6ff",
+                    color: "#1e3a8a",
+                    border: "2px solid #1d4ed8",
+                    borderRadius: "8px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Return to All Fields
+                </button>
+              )}
+
+              <span style={{ fontSize: "15px", color: "#334155" }}>
+                Showing <strong>{totalVisibleFilteredRowCount}</strong> of{" "}
+                <strong>{allEvaluatedRows.length}</strong> fields
+              </span>
             </div>
 
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -2362,8 +3201,8 @@ export default function BenchV2Route() {
                 type="button"
                 onClick={() => handleSetAllDrawers(true)}
                 style={{
-                  padding: "6px 12px",
-                  fontSize: "14px",
+                  padding: "8px 14px",
+                  fontSize: "15px",
                   fontWeight: 600,
                   backgroundColor: "#f8fafc",
                   color: "#0f172a",
@@ -2378,8 +3217,8 @@ export default function BenchV2Route() {
                 type="button"
                 onClick={() => handleSetAllDrawers(false)}
                 style={{
-                  padding: "6px 12px",
-                  fontSize: "14px",
+                  padding: "8px 14px",
+                  fontSize: "15px",
                   fontWeight: 600,
                   backgroundColor: "#f8fafc",
                   color: "#0f172a",
@@ -2391,6 +3230,19 @@ export default function BenchV2Route() {
                 Close All Drawers
               </button>
             </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: "10px",
+              fontSize: "15px",
+              color: "#334155"
+            }}
+          >
+            Drawers 1 to 4 are connected for manual edits and explicit Gemini AI Scan
+            suggestions (all AI suggestions stay unapproved until you check Approve). Four
+            fields (Is OOAK, Cut and Shape, Stone Shape, Color) remain on writer hold. Filtering
+            is view-only and never clears drafts or decisions.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
@@ -2409,6 +3261,12 @@ export default function BenchV2Route() {
               <div>
                 <strong>Product GID:</strong> <code>{activeProductId}</code>
               </div>
+              {activeProductPieceName && (
+                <div>
+                  <strong>Saved Piece Name (custom.piece_name):</strong>{" "}
+                  <code>{activeProductPieceName}</code>
+                </div>
+              )}
               <div>
                 <strong>Category:</strong>{" "}
                 {currentBaseline?.productCategory?.fullName
@@ -2446,7 +3304,7 @@ export default function BenchV2Route() {
               Product Read Warning
             </div>
             {loaderData?.selectionError && <div>{loaderData.selectionError}</div>}
-            {loaderData?.selectorPage?.error && <div>{loaderData.selectorPage.error}</div>}
+            {pickerPageState?.error && <div>{pickerPageState.error}</div>}
             {loaderData?.loadError && <div>{loaderData.loadError}</div>}
             {Array.isArray(currentBaseline?.errors) &&
               currentBaseline.errors.map((errMsg, idx) => (
@@ -2715,6 +3573,53 @@ export default function BenchV2Route() {
           </div>
         )}
 
+        {/* HONEST EMPTY-FILTER NOTICE WITH ONE-CLICK RETURN TO ALL */}
+        {activeFilter !== "All" && totalVisibleFilteredRowCount === 0 && (
+          <div
+            role="status"
+            style={{
+              backgroundColor: "#ffffff",
+              border: "2px solid #2563eb",
+              borderRadius: "10px",
+              padding: "20px 24px",
+              marginBottom: "20px",
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "16px"
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>
+                No fields currently match the "{activeFilter}" filter on {activeProductTitle}
+              </div>
+              <div style={{ fontSize: "15px", color: "#334155", marginTop: "4px" }}>
+                {activeFilter === "Needs review"
+                  ? `All review items in this view are resolved (${validApprovedRows.length} approved to save, ${keepOriginalRows.length} Keep Original). Review complete does not mean saved to Shopify.`
+                  : "All underlying fields, drafts, approvals, and Keep Original decisions remain intact."}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveFilter("All")}
+              style={{
+                padding: "10px 18px",
+                fontSize: "16px",
+                fontWeight: 700,
+                backgroundColor: "#1d4ed8",
+                color: "#ffffff",
+                border: "2px solid #1e3a8a",
+                borderRadius: "8px",
+                cursor: "pointer"
+              }}
+            >
+              Show All Fields
+            </button>
+          </div>
+        )}
+
         {/* ALL 11 DRAWERS — INITIALLY COLLAPSED, PLAIN NAMES, CLEAR EXPAND/COLLAPSE */}
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           {evaluatedDrawerGroups.map((drawer) => {
@@ -2770,7 +3675,10 @@ export default function BenchV2Route() {
                       {plainDrawerTitle}
                     </h2>
                     <div style={{ fontSize: "14px", color: "#334155", marginTop: "2px" }}>
-                      {drawerSubtitleLabel} &bull; {drawer.evaluatedRows.length} fields
+                      {drawerSubtitleLabel} &bull;{" "}
+                      {activeFilter === "All"
+                        ? `${drawer.evaluatedRows.length} fields`
+                        : `${drawer.visibleRows.length} of ${drawer.evaluatedRows.length} fields match "${activeFilter}"`}
                       {drawerStagedCount > 0 && ` • ${drawerStagedCount} staged`}
                       {drawerApprovedCount > 0 && ` • ${drawerApprovedCount} approved`}
                       {drawerHeldAltCount > 0 && ` • ${drawerHeldAltCount} AI alternative`}
@@ -2796,7 +3704,7 @@ export default function BenchV2Route() {
                   </button>
                 </div>
 
-                {/* DRAWER BODY — ALL FIELDS IN DRAWER */}
+                {/* DRAWER BODY — VISIBLE FIELDS IN DRAWER */}
                 {isOpen && (
                   <div style={{ padding: "18px 20px", backgroundColor: "#f8fafc" }}>
                     {/* PER-IMAGE NATIVE MEDIA ALT BASELINE INSPECTION IN DRAWER 9 */}
@@ -2853,602 +3761,662 @@ export default function BenchV2Route() {
                         </div>
                       )}
 
-                    {/* FIELD CARDS */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                      {drawer.evaluatedRows.map((row) => {
-                        const {
-                          contract,
-                          baselineObservation: obs,
-                          baselineDisplayValue,
-                          options,
-                          hasProposalKey,
-                          proposedValue,
-                          proposedDisplayValue,
-                          proposalSource,
-                          proposalOrigin,
-                          heldAiAlternative,
-                          scanProposalMeta,
-                          validation,
-                          isApproved,
-                          isKeepOriginal,
-                          isWriterHeld,
-                          fidelityCheck,
-                          effectiveConnectionStatus,
-                          effectiveReviewStatus,
-                          effectiveStatusReason
-                        } = row;
+                    {/* EMPTY DRAWER FILTER STATE */}
+                    {drawer.visibleRows.length === 0 ? (
+                      <div
+                        style={{
+                          padding: "14px 16px",
+                          backgroundColor: "#ffffff",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "8px",
+                          display: "flex",
+                          flexWrap: "wrap",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "12px",
+                          fontSize: "15px",
+                          color: "#334155"
+                        }}
+                      >
+                        <span>
+                          0 fields in {plainDrawerTitle} match the "{activeFilter}" filter.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setActiveFilter("All")}
+                          style={{
+                            padding: "6px 12px",
+                            fontSize: "14px",
+                            fontWeight: 700,
+                            backgroundColor: "#f1f5f9",
+                            color: "#0f172a",
+                            border: "1px solid #475569",
+                            borderRadius: "6px",
+                            cursor: "pointer"
+                          }}
+                        >
+                          Show All Fields
+                        </button>
+                      </div>
+                    ) : (
+                      /* FIELD CARDS */
+                      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                        {drawer.visibleRows.map((row) => {
+                          const {
+                            contract,
+                            baselineObservation: obs,
+                            baselineDisplayValue,
+                            options,
+                            hasProposalKey,
+                            proposedValue,
+                            proposedDisplayValue,
+                            proposalSource,
+                            proposalOrigin,
+                            heldAiAlternative,
+                            scanProposalMeta,
+                            validation,
+                            isApproved,
+                            isKeepOriginal,
+                            isWriterHeld,
+                            fidelityCheck,
+                            effectiveConnectionStatus,
+                            effectiveReviewStatus,
+                            effectiveStatusReason
+                          } = row;
 
-                        const isOoakRow =
-                          contract.destinationKey === "custom.is_ooak" ||
-                          contract.destinationKey === "custom.is_one_of_a_kind";
+                          const isOoakRow =
+                            contract.destinationKey === "custom.is_ooak" ||
+                            contract.destinationKey === "custom.is_one_of_a_kind";
 
-                        const canEditDraftInBatch1 =
-                          contract.isWritableInBatch1 && obs.evidenceAvailable;
+                          const canEditDraftInBatch1 =
+                            contract.isWritableInBatch1 && obs.evidenceAvailable;
 
-                        const canApproveForSave =
-                          contract.isWritableInBatch1 &&
-                          !isWriterHeld &&
-                          hasProposalKey &&
-                          Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
-                          fidelityCheck.faithful;
+                          const canApproveForSave =
+                            contract.isWritableInBatch1 &&
+                            !isWriterHeld &&
+                            hasProposalKey &&
+                            Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
+                            fidelityCheck.faithful;
 
-                        const canSelectKeepOriginal =
-                          contract.isWritableInBatch1 &&
-                          hasProposalKey &&
-                          obs.evidenceAvailable &&
-                          proposedValue.trim() !== "" &&
-                          !(obs.presence === "present" && obs.rawValue === proposedValue);
+                          const canSelectKeepOriginal =
+                            contract.isWritableInBatch1 &&
+                            hasProposalKey &&
+                            obs.evidenceAvailable &&
+                            proposedValue.trim() !== "" &&
+                            !(obs.presence === "present" && obs.rawValue === proposedValue);
 
-                        const plainLabel = cleanFieldHeading(contract.label);
-                        const readableSaved = formatReadableSavedValue(
-                          obs,
-                          isOoakRow,
-                          baselineDisplayValue
-                        );
-                        const shortNotice = getShortPlainNotice(row);
+                          const plainLabel = cleanFieldHeading(contract.label);
+                          const readableSaved = formatReadableSavedValue(
+                            obs,
+                            isOoakRow,
+                            baselineDisplayValue
+                          );
+                          const shortNotice = getShortPlainNotice(row);
 
-                        let cardBorder = "1px solid #cbd5e1";
-                        let cardBg = "#ffffff";
-                        if (isApproved && !isWriterHeld) {
-                          cardBorder = "2px solid #15803d";
-                          cardBg = "#f0fdf4";
-                        } else if (
-                          hasProposalKey &&
-                          (!validation?.valid || !fidelityCheck.faithful || isWriterHeld)
-                        ) {
-                          cardBorder = "2px solid #b45309";
-                          cardBg = "#fffbeb";
-                        } else if (hasProposalKey && !isKeepOriginal) {
-                          cardBorder = "2px solid #2563eb";
-                        }
+                          let cardBorder = "1px solid #cbd5e1";
+                          let cardBg = "#ffffff";
+                          if (isApproved && !isWriterHeld) {
+                            cardBorder = "2px solid #15803d";
+                            cardBg = "#f0fdf4";
+                          } else if (
+                            hasProposalKey &&
+                            (!validation?.valid || !fidelityCheck.faithful || isWriterHeld)
+                          ) {
+                            cardBorder = "2px solid #b45309";
+                            cardBg = "#fffbeb";
+                          } else if (hasProposalKey && !isKeepOriginal) {
+                            cardBorder = "2px solid #2563eb";
+                          }
 
-                        return (
-                          <div
-                            key={contract.destinationKey}
-                            style={{
-                              backgroundColor: cardBg,
-                              border: cardBorder,
-                              borderRadius: "8px",
-                              padding: "16px 18px"
-                            }}
-                          >
-                            {/* FIELD TITLE ROW */}
+                          return (
                             <div
+                              key={contract.destinationKey}
                               style={{
-                                display: "flex",
-                                flexWrap: "wrap",
-                                justifyContent: "space-between",
-                                alignItems: "baseline",
-                                gap: "8px",
-                                marginBottom: "12px"
+                                backgroundColor: cardBg,
+                                border: cardBorder,
+                                borderRadius: "8px",
+                                padding: "16px 18px"
                               }}
                             >
-                              <div style={{ fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>
-                                {plainLabel}
-                                {contract.destinationKey === "custom.is_ooak" && (
-                                  <span
-                                    style={{
-                                      fontSize: "14px",
-                                      fontWeight: 500,
-                                      color: "#475569",
-                                      marginLeft: "8px"
-                                    }}
-                                  >
-                                    (Second OOAK field — custom.is_ooak)
-                                  </span>
-                                )}
-                                {contract.destinationKey === "custom.is_one_of_a_kind" && (
-                                  <span
-                                    style={{
-                                      fontSize: "14px",
-                                      fontWeight: 500,
-                                      color: "#475569",
-                                      marginLeft: "8px"
-                                    }}
-                                  >
-                                    (Primary OOAK field — custom.is_one_of_a_kind)
-                                  </span>
-                                )}
-                              </div>
-
-                              <div style={{ fontSize: "15px", fontWeight: 600, color: "#334155" }}>
-                                {isApproved && !isWriterHeld
-                                  ? "Approved to save"
-                                  : isKeepOriginal
-                                    ? "Keeping original"
-                                    : hasProposalKey
-                                      ? proposalOrigin === "AI"
-                                        ? "AI suggestion (unapproved)"
-                                        : "Draft staged (unapproved)"
-                                      : "Unchanged"}
-                              </div>
-                            </div>
-
-                            {/* SAVED VS. PROPOSED SIDE-BY-SIDE (STACKS ON NARROW SCREENS) */}
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))",
-                                gap: "16px",
-                                alignItems: "stretch"
-                              }}
-                            >
-                              {/* SAVED BOX */}
+                              {/* FIELD TITLE ROW */}
                               <div
                                 style={{
-                                  backgroundColor: "#f8fafc",
-                                  border: "1px solid #94a3b8",
-                                  borderRadius: "6px",
-                                  padding: "12px 14px"
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  justifyContent: "space-between",
+                                  alignItems: "baseline",
+                                  gap: "8px",
+                                  marginBottom: "12px"
                                 }}
                               >
-                                <div
-                                  style={{
-                                    fontSize: "14px",
-                                    fontWeight: 700,
-                                    color: "#334155",
-                                    marginBottom: "6px"
-                                  }}
-                                >
-                                  Saved
-                                </div>
-                                <div
-                                  style={{
-                                    fontSize: "16px",
-                                    color:
-                                      obs.presence === "present" ? "#0f172a" : "#475569",
-                                    fontWeight: obs.presence === "present" ? 600 : 400,
-                                    wordBreak: "break-word",
-                                    whiteSpace: "pre-wrap"
-                                  }}
-                                >
-                                  {readableSaved}
-                                </div>
-                              </div>
-
-                              {/* PROPOSED BOX + NEARBY APPROVAL CONTROLS */}
-                              <div
-                                style={{
-                                  backgroundColor: "#ffffff",
-                                  border: "1px solid #94a3b8",
-                                  borderRadius: "6px",
-                                  padding: "12px 14px"
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    alignItems: "baseline",
-                                    gap: "8px",
-                                    marginBottom: "6px"
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      fontSize: "14px",
-                                      fontWeight: 700,
-                                      color: "#334155"
-                                    }}
-                                  >
-                                    Proposed
-                                  </span>
-                                  {hasProposalKey && proposalSource && proposalSource !== "None" && (
-                                    <span style={{ fontSize: "13px", color: "#475569" }}>
-                                      Source: {proposalSource}
+                                <div style={{ fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>
+                                  {plainLabel}
+                                  {contract.destinationKey === "custom.is_ooak" && (
+                                    <span
+                                      style={{
+                                        fontSize: "14px",
+                                        fontWeight: 500,
+                                        color: "#475569",
+                                        marginLeft: "8px"
+                                      }}
+                                    >
+                                      (Second OOAK field — custom.is_ooak)
+                                    </span>
+                                  )}
+                                  {contract.destinationKey === "custom.is_one_of_a_kind" && (
+                                    <span
+                                      style={{
+                                        fontSize: "14px",
+                                        fontWeight: 500,
+                                        color: "#475569",
+                                        marginLeft: "8px"
+                                      }}
+                                    >
+                                      (Primary OOAK field — custom.is_one_of_a_kind)
                                     </span>
                                   )}
                                 </div>
 
-                                {contract.isWritableInBatch1 ? (
-                                  <div>
-                                    {Array.isArray(options) && options.length > 0 && (
-                                      <select
-                                        aria-label={`Preset options for ${contract.destinationKey}`}
-                                        value={
-                                          options.some(
-                                            (o) =>
-                                              (typeof o === "object" ? o.value : o) ===
-                                              proposedValue
-                                          )
-                                            ? proposedValue
-                                            : ""
-                                        }
-                                        disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
-                                        onChange={(e) => {
-                                          if (e.target.value === "") return;
-                                          handleManualProposalChange(
-                                            contract.destinationKey,
-                                            e.target.value
-                                          );
-                                        }}
-                                        style={{
-                                          width: "100%",
-                                          padding: "8px 10px",
-                                          marginBottom: "8px",
-                                          fontSize: "15px",
-                                          border: "1px solid #475569",
-                                          borderRadius: "6px",
-                                          backgroundColor: "#ffffff",
-                                          color: "#0f172a"
-                                        }}
-                                      >
-                                        <option value="">Choose an option...</option>
-                                        {options.map((opt, idx) => {
-                                          const optVal =
-                                            typeof opt === "object"
-                                              ? opt.value ?? opt.label
-                                              : String(opt);
-                                          const optLabel =
-                                            typeof opt === "object" ? opt.label : String(opt);
-                                          return (
-                                            <option key={`${optVal}_${idx}`} value={optVal}>
-                                              {optLabel}
-                                            </option>
-                                          );
-                                        })}
-                                      </select>
-                                    )}
-
-                                    <div style={{ display: "flex", gap: "8px" }}>
-                                      <input
-                                        type="text"
-                                        aria-label={`Manual proposal for ${contract.destinationKey}`}
-                                        value={proposedValue}
-                                        disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
-                                        placeholder={
-                                          canEditDraftInBatch1
-                                            ? "Type proposed value..."
-                                            : "Editing locked until baseline loads"
-                                        }
-                                        onChange={(e) =>
-                                          handleManualProposalChange(
-                                            contract.destinationKey,
-                                            e.target.value
-                                          )
-                                        }
-                                        style={{
-                                          flex: 1,
-                                          padding: "8px 10px",
-                                          fontSize: "16px",
-                                          border: "1px solid #475569",
-                                          borderRadius: "6px",
-                                          color: "#0f172a"
-                                        }}
-                                      />
-                                      {hasProposalKey && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            handleClearDraftProposal(contract.destinationKey)
-                                          }
-                                          disabled={isAnyOperationBusy}
-                                          style={{
-                                            padding: "8px 12px",
-                                            fontSize: "14px",
-                                            fontWeight: 600,
-                                            backgroundColor: "#f1f5f9",
-                                            color: "#0f172a",
-                                            border: "1px solid #475569",
-                                            borderRadius: "6px",
-                                            cursor: "pointer"
-                                          }}
-                                        >
-                                          Clear
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    {isOoakRow && hasProposalKey && proposedValue !== "" && (
-                                      <div
-                                        style={{
-                                          fontSize: "14px",
-                                          color: "#334155",
-                                          marginTop: "6px"
-                                        }}
-                                      >
-                                        Meaning: <strong>{proposedDisplayValue}</strong>
-                                      </div>
-                                    )}
-
-                                    {/* HELD AI ALTERNATIVE CHOICE BOX (WHEN AI SUGGESTION CONFLICTS WITH HUMAN DRAFT/DECISION) */}
-                                    {heldAiAlternative && (
-                                      <div
-                                        style={{
-                                          marginTop: "10px",
-                                          padding: "10px 12px",
-                                          backgroundColor: "#eff6ff",
-                                          border: "1px solid #93c5fd",
-                                          borderRadius: "6px",
-                                          fontSize: "14px",
-                                          color: "#1e3a8a"
-                                        }}
-                                      >
-                                        <div style={{ fontWeight: 700 }}>
-                                          Separate AI Suggestion Available: "{heldAiAlternative.value}"
-                                        </div>
-                                        <div style={{ fontSize: "13px", marginTop: "2px" }}>
-                                          Source:{" "}
-                                          {typeof heldAiAlternative.source === "string" &&
-                                          heldAiAlternative.source.trim() !== ""
-                                            ? heldAiAlternative.source.trim()
-                                            : "Source not reported"}{" "}
-                                          (kept separate so your current draft or decision was not
-                                          overwritten)
-                                        </div>
-                                        <div
-                                          style={{
-                                            display: "flex",
-                                            gap: "8px",
-                                            marginTop: "8px"
-                                          }}
-                                        >
-                                          <button
-                                            type="button"
-                                            disabled={isAnyOperationBusy}
-                                            onClick={() =>
-                                              handleAcceptAiAlternative(contract.destinationKey)
-                                            }
-                                            style={{
-                                              padding: "5px 10px",
-                                              fontSize: "13px",
-                                              fontWeight: 700,
-                                              backgroundColor: "#1d4ed8",
-                                              color: "#ffffff",
-                                              border: "1px solid #1e3a8a",
-                                              borderRadius: "5px",
-                                              cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
-                                            }}
-                                          >
-                                            Use AI Suggestion
-                                          </button>
-                                          <button
-                                            type="button"
-                                            disabled={isAnyOperationBusy}
-                                            onClick={() =>
-                                              handleDismissAiAlternative(contract.destinationKey)
-                                            }
-                                            style={{
-                                              padding: "5px 10px",
-                                              fontSize: "13px",
-                                              fontWeight: 600,
-                                              backgroundColor: "#ffffff",
-                                              color: "#0f172a",
-                                              border: "1px solid #64748b",
-                                              borderRadius: "5px",
-                                              cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
-                                            }}
-                                          >
-                                            Dismiss AI Suggestion
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* PLAIN-LANGUAGE APPROVE & KEEP ORIGINAL CONTROLS */}
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        flexWrap: "wrap",
-                                        gap: "18px",
-                                        marginTop: "12px",
-                                        paddingTop: "10px",
-                                        borderTop: "1px solid #e2e8f0"
-                                      }}
-                                    >
-                                      <label
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          gap: "8px",
-                                          fontSize: "16px",
-                                          fontWeight: isApproved ? 700 : 600,
-                                          color: isApproved ? "#15803d" : "#0f172a",
-                                          cursor:
-                                            (canApproveForSave || isApproved) &&
-                                            !isAnyOperationBusy
-                                              ? "pointer"
-                                              : "not-allowed",
-                                          opacity:
-                                            canApproveForSave || isApproved ? 1 : 0.55
-                                        }}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(isApproved && !isWriterHeld)}
-                                          disabled={
-                                            isAnyOperationBusy ||
-                                            (!canApproveForSave && !isApproved)
-                                          }
-                                          onChange={() =>
-                                            handleToggleApproval(
-                                              contract.destinationKey,
-                                              Boolean(isApproved && !isWriterHeld)
-                                            )
-                                          }
-                                          style={{ width: "18px", height: "18px" }}
-                                        />
-                                        <span>Approve</span>
-                                      </label>
-
-                                      <label
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          gap: "8px",
-                                          fontSize: "16px",
-                                          fontWeight: isKeepOriginal ? 700 : 600,
-                                          color: "#0f172a",
-                                          cursor:
-                                            (canSelectKeepOriginal || isKeepOriginal) &&
-                                            !isAnyOperationBusy
-                                              ? "pointer"
-                                              : "not-allowed",
-                                          opacity:
-                                            canSelectKeepOriginal || isKeepOriginal ? 1 : 0.55
-                                        }}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(isKeepOriginal)}
-                                          disabled={
-                                            isAnyOperationBusy ||
-                                            (!canSelectKeepOriginal && !isKeepOriginal)
-                                          }
-                                          onChange={() =>
-                                            handleToggleKeepOriginal(
-                                              contract.destinationKey,
-                                              Boolean(isKeepOriginal)
-                                            )
-                                          }
-                                          style={{ width: "18px", height: "18px" }}
-                                        />
-                                        <span>Keep Original</span>
-                                      </label>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div style={{ fontSize: "15px", color: "#475569" }}>
-                                    Read-only in this batch.
-                                  </div>
-                                )}
-
-                                {/* SHORT PLAIN-LANGUAGE VISIBLE REASON FOR HOLDS OR ERRORS */}
-                                {shortNotice && contract.isWritableInBatch1 && (
-                                  <div
-                                    style={{
-                                      marginTop: "10px",
-                                      padding: "8px 10px",
-                                      borderRadius: "6px",
-                                      fontSize: "14px",
-                                      fontWeight: 600,
-                                      backgroundColor:
-                                        shortNotice.tone === "error"
-                                          ? "#fef2f2"
-                                          : shortNotice.tone === "warning"
-                                            ? "#fff7ed"
-                                            : "#f1f5f9",
-                                      color:
-                                        shortNotice.tone === "error"
-                                          ? "#991b1b"
-                                          : shortNotice.tone === "warning"
-                                            ? "#9a3412"
-                                            : "#334155",
-                                      border:
-                                        shortNotice.tone === "error"
-                                          ? "1px solid #fca5a5"
-                                          : shortNotice.tone === "warning"
-                                            ? "1px solid #fdba74"
-                                            : "1px solid #cbd5e1"
-                                    }}
-                                  >
-                                    {shortNotice.text}
-                                  </div>
-                                )}
+                                <div style={{ fontSize: "15px", fontWeight: 600, color: "#334155" }}>
+                                  {isApproved && !isWriterHeld
+                                    ? "Approved to save"
+                                    : isKeepOriginal
+                                      ? "Keeping original"
+                                      : hasProposalKey
+                                        ? proposalOrigin === "AI"
+                                          ? "AI suggestion (unapproved)"
+                                          : "Draft staged (unapproved)"
+                                        : "Unchanged"}
+                                </div>
                               </div>
-                            </div>
 
-                            {/* ACCESSIBLE PER-FIELD TECHNICAL DETAILS DISCLOSURE */}
-                            <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
-                              <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-                                Details for {plainLabel}
-                              </summary>
+                              {/* SAVED VS. PROPOSED SIDE-BY-SIDE (STACKS ON NARROW SCREENS) */}
                               <div
                                 style={{
-                                  marginTop: "8px",
-                                  padding: "10px 12px",
-                                  backgroundColor: "#f8fafc",
-                                  border: "1px solid #cbd5e1",
-                                  borderRadius: "6px"
+                                  display: "grid",
+                                  gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))",
+                                  gap: "16px",
+                                  alignItems: "stretch"
                                 }}
                               >
-                                <div>
-                                  <strong>Destination Key:</strong>{" "}
-                                  <code>{contract.destinationKey}</code> ({contract.owner})
-                                </div>
-                                <div>
-                                  <strong>Connection Status:</strong> {effectiveConnectionStatus}
-                                </div>
-                                <div>
-                                  <strong>Review Status:</strong> {effectiveReviewStatus}
-                                </div>
-                                {hasProposalKey && (
-                                  <div>
-                                    <strong>Staged Draft Source:</strong>{" "}
-                                    {proposalSource && proposalSource !== "None"
-                                      ? proposalSource
-                                      : "Source not reported"}
+                                {/* SAVED BOX */}
+                                <div
+                                  style={{
+                                    backgroundColor: "#f8fafc",
+                                    border: "1px solid #94a3b8",
+                                    borderRadius: "6px",
+                                    padding: "12px 14px"
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      fontSize: "14px",
+                                      fontWeight: 700,
+                                      color: "#334155",
+                                      marginBottom: "6px"
+                                    }}
+                                  >
+                                    Saved
                                   </div>
-                                )}
-                                {scanProposalMeta && (
-                                  <div>
-                                    <strong>Last AI Scan Suggestion:</strong> "
-                                    {scanProposalMeta.value}" | <strong>Source:</strong>{" "}
-                                    {typeof scanProposalMeta.source === "string" &&
-                                    scanProposalMeta.source.trim() !== ""
-                                      ? scanProposalMeta.source.trim()
-                                      : "Source not reported"}{" "}
-                                    | <strong>Outcome:</strong> {scanProposalMeta.disposition}
+                                  <div
+                                    style={{
+                                      fontSize: "16px",
+                                      color:
+                                        obs.presence === "present" ? "#0f172a" : "#475569",
+                                      fontWeight: obs.presence === "present" ? 600 : 400,
+                                      wordBreak: "break-word",
+                                      whiteSpace: "pre-wrap"
+                                    }}
+                                  >
+                                    {readableSaved}
                                   </div>
-                                )}
-                                {effectiveStatusReason && (
-                                  <div>
-                                    <strong>Notes:</strong> {effectiveStatusReason}
+                                </div>
+
+                                {/* PROPOSED BOX + NEARBY APPROVAL CONTROLS */}
+                                <div
+                                  style={{
+                                    backgroundColor: "#ffffff",
+                                    border: "1px solid #94a3b8",
+                                    borderRadius: "6px",
+                                    padding: "12px 14px"
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "baseline",
+                                      gap: "8px",
+                                      marginBottom: "6px"
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: "14px",
+                                        fontWeight: 700,
+                                        color: "#334155"
+                                      }}
+                                    >
+                                      Proposed
+                                    </span>
+                                    {hasProposalKey && proposalSource && proposalSource !== "None" && (
+                                      <span style={{ fontSize: "13px", color: "#475569" }}>
+                                        Source: {proposalSource}
+                                      </span>
+                                    )}
                                   </div>
-                                )}
-                                <div>
-                                  <strong>Allowed Type(s):</strong>{" "}
-                                  <code>
-                                    {(contract.allowedTypes || [contract.expectedType]).join(" | ")}
-                                  </code>
-                                  {contract.maxLength ? ` (max ${contract.maxLength} chars)` : ""}
+
+                                  {contract.isWritableInBatch1 ? (
+                                    <div>
+                                      {Array.isArray(options) && options.length > 0 && (
+                                        <select
+                                          aria-label={`Preset options for ${contract.destinationKey}`}
+                                          value={
+                                            options.some(
+                                              (o) =>
+                                                (typeof o === "object" ? o.value : o) ===
+                                                proposedValue
+                                            )
+                                              ? proposedValue
+                                              : ""
+                                          }
+                                          disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                          onFocus={() =>
+                                            handleFieldEditorFocus(contract.destinationKey)
+                                          }
+                                          onBlur={() =>
+                                            handleFieldEditorBlur(contract.destinationKey)
+                                          }
+                                          onChange={(e) => {
+                                            if (e.target.value === "") return;
+                                            handleManualProposalChange(
+                                              contract.destinationKey,
+                                              e.target.value
+                                            );
+                                          }}
+                                          style={{
+                                            width: "100%",
+                                            padding: "8px 10px",
+                                            marginBottom: "8px",
+                                            fontSize: "15px",
+                                            border: "1px solid #475569",
+                                            borderRadius: "6px",
+                                            backgroundColor: "#ffffff",
+                                            color: "#0f172a"
+                                          }}
+                                        >
+                                          <option value="">Choose an option...</option>
+                                          {options.map((opt, idx) => {
+                                            const optVal =
+                                              typeof opt === "object"
+                                                ? opt.value ?? opt.label
+                                                : String(opt);
+                                            const optLabel =
+                                              typeof opt === "object" ? opt.label : String(opt);
+                                            return (
+                                              <option key={`${optVal}_${idx}`} value={optVal}>
+                                                {optLabel}
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                      )}
+
+                                      <div style={{ display: "flex", gap: "8px" }}>
+                                        <input
+                                          type="text"
+                                          aria-label={`Manual proposal for ${contract.destinationKey}`}
+                                          value={proposedValue}
+                                          disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                          placeholder={
+                                            canEditDraftInBatch1
+                                              ? "Type proposed value..."
+                                              : "Editing locked until baseline loads"
+                                          }
+                                          onFocus={() =>
+                                            handleFieldEditorFocus(contract.destinationKey)
+                                          }
+                                          onBlur={() =>
+                                            handleFieldEditorBlur(contract.destinationKey)
+                                          }
+                                          onChange={(e) =>
+                                            handleManualProposalChange(
+                                              contract.destinationKey,
+                                              e.target.value
+                                            )
+                                          }
+                                          style={{
+                                            flex: 1,
+                                            padding: "8px 10px",
+                                            fontSize: "16px",
+                                            border: "1px solid #475569",
+                                            borderRadius: "6px",
+                                            color: "#0f172a"
+                                          }}
+                                        />
+                                        {hasProposalKey && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleClearDraftProposal(contract.destinationKey)
+                                            }
+                                            disabled={isAnyOperationBusy}
+                                            style={{
+                                              padding: "8px 12px",
+                                              fontSize: "14px",
+                                              fontWeight: 600,
+                                              backgroundColor: "#f1f5f9",
+                                              color: "#0f172a",
+                                              border: "1px solid #475569",
+                                              borderRadius: "6px",
+                                              cursor: "pointer"
+                                            }}
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {isOoakRow && hasProposalKey && proposedValue !== "" && (
+                                        <div
+                                          style={{
+                                            fontSize: "14px",
+                                            color: "#334155",
+                                            marginTop: "6px"
+                                          }}
+                                        >
+                                          Meaning: <strong>{proposedDisplayValue}</strong>
+                                        </div>
+                                      )}
+
+                                      {/* HELD AI ALTERNATIVE CHOICE BOX (WHEN AI SUGGESTION CONFLICTS WITH HUMAN DRAFT/DECISION) */}
+                                      {heldAiAlternative && (
+                                        <div
+                                          style={{
+                                            marginTop: "10px",
+                                            padding: "10px 12px",
+                                            backgroundColor: "#eff6ff",
+                                            border: "1px solid #93c5fd",
+                                            borderRadius: "6px",
+                                            fontSize: "14px",
+                                            color: "#1e3a8a"
+                                          }}
+                                        >
+                                          <div style={{ fontWeight: 700 }}>
+                                            Separate AI Suggestion Available: "
+                                            {heldAiAlternative.value}"
+                                          </div>
+                                          <div style={{ fontSize: "13px", marginTop: "2px" }}>
+                                            Source:{" "}
+                                            {typeof heldAiAlternative.source === "string" &&
+                                            heldAiAlternative.source.trim() !== ""
+                                              ? heldAiAlternative.source.trim()
+                                              : "Source not reported"}{" "}
+                                            (kept separate so your current draft or decision was not
+                                            overwritten)
+                                          </div>
+                                          <div
+                                            style={{
+                                              display: "flex",
+                                              gap: "8px",
+                                              marginTop: "8px"
+                                            }}
+                                          >
+                                            <button
+                                              type="button"
+                                              disabled={isAnyOperationBusy}
+                                              onClick={() =>
+                                                handleAcceptAiAlternative(contract.destinationKey)
+                                              }
+                                              style={{
+                                                padding: "5px 10px",
+                                                fontSize: "13px",
+                                                fontWeight: 700,
+                                                backgroundColor: "#1d4ed8",
+                                                color: "#ffffff",
+                                                border: "1px solid #1e3a8a",
+                                                borderRadius: "5px",
+                                                cursor: isAnyOperationBusy
+                                                  ? "not-allowed"
+                                                  : "pointer"
+                                              }}
+                                            >
+                                              Use AI Suggestion
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={isAnyOperationBusy}
+                                              onClick={() =>
+                                                handleDismissAiAlternative(contract.destinationKey)
+                                              }
+                                              style={{
+                                                padding: "5px 10px",
+                                                fontSize: "13px",
+                                                fontWeight: 600,
+                                                backgroundColor: "#ffffff",
+                                                color: "#0f172a",
+                                                border: "1px solid #64748b",
+                                                borderRadius: "5px",
+                                                cursor: isAnyOperationBusy
+                                                  ? "not-allowed"
+                                                  : "pointer"
+                                              }}
+                                            >
+                                              Dismiss AI Suggestion
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* PLAIN-LANGUAGE APPROVE & KEEP ORIGINAL CONTROLS */}
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          flexWrap: "wrap",
+                                          gap: "18px",
+                                          marginTop: "12px",
+                                          paddingTop: "10px",
+                                          borderTop: "1px solid #e2e8f0"
+                                        }}
+                                      >
+                                        <label
+                                          style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "8px",
+                                            fontSize: "16px",
+                                            fontWeight: isApproved ? 700 : 600,
+                                            color: isApproved ? "#15803d" : "#0f172a",
+                                            cursor:
+                                              (canApproveForSave || isApproved) &&
+                                              !isAnyOperationBusy
+                                                ? "pointer"
+                                                : "not-allowed",
+                                            opacity:
+                                              canApproveForSave || isApproved ? 1 : 0.55
+                                          }}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(isApproved && !isWriterHeld)}
+                                            disabled={
+                                              isAnyOperationBusy ||
+                                              (!canApproveForSave && !isApproved)
+                                            }
+                                            onChange={() =>
+                                              handleToggleApproval(
+                                                contract.destinationKey,
+                                                Boolean(isApproved && !isWriterHeld)
+                                              )
+                                            }
+                                            style={{ width: "18px", height: "18px" }}
+                                          />
+                                          <span>Approve</span>
+                                        </label>
+
+                                        <label
+                                          style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "8px",
+                                            fontSize: "16px",
+                                            fontWeight: isKeepOriginal ? 700 : 600,
+                                            color: "#0f172a",
+                                            cursor:
+                                              (canSelectKeepOriginal || isKeepOriginal) &&
+                                              !isAnyOperationBusy
+                                                ? "pointer"
+                                                : "not-allowed",
+                                            opacity:
+                                              canSelectKeepOriginal || isKeepOriginal ? 1 : 0.55
+                                          }}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(isKeepOriginal)}
+                                            disabled={
+                                              isAnyOperationBusy ||
+                                              (!canSelectKeepOriginal && !isKeepOriginal)
+                                            }
+                                            onChange={() =>
+                                              handleToggleKeepOriginal(
+                                                contract.destinationKey,
+                                                Boolean(isKeepOriginal)
+                                              )
+                                            }
+                                            style={{ width: "18px", height: "18px" }}
+                                          />
+                                          <span>Keep Original</span>
+                                        </label>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: "15px", color: "#475569" }}>
+                                      Read-only in this batch.
+                                    </div>
+                                  )}
+
+                                  {/* SHORT PLAIN-LANGUAGE VISIBLE REASON FOR HOLDS OR ERRORS */}
+                                  {shortNotice && contract.isWritableInBatch1 && (
+                                    <div
+                                      style={{
+                                        marginTop: "10px",
+                                        padding: "8px 10px",
+                                        borderRadius: "6px",
+                                        fontSize: "14px",
+                                        fontWeight: 600,
+                                        backgroundColor:
+                                          shortNotice.tone === "error"
+                                            ? "#fef2f2"
+                                            : shortNotice.tone === "warning"
+                                              ? "#fff7ed"
+                                              : "#f1f5f9",
+                                        color:
+                                          shortNotice.tone === "error"
+                                            ? "#991b1b"
+                                            : shortNotice.tone === "warning"
+                                              ? "#9a3412"
+                                              : "#334155",
+                                        border:
+                                          shortNotice.tone === "error"
+                                            ? "1px solid #fca5a5"
+                                            : shortNotice.tone === "warning"
+                                              ? "1px solid #fdba74"
+                                              : "1px solid #cbd5e1"
+                                      }}
+                                    >
+                                      {shortNotice.text}
+                                    </div>
+                                  )}
                                 </div>
-                                <div>
-                                  <strong>Observed Types:</strong> Live Definition={" "}
-                                  <code>{obs.liveDefType || "none"}</code> | Stored={" "}
-                                  <code>{obs.storedType || "none"}</code>
-                                </div>
-                                <div>
-                                  <strong>Completeness:</strong> Metafields={" "}
-                                  {obs.metafieldsCompleteState} | Definitions={" "}
-                                  {obs.defsCompleteState}
-                                </div>
-                                <div>
-                                  <strong>Raw Baseline Inspection:</strong>{" "}
-                                  <code>{formatRawBaselineValueForInspection(obs)}</code>
-                                </div>
-                                {contract.unresolvedPolicyQuestion && (
-                                  <div style={{ marginTop: "4px", color: "#9a3412" }}>
-                                    <strong>Policy Note:</strong>{" "}
-                                    {contract.unresolvedPolicyQuestion}
-                                  </div>
-                                )}
                               </div>
-                            </details>
-                          </div>
-                        );
-                      })}
-                    </div>
+
+                              {/* ACCESSIBLE PER-FIELD TECHNICAL DETAILS DISCLOSURE */}
+                              <details
+                                style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}
+                              >
+                                <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+                                  Details for {plainLabel}
+                                </summary>
+                                <div
+                                  style={{
+                                    marginTop: "8px",
+                                    padding: "10px 12px",
+                                    backgroundColor: "#f8fafc",
+                                    border: "1px solid #cbd5e1",
+                                    borderRadius: "6px"
+                                  }}
+                                >
+                                  <div>
+                                    <strong>Destination Key:</strong>{" "}
+                                    <code>{contract.destinationKey}</code> ({contract.owner})
+                                  </div>
+                                  <div>
+                                    <strong>Connection Status:</strong> {effectiveConnectionStatus}
+                                  </div>
+                                  <div>
+                                    <strong>Review Status:</strong> {effectiveReviewStatus}
+                                  </div>
+                                  {hasProposalKey && (
+                                    <div>
+                                      <strong>Staged Draft Source:</strong>{" "}
+                                      {proposalSource && proposalSource !== "None"
+                                        ? proposalSource
+                                        : "Source not reported"}
+                                    </div>
+                                  )}
+                                  {scanProposalMeta && (
+                                    <div>
+                                      <strong>Last AI Scan Suggestion:</strong> "
+                                      {scanProposalMeta.value}" | <strong>Source:</strong>{" "}
+                                      {typeof scanProposalMeta.source === "string" &&
+                                      scanProposalMeta.source.trim() !== ""
+                                        ? scanProposalMeta.source.trim()
+                                        : "Source not reported"}{" "}
+                                      | <strong>Outcome:</strong> {scanProposalMeta.disposition}
+                                    </div>
+                                  )}
+                                  {effectiveStatusReason && (
+                                    <div>
+                                      <strong>Notes:</strong> {effectiveStatusReason}
+                                    </div>
+                                  )}
+                                  <div>
+                                    <strong>Allowed Type(s):</strong>{" "}
+                                    <code>
+                                      {(contract.allowedTypes || [contract.expectedType]).join(
+                                        " | "
+                                      )}
+                                    </code>
+                                    {contract.maxLength ? ` (max ${contract.maxLength} chars)` : ""}
+                                  </div>
+                                  <div>
+                                    <strong>Observed Types:</strong> Live Definition={" "}
+                                    <code>{obs.liveDefType || "none"}</code> | Stored={" "}
+                                    <code>{obs.storedType || "none"}</code>
+                                  </div>
+                                  <div>
+                                    <strong>Completeness:</strong> Metafields={" "}
+                                    {obs.metafieldsCompleteState} | Definitions={" "}
+                                    {obs.defsCompleteState}
+                                  </div>
+                                  <div>
+                                    <strong>Raw Baseline Inspection:</strong>{" "}
+                                    <code>{formatRawBaselineValueForInspection(obs)}</code>
+                                  </div>
+                                  {contract.unresolvedPolicyQuestion && (
+                                    <div style={{ marginTop: "4px", color: "#9a3412" }}>
+                                      <strong>Policy Note:</strong>{" "}
+                                      {contract.unresolvedPolicyQuestion}
+                                    </div>
+                                  )}
+                                </div>
+                              </details>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </section>
