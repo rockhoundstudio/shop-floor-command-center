@@ -316,6 +316,74 @@ function resolveCanonicalOoakFromInputs(inputs = {}, aiProposal = undefined) {
   return { value: "", conflict: false };
 }
 
+function classifyOoakFactualPolarity(rawVal) {
+  if (rawVal === undefined || rawVal === null) return null;
+  if (typeof rawVal === "boolean") return rawVal ? "yes" : "no";
+  const str = String(rawVal).trim();
+  if (!str) return null;
+  const lower = str.toLowerCase();
+  if (
+    lower === "yes" ||
+    lower === "true" ||
+    lower === "1" ||
+    lower === "ooak" ||
+    lower === "one-of-a-kind" ||
+    lower.startsWith("yes ") ||
+    lower.startsWith("yes—") ||
+    lower.startsWith("yes -") ||
+    lower.startsWith("yes â€”") ||
+    lower.startsWith("yes Ã¢â‚¬â€")
+  ) {
+    return "yes";
+  }
+  if (
+    lower === "no" ||
+    lower === "false" ||
+    lower === "0" ||
+    lower.startsWith("no ") ||
+    lower.startsWith("no—") ||
+    lower.startsWith("no -") ||
+    lower.startsWith("no â€”") ||
+    lower.startsWith("no Ã¢â‚¬â€")
+  ) {
+    return "no";
+  }
+  return null;
+}
+
+function formatBenchV2OoakProposalForType(rawVal, polarity, observedType) {
+  const cleanRaw = typeof rawVal === "string" ? sanitizeCandidateString(rawVal) : "";
+  if (observedType === "boolean") {
+    if (polarity === "yes") return { ok: true, value: "true" };
+    if (polarity === "no") return { ok: true, value: "false" };
+    return {
+      ok: false,
+      reason: `Cannot format OOAK proposal "${cleanRaw}" as boolean ("true"/"false").`
+    };
+  }
+  if (observedType === "single_line_text_field") {
+    if (cleanRaw && cleanRaw.toLowerCase() !== "true" && cleanRaw.toLowerCase() !== "false") {
+      return { ok: true, value: cleanRaw };
+    }
+    if (polarity === "yes") return { ok: true, value: "Yes" };
+    if (polarity === "no") return { ok: true, value: "No" };
+    return {
+      ok: false,
+      reason: `Cannot format OOAK proposal "${cleanRaw}" as single_line_text_field.`
+    };
+  }
+  if (!observedType) {
+    return {
+      ok: false,
+      reason: "Observed type was not supplied or is unknown; omitted OOAK proposal."
+    };
+  }
+  return {
+    ok: false,
+    reason: `Unsupported observed type "${observedType}"; omitted OOAK proposal.`
+  };
+}
+
 // Evaluates found_object polarity without mutating the underlying stored value or type
 function classifyFoundObjectPolarity(rawVal) {
   if (rawVal === undefined || rawVal === null) return "unknown";
@@ -1009,7 +1077,7 @@ function parseValidPhotoSolidLengthInches(rawVal) {
 const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator-locked corrections > established verified product facts > resolved origin/collection source context > supported visible observations.
-2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
 3. NO VISUAL INFERENCE OF FASTENING OR METAL COMPOSITION: Do not infer treatment, provenance, fastening method (bezel vs. glue-on/adhesive), metal alloy/fineness, plating, or mineral rarity from appearance or front photographs alone.
 4. SEPARATE CONSTRUCTION DIMENSIONS: Keep these five dimensions strictly distinct:
    (a) Fastening method (e.g., glue-on/glue-in adhesive setting, pinch bail with pins passing through a drilled hole, wire wrap, or explicit verified bezel setting),
@@ -1378,7 +1446,7 @@ ${passiveClassificationsStr || "- None."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored hardware/classifications, image inference, product titles, and collection names.
-2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS, re-evaluate against the photos and authoritative human facts so stale carried "Pendant" labels do not force a loose stone into finished jewelry and stale AI river-origin/SEO drafts do not contradict human-confirmed purchase provenance.
+​2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS, re-evaluate against the photos and authoritative human facts so stale carried "Pendant" labels do not force a loose stone into finished jewelry and stale AI river-origin/SEO drafts do not contradict human-confirmed purchase provenance.
 3. Never infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a decorative rim, backing frame, front photo, or top chain loop alone. Do not infer metal alloy fineness or plating from photos.
 4. STONE IDENTITY VS. SETTING MATERIAL: primary_medium, material, and stone_family must NEVER contain metal, plating, alloy, wire, or setting hardware (such as "Silver Plated", "Sterling Silver", "Silver Alloy", "Copper Wire", or "Pinch Bail"). Keep mineral family (stone_family, e.g., "Agate") and stone variety (material / primary_medium, e.g., "Botswana Agate") distinct when evidenced; do not force them to be identical. If stone identity is uncertain, omit primary_medium rather than guessing.
 5. Preserve pinch-bail construction ("Silver Plated Pinch Bail", whose pins pass through a drilled hole) when visibly present or stated in facts.
@@ -1425,7 +1493,7 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - origin_handle
 - collection_name
 - collection_location
-- primary_use: Select from the supported dropdown vocabulary ("Wearable Art", "Pendant", "Display Piece", "Cabochon — Setting Ready", "Collector Specimen"). Keep current operator-locked value; if listed under PASSIVE STORED CLASSIFICATIONS, propose a corrected value only when supported by clear physical/visual evidence.
+- primary_use: Select from the supported dropdown vocabulary ("Wearable Art", "Pendant", "Display Piece", "Cabochon — Setting Ready", "Collector Specimen"). Keep current operator-locked value; if listed under PASSED STORED CLASSIFICATIONS, propose a corrected value only when supported by clear physical/visual evidence.
 - primary_medium: Evidenced stone/mineral or material variety identity ONLY (never the generic word "Stone", and never setting metal, plating, wire, or hardware; do not infer variety from geography; omit when unknown).
 - secondary_medium: Preserve operator-locked value; never guess metal alloy or plating from front photos.
 - wire_material: Plain text wire material when supported by facts/visible wire wrap.
@@ -1450,7 +1518,12 @@ ${collectionStory}
 }
 
 export async function executeAutofill(intent, body, admin) {
+  let activeRequestId = null;
   try {
+    const rawReqId = body?.get?.("requestId");
+    activeRequestId =
+      typeof rawReqId === "string" && rawReqId.trim() !== "" ? rawReqId.trim() : null;
+
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
       const geoFields = await getGeoData(admin, stoneFamily); 
@@ -1867,12 +1940,49 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
     if (intent === "tab3FullRescan") {
       const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
+      const rawRequestId = body.get("requestId");
+      const requestId =
+        typeof rawRequestId === "string" && rawRequestId.trim() !== ""
+          ? rawRequestId.trim()
+          : null;
+      const isBenchV2OptIn =
+        String(body.get("benchV2OptIn") || "").trim().toLowerCase() === "true" ||
+        String(body.get("bench_v2_opt_in") || "").trim().toLowerCase() === "true";
+
+      const EXCLUDED_CURRENT_DATA_META_KEYS = new Set([
+        "intent",
+        "pieceId",
+        "productId",
+        "productTitle",
+        "pieceName",
+        "humanPieceId",
+        "imageBase64",
+        "imageMimeType",
+        "imageUrl",
+        "imageId",
+        "mediaInputs",
+        "operator_locked_fields",
+        "passive_stored_fields",
+        "requestId",
+        "benchV2OptIn",
+        "bench_v2_opt_in",
+        "is_ooak_observed_type",
+        "is_one_of_a_kind_observed_type",
+        "observed_destination_types"
+      ]);
+
       const provenance = resolveTab3FieldProvenance(body);
       const idOrigin = parseIdentityAndOriginInputs(body, provenance);
 
       const currentData = Object.fromEntries(
         Array.from(body.entries())
-          .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "pieceName", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs", "operator_locked_fields", "passive_stored_fields"].includes(key))
+          .filter(
+            ([key, value]) =>
+              value &&
+              typeof value === "string" &&
+              value.trim() !== "" &&
+              !EXCLUDED_CURRENT_DATA_META_KEYS.has(key)
+          )
           .map(([k, v]) => [k, v.trim()])
       );
 
@@ -1989,7 +2099,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       }
 
       if (loadedImageCount === 0) {
-        return Response.json({ success: false, intent, pieceId, error: "No valid images could be loaded for Tab 3 Vision Rescan." }, { status: 400 });
+        return Response.json(
+          {
+            success: false,
+            intent,
+            pieceId,
+            ...(requestId ? { requestId } : {}),
+            error: "No valid images could be loaded for Tab 3 Vision Rescan."
+          },
+          { status: 400 }
+        );
       }
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -2004,7 +2123,29 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         try {
           parsedVision = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
         } catch (parseErr) {
-          return Response.json({ success: false, intent, pieceId, error: "Tab 3 Vision response failed JSON parsing." }, { status: 500 });
+          return Response.json(
+            {
+              success: false,
+              intent,
+              pieceId,
+              ...(requestId ? { requestId } : {}),
+              error: "Tab 3 Vision response failed JSON parsing."
+            },
+            { status: 500 }
+          );
+        }
+
+        // ====================================================================
+        // CAPTURE RAW VISION OUTPUTS FOR BENCH V2 BEFORE PASSIVE FALLBACK
+        // SUBSTITUTION, OOAK COLLAPSING/DELETION, OR BASELINE MERGES
+        // ====================================================================
+        const rawVisionSnapshot = {};
+        if (parsedVision && typeof parsedVision === "object" && !Array.isArray(parsedVision)) {
+          for (const [vk, vv] of Object.entries(parsedVision)) {
+            if (typeof vv === "string" || typeof vv === "boolean" || typeof vv === "number") {
+              rawVisionSnapshot[vk] = vv;
+            }
+          }
         }
         
         let validatedImageAlts = [];
@@ -2297,12 +2438,388 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         if (Object.keys(reviewProposals).length > 0) {
           finalPayload.review_proposals = reviewProposals;
         }
+
+        // ====================================================================
+        // OPT-IN BENCH V2 PRODUCER PROPOSALS SEPARATION (tab3FullRescan ONLY)
+        // Emits ONLY genuine nonblank Batch 1 producer outputs captured BEFORE
+        // passive stored fallback substitution, OOAK collapsing/deletion, or
+        // baseline merges. Never labels currentData or caller-echo values as
+        // generated. Never emits cancelled overall_solid_length_in, AI dates,
+        // or later-batch/parked/protected fields.
+        // ====================================================================
+        let producerProposals = undefined;
+        let producerDiagnostics = undefined;
+
+        if (isBenchV2OptIn) {
+          producerProposals = {};
+          producerDiagnostics = {};
+
+          const cleanNonBlankVisionStr = (rawVal) => {
+            if (typeof rawVal !== "string") return "";
+            const cleaned = sanitizeCandidateString(rawVal);
+            if (!cleaned) return "";
+            if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return "";
+            return cleaned;
+          };
+
+          const addProposal = (destKey, value, source) => {
+            if (typeof value !== "string") return;
+            const cleaned = sanitizeCandidateString(value);
+            if (!cleaned || INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return;
+            producerProposals[destKey] = { value: cleaned, source };
+          };
+
+          // 1. Segmented Product Title Piece Name (only when derived from a 3-segment title, never echoing a 1-segment caller piece_name)
+          if (idOrigin.hasSegmentedTitle && idOrigin.preservedPieceName) {
+            const segs = splitSegmentedTitle(idOrigin.rawTitleInput || "");
+            const lastSeg = segs.length >= 3 ? segs[segs.length - 1] : "";
+            if (lastSeg && lastSeg === idOrigin.preservedPieceName) {
+              addProposal(
+                "custom.piece_name",
+                lastSeg,
+                "Title Segment Parse (3-Segment Product Title)"
+              );
+            }
+          }
+
+          // 2. Dominant Material (custom.material):
+          // Only from genuine Vision stone/material output (never hardware, never bare "Stone",
+          // and never auto-populated from stone_family).
+          const rawVisMaterial = cleanNonBlankVisionStr(rawVisionSnapshot.material);
+          const rawVisPrimaryMedium = cleanNonBlankVisionStr(rawVisionSnapshot.primary_medium);
+
+          if (
+            rawVisMaterial &&
+            !isGenericBareStoneProposal(rawVisMaterial) &&
+            !isSettingOrHardwareMediumValue(rawVisMaterial)
+          ) {
+            addProposal("custom.material", rawVisMaterial, "Gemini Vision (material)");
+          } else if (
+            rawVisPrimaryMedium &&
+            !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
+            !isSettingOrHardwareMediumValue(rawVisPrimaryMedium)
+          ) {
+            // Map primary_medium to custom.material only when it is a verified stone/mineral
+            // identity (never hardware/metal) and distinct from or more specific than a bare
+            // caller-supplied stone_family echo.
+            const rawVisStoneFam = cleanNonBlankVisionStr(rawVisionSnapshot.stone_family);
+            const isDistinctVarietyOrConfirmedStone =
+              !rawVisStoneFam ||
+              rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFam.toLowerCase() ||
+              Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
+            if (isDistinctVarietyOrConfirmedStone) {
+              addProposal(
+                "custom.material",
+                rawVisPrimaryMedium,
+                "Gemini Vision (primary_medium stone variety)"
+              );
+            }
+          }
+
+          // 3. Intentional Distinct OOAK Destinations (custom.is_one_of_a_kind & custom.is_ooak):
+          // Derive only from genuine Vision OOAK output (never echoing currentData),
+          // check for conflicts, and format each destination using its explicitly supplied
+          // observed type.
+          const hasVisionOoak1 =
+            rawVisionSnapshot.is_one_of_a_kind !== undefined &&
+            rawVisionSnapshot.is_one_of_a_kind !== null &&
+            String(rawVisionSnapshot.is_one_of_a_kind).trim() !== "";
+          const hasVisionOoak2 =
+            rawVisionSnapshot.is_ooak !== undefined &&
+            rawVisionSnapshot.is_ooak !== null &&
+            String(rawVisionSnapshot.is_ooak).trim() !== "";
+
+          if (hasVisionOoak1 || hasVisionOoak2) {
+            const pol1 = hasVisionOoak1
+              ? classifyOoakFactualPolarity(rawVisionSnapshot.is_one_of_a_kind)
+              : null;
+            const pol2 = hasVisionOoak2
+              ? classifyOoakFactualPolarity(rawVisionSnapshot.is_ooak)
+              : null;
+
+            if (hasVisionOoak1 && hasVisionOoak2 && pol1 && pol2 && pol1 !== pol2) {
+              producerDiagnostics.ooak =
+                "Conflicting OOAK values returned by Vision (is_one_of_a_kind vs. is_ooak); omitted both OOAK proposals.";
+            } else {
+              const factualPolarity = pol1 || pol2;
+              if (!factualPolarity) {
+                producerDiagnostics.ooak =
+                  "Unrecognized OOAK token returned by Vision; omitted OOAK proposals.";
+              } else {
+                let observedTypesMap = {};
+                const rawObservedTypesJson = body.get("observed_destination_types");
+                if (rawObservedTypesJson && typeof rawObservedTypesJson === "string") {
+                  try {
+                    const parsedTypes = JSON.parse(rawObservedTypesJson);
+                    if (parsedTypes && typeof parsedTypes === "object" && !Array.isArray(parsedTypes)) {
+                      observedTypesMap = parsedTypes;
+                    }
+                  } catch (e) {}
+                }
+
+                const ooak1ObservedType =
+                  (body.get("is_one_of_a_kind_observed_type") || "").trim() ||
+                  (typeof observedTypesMap["custom.is_one_of_a_kind"] === "string"
+                    ? observedTypesMap["custom.is_one_of_a_kind"].trim()
+                    : "");
+                const ooak2ObservedType =
+                  (body.get("is_ooak_observed_type") || "").trim() ||
+                  (typeof observedTypesMap["custom.is_ooak"] === "string"
+                    ? observedTypesMap["custom.is_ooak"].trim()
+                    : "");
+
+                const rawOoakStr1 = hasVisionOoak1
+                  ? String(rawVisionSnapshot.is_one_of_a_kind).trim()
+                  : String(rawVisionSnapshot.is_ooak).trim();
+                const rawOoakStr2 = hasVisionOoak2
+                  ? String(rawVisionSnapshot.is_ooak).trim()
+                  : String(rawVisionSnapshot.is_one_of_a_kind).trim();
+
+                // custom.is_one_of_a_kind (contract allows single_line_text_field only)
+                if (ooak1ObservedType === "single_line_text_field") {
+                  const fmt1 = formatBenchV2OoakProposalForType(
+                    rawOoakStr1,
+                    factualPolarity,
+                    "single_line_text_field"
+                  );
+                  if (fmt1.ok) {
+                    addProposal(
+                      "custom.is_one_of_a_kind",
+                      fmt1.value,
+                      "Gemini Vision (OOAK factual answer)"
+                    );
+                  } else {
+                    producerDiagnostics["custom.is_one_of_a_kind"] = fmt1.reason;
+                  }
+                } else {
+                  producerDiagnostics["custom.is_one_of_a_kind"] = ooak1ObservedType
+                    ? `Unsupported or conflicting observed type "${ooak1ObservedType}" for custom.is_one_of_a_kind (requires single_line_text_field); omitted proposal.`
+                    : "Observed type for custom.is_one_of_a_kind was not supplied; omitted proposal.";
+                }
+
+                // custom.is_ooak (contract allows boolean or single_line_text_field)
+                if (
+                  ooak2ObservedType === "boolean" ||
+                  ooak2ObservedType === "single_line_text_field"
+                ) {
+                  const fmt2 = formatBenchV2OoakProposalForType(
+                    rawOoakStr2,
+                    factualPolarity,
+                    ooak2ObservedType
+                  );
+                  if (fmt2.ok) {
+                    addProposal(
+                      "custom.is_ooak",
+                      fmt2.value,
+                      `Gemini Vision (OOAK factual answer formatted for observed ${ooak2ObservedType})`
+                    );
+                  } else {
+                    producerDiagnostics["custom.is_ooak"] = fmt2.reason;
+                  }
+                } else {
+                  producerDiagnostics["custom.is_ooak"] = ooak2ObservedType
+                    ? `Unsupported or conflicting observed type "${ooak2ObservedType}" for custom.is_ooak; omitted proposal.`
+                    : "Observed type for custom.is_ooak was not supplied; omitted proposal.";
+                }
+              }
+            }
+          }
+
+          // 4. Origin & Collection Batch 1 Destinations (only when genuinely produced by Vision,
+          // 3-segment title origin parse, or live store directory resolution — never echoing currentData):
+          const rawVisOriginLoc = cleanNonBlankVisionStr(rawVisionSnapshot.origin_location);
+          const titleDerivedOrigin =
+            !idOrigin.explicitOriginLocation &&
+            !idOrigin.isPurchasedProvenance &&
+            idOrigin.hasSegmentedTitle
+              ? idOrigin.originSegment
+              : "";
+
+          if (!idOrigin.isPurchasedProvenance) {
+            if (rawVisOriginLoc) {
+              const resolvedVisOrigin = resolveEvidencedOriginLocation(rawVisOriginLoc);
+              if (resolvedVisOrigin) {
+                addProposal(
+                  "custom.origin_location",
+                  resolvedVisOrigin,
+                  "Gemini Vision (origin_location)"
+                );
+              }
+            } else if (titleDerivedOrigin) {
+              addProposal(
+                "custom.origin_location",
+                titleDerivedOrigin,
+                "Title Segment Parse (3-Segment Product Title)"
+              );
+            }
+          }
+
+          const producedOriginLocForRouting =
+            producerProposals["custom.origin_location"]?.value || "";
+          const rawVisOriginHandle = cleanNonBlankVisionStr(
+            rawVisionSnapshot.origin_page_handle ?? rawVisionSnapshot.origin_handle
+          );
+          if (rawVisOriginHandle) {
+            const verifiedVisHandle = resolveOriginHandle(
+              producedOriginLocForRouting,
+              pagesList,
+              rawVisOriginHandle
+            );
+            if (verifiedVisHandle) {
+              addProposal(
+                "custom.origin_page_handle",
+                verifiedVisHandle,
+                "Gemini Vision + Store Page Directory"
+              );
+            }
+          } else if (producedOriginLocForRouting && !idOrigin.explicitOriginHandle) {
+            const derivedHandleFromProducedOrigin = resolveOriginHandle(
+              producedOriginLocForRouting,
+              pagesList
+            );
+            if (derivedHandleFromProducedOrigin) {
+              addProposal(
+                "custom.origin_page_handle",
+                derivedHandleFromProducedOrigin,
+                "Store Page Directory Resolution"
+              );
+            }
+          }
+
+          const rawVisColName = cleanNonBlankVisionStr(rawVisionSnapshot.collection_name);
+          if (rawVisColName && collectionsList.some(c => c.title.toLowerCase() === rawVisColName.toLowerCase() || c.handle.toLowerCase() === rawVisColName.toLowerCase())) {
+            const matchedCol = resolveCollectionData("", "", collectionsList, rawVisColName);
+            if (matchedCol.name) {
+              addProposal(
+                "custom.collection_name",
+                matchedCol.name,
+                "Gemini Vision + Store Collection Directory"
+              );
+            }
+          } else if (
+            !idOrigin.isPurchasedProvenance &&
+            !idOrigin.explicitCollectionName &&
+            producedOriginLocForRouting
+          ) {
+            const matchedColFromOrigin = resolveCollectionData(
+              producedOriginLocForRouting,
+              producerProposals["custom.origin_page_handle"]?.value || "",
+              collectionsList
+            );
+            if (matchedColFromOrigin.name) {
+              addProposal(
+                "custom.collection_name",
+                matchedColFromOrigin.name,
+                "Store Collection Directory Resolution"
+              );
+            }
+          }
+
+          const rawVisColLoc = cleanNonBlankVisionStr(rawVisionSnapshot.collection_location);
+          const producedCollectionName =
+            producerProposals["custom.collection_name"]?.value || "";
+          if (!idOrigin.isPurchasedProvenance) {
+            if (rawVisColLoc) {
+              const mappedVisColLoc = mapCollectionLocation(rawVisColLoc);
+              if (mappedVisColLoc) {
+                addProposal(
+                  "custom.collection_location",
+                  mappedVisColLoc,
+                  "Gemini Vision (collection_location)"
+                );
+              }
+            } else if (producedCollectionName || producedOriginLocForRouting) {
+              const mappedFromProduced = mapCollectionLocation(
+                producedCollectionName || producedOriginLocForRouting
+              );
+              if (mappedFromProduced) {
+                addProposal(
+                  "custom.collection_location",
+                  mappedFromProduced,
+                  "Collection / Origin Location Mapping"
+                );
+              }
+            }
+          }
+
+          const rawVisFoundObj = cleanNonBlankVisionStr(rawVisionSnapshot.found_object);
+          const callerSuppliedFoundObj =
+            currentData.found_object !== undefined && currentData.found_object !== "";
+          if (rawVisFoundObj && !callerSuppliedFoundObj) {
+            addProposal("custom.found_object", rawVisFoundObj, "Gemini Vision (found_object)");
+          }
+
+          // Note: custom.collection_date is never inferred or emitted by AI.
+
+          // 5. Treatment Batch 1 Destinations (only when genuinely returned by Vision and not merely echoing caller currentData):
+          const rawVisTreated = cleanNonBlankVisionStr(rawVisionSnapshot.treated);
+          if (rawVisTreated && rawVisTreated !== currentData.treated) {
+            addProposal("custom.treated", rawVisTreated, "Gemini Vision (treated)");
+          }
+          const rawVisTreatmentStatus = cleanNonBlankVisionStr(
+            rawVisionSnapshot.treatment_status
+          );
+          if (
+            rawVisTreatmentStatus &&
+            rawVisTreatmentStatus !== currentData.treatment_status
+          ) {
+            addProposal(
+              "custom.treatment_status",
+              rawVisTreatmentStatus,
+              "Gemini Vision (treatment_status)"
+            );
+          }
+
+          // 6. Appearance and Character Batch 1 Destinations (from rawVisionSnapshot before protectedKeys overwrote them):
+          const rawVisSurfaceFinish = cleanNonBlankVisionStr(rawVisionSnapshot.surface_finish);
+          if (rawVisSurfaceFinish) {
+            addProposal(
+              "custom.surface_finish",
+              rawVisSurfaceFinish,
+              "Gemini Vision (surface_finish)"
+            );
+          }
+
+          const rawVisPrimaryColor = cleanNonBlankVisionStr(rawVisionSnapshot.primary_color);
+          if (rawVisPrimaryColor) {
+            addProposal(
+              "custom.primary_color",
+              rawVisPrimaryColor,
+              "Gemini Vision (primary_color)"
+            );
+          }
+
+          const rawVisSecondaryColors = cleanNonBlankVisionStr(
+            rawVisionSnapshot.secondary_colors
+          );
+          if (rawVisSecondaryColors) {
+            addProposal(
+              "custom.secondary_colors",
+              rawVisSecondaryColors,
+              "Gemini Vision (secondary_colors)"
+            );
+          }
+
+          const rawVisColorPattern = cleanNonBlankVisionStr(rawVisionSnapshot.color_pattern);
+          if (rawVisColorPattern) {
+            addProposal(
+              "custom.color_pattern",
+              rawVisColorPattern,
+              "Gemini Vision (color_pattern)"
+            );
+          }
+        }
         
         return Response.json({ 
           success: true, 
           intent, 
           pieceId,
+          ...(requestId ? { requestId } : {}),
           tab3Data: finalPayload, 
+          ...(isBenchV2OptIn ? { producerProposals } : {}),
+          ...(isBenchV2OptIn && producerDiagnostics && Object.keys(producerDiagnostics).length > 0
+            ? { producerDiagnostics }
+            : {}),
           ...(validatedCandidates ? { standardized_candidates: validatedCandidates } : {}),
           ...(Object.keys(reviewProposals).length > 0 ? { review_proposals: reviewProposals } : {}),
           verifiedGeoValues,
@@ -2310,7 +2827,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           altValidationErrors: altValidationErrors.length > 0 ? altValidationErrors : undefined
         });
       }
-      return Response.json({ success: false, intent, pieceId, error: `Vision API Failure (Tab 3: ${geminiRes.status})` }, { status: 500 });
+      return Response.json(
+        {
+          success: false,
+          intent,
+          pieceId,
+          ...(requestId ? { requestId } : {}),
+          error: `Vision API Failure (Tab 3: ${geminiRes.status})`
+        },
+        { status: 500 }
+      );
     }
 
     if (intent === "generateDescription") {
@@ -2568,8 +3094,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       return Response.json({ success: false, intent, pieceId, error: `Description failed (${geminiRes.status})` }, { status: 500 });
     }
 
-    return Response.json({ success: false, intent, error: "Unhandled Autofill Intent" }, { status: 400 });
+    return Response.json({ success: false, intent, ...(activeRequestId ? { requestId: activeRequestId } : {}), error: "Unhandled Autofill Intent" }, { status: 400 });
   } catch (error) {
-    return Response.json({ success: false, intent: "unknown", error: error.message }, { status: 500 });
+    return Response.json({ success: false, intent: "unknown", ...(activeRequestId ? { requestId: activeRequestId } : {}), error: error.message }, { status: 500 });
   }
 }

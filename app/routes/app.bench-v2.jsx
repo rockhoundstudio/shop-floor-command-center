@@ -1,30 +1,32 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (FIRST CONNECTED BATCH)
+// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + TAB 3 GEMINI CONNECTOR)
 // File: app/routes/app.bench-v2.jsx
 //
 // Verified Current Sources Confirmed in Context:
 // 1. app/utils/bench-v2.contract.jsx (112,497 chars, SHA256: F31EF4BC321AFC20A3696E53686EAD076D8583B8962D24EA667AC6D7DF144DBA)
 // 2. app/utils/bench-v2.baseline.server.jsx (43,102 chars, SHA256: 81590D25E0923983958813D4EC9E323EFD1B6C247711642770A1A378C5894CCA)
 // 3. app/routes/app.meta-injector-api.jsx (138,970 chars — action intent="executeRepairPlan")
-// 4. app/routes/app.bench-v2.jsx (86,970 chars — saved accessible route)
-// 5. app/utils/meta-injector.loader.jsx (36,750 chars — reference for products(first: 50, after: $cursor) read pattern only; never imported)
+// 4. app/routes/app.meta-injector-autofill.jsx (698 chars — action delegates to executeAutofill)
+// 5. app/utils/meta-injector.autofill.server.jsx (168,616 chars, SHA256: 039F7B2F8DED1E385A02A2640F540821B1638A8A95DAAC547AF83BC93C9E3AEF)
+// 6. app/routes/app.bench-v2.jsx (100,574 chars, SHA256: E8C1AB112BE3E7ED8430794DB1FD46041CC3756240405572B4B0C0BFAB22BC16)
 //
-// Inventory Selector & Accessibility Guarantees:
-// - Restores a compact, accessible top Product Selector using lightweight
-//   paginated product IDs and titles (products(first: 50, after: $cursor)).
-// - Zero fetchAllProducts loop and zero whole-inventory manifest loading.
-// - Selects strictly by exact Shopify Product GID; Canyon Red
-//   (gid://shopify/Product/9226849616123) is the initial default when no
-//   productId query parameter is supplied.
-// - Loads full baseline ONLY for the single selected product via
-//   loadSingleProductBaselineSnapshot(admin, targetProductId).
-// - Preserves per-product drafts, exact-value approvals, and Keep Original
-//   decisions across product switches without clearing or cross-contaminating.
-// - Blocks product switching and page navigation while a Save is in flight.
-// - Preserves all dyslexia/glaucoma accessibility improvements: initially
-//   collapsed drawers, plain titles, side-by-side Saved/Proposed boxes,
-//   nearby Approve/Keep Original checkboxes, short plain-language notices,
-//   and per-field Details disclosures.
+// Bounded Tab 3 Gemini Producer Connection Guarantees:
+// - Connects one explicit "AI Scan Product" button to existing POST
+//   /app/meta-injector-autofill with intent="tab3FullRescan" and
+//   benchV2OptIn="true".
+// - Never runs AI on load, product selection, pagination, or revalidation.
+// - Supplies full product/baseline/photo context required by the engine's
+//   provenance contract (operator_locked_fields, passive_stored_fields,
+//   mediaInputs, observed_destination_types, is_ooak_observed_type,
+//   is_one_of_a_kind_observed_type).
+// - Consumes ONLY response.producerProposals (never staging tab3Data fallbacks).
+// - Validates exact pieceId and requestId before accepting scan results.
+// - Locks product switching, pagination, Reload, Save, and duplicate scans
+//   while a scan is in flight; locks AI Scan while a Save is in flight.
+// - Never overwrites or clears existing human drafts, approvals, or Keep Original
+//   decisions; conflicting AI suggestions are retained visibly as separate
+//   alternatives with an explicit "Use AI Suggestion" action.
+// - New AI drafts remain strictly unapproved (zero policy preapproval).
 // ==========================================================================
 
 import React, { useState, useEffect, useRef } from "react";
@@ -35,6 +37,7 @@ import {
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_DRAWER_GROUPS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
+  CANCELLED_INERT_DESTINATIONS,
   isExactProductGid,
   getFieldContractByDestination,
   buildBaselineObservation,
@@ -48,6 +51,56 @@ import {
 } from "../utils/bench-v2.contract.jsx";
 
 export const CANYON_RED_PRODUCT_GID = "gid://shopify/Product/9226849616123";
+
+// Exact 42 bare provenance keys allowed by parseProvenanceFieldSet in
+// app/utils/meta-injector.autofill.server.jsx (lines 433-444).
+// Any key outside this set causes parseProvenanceFieldSet to mark provenance invalid!
+const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
+  "color_pattern",
+  "primary_color",
+  "secondary_colors",
+  "color",
+  "dimensions_mm",
+  "weight_grams",
+  "shipping_weight_oz",
+  "price",
+  "honest_flaws_and_character",
+  "character_marks",
+  "surface_finish",
+  "cut_type",
+  "cut_and_shape",
+  "stone_shape",
+  "jewelry_finding_type",
+  "bail_included",
+  "chain_material",
+  "wire_material",
+  "secondary_medium",
+  "primary_medium",
+  "primary_use",
+  "product_format",
+  "jewelry_type",
+  "necklace_design",
+  "chain_link_type",
+  "setting_ready",
+  "craftsmanship",
+  "poetic_hook",
+  "seo_title",
+  "alt_text",
+  "google_product_category",
+  "treated",
+  "treatment_status",
+  "stone_family",
+  "material",
+  "origin_location",
+  "origin_handle",
+  "origin_page_handle",
+  "collection_name",
+  "collection_location",
+  "collection_date",
+  "found_object",
+  "is_one_of_a_kind",
+  "is_ooak"
+]);
 
 // Lightweight single-page product list query patterned directly from
 // GET_PRODUCTS_QUERY in app/utils/meta-injector.loader.jsx, stripped to
@@ -399,6 +452,7 @@ export default function BenchV2Route() {
   const loaderData = useLoaderData();
   const revalidator = useRevalidator();
   const writerFetcher = useFetcher();
+  const aiScanFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const activeProductId = isExactProductGid(loaderData?.targetProductId)
@@ -438,23 +492,34 @@ export default function BenchV2Route() {
   // 3. Cursor History Stack for Plain Previous / Next Page Navigation
   const [cursorHistory, setCursorHistory] = useState([]);
 
-  // 4. Manual Proposals State (Never pre-seeded from baseline, preserved per productId)
+  // 4. Staged Proposals State (Never pre-seeded from baseline, preserved per productId)
+  // Each entry: { value, source, origin: "Manual" | "AI", updatedAt }
   const [proposedByProduct, setProposedByProduct] = useState({});
 
-  // 5. Exact-Value Approval Records State (Preserved per productId)
+  // 5. Held AI Alternatives State (Preserved per productId when an AI suggestion
+  // conflicts with an existing human draft, approval, or Keep Original decision)
+  const [aiAlternativesByProduct, setAiAlternativesByProduct] = useState({});
+
+  // 6. Exact-Value Approval Records State (Preserved per productId)
   const [approvalsByProduct, setApprovalsByProduct] = useState({});
 
-  // 6. Keep Original Decision Records State (Preserved per productId)
+  // 7. Keep Original Decision Records State (Preserved per productId)
   const [keepOriginalByProduct, setKeepOriginalByProduct] = useState({});
 
-  // 7. Save Request Tracking & Honest Outcome Reporting
+  // 8. Save Request Tracking & Honest Outcome Reporting
   const [activeSaveSubmission, setActiveSaveSubmission] = useState(null);
   const [lastSaveReport, setLastSaveReport] = useState(null);
   const [clientPrevalidationBanner, setClientPrevalidationBanner] = useState(null);
   const processedSubmissionIdRef = useRef(null);
   const activeSaveSubmissionRef = useRef(null);
 
-  // 8. Presentation-Only State: All drawers initially collapsed
+  // 9. Explicit AI Scan Request Tracking & Honest Scan Report
+  const [activeAiScanRequest, setActiveAiScanRequest] = useState(null);
+  const [lastAiScanReportByProduct, setLastAiScanReportByProduct] = useState({});
+  const processedAiScanRequestIdRef = useRef(null);
+  const activeAiScanRequestRef = useRef(null);
+
+  // 10. Presentation-Only State: All drawers initially collapsed
   const [openDrawersById, setOpenDrawersById] = useState(() =>
     BENCH_V2_DRAWER_GROUPS.reduce((acc, drawer) => {
       acc[drawer.drawerId] = false;
@@ -482,8 +547,33 @@ export default function BenchV2Route() {
     activeSaveSubmissionRef.current = activeSaveSubmission;
   }, [activeSaveSubmission]);
 
+  useEffect(() => {
+    activeAiScanRequestRef.current = activeAiScanRequest;
+  }, [activeAiScanRequest]);
+
+  // Keep latest state refs for safe asynchronous AI Scan reconciliation
+  const baselineByProductRef = useRef(baselineByProduct);
+  useEffect(() => {
+    baselineByProductRef.current = baselineByProduct;
+  }, [baselineByProduct]);
+
+  const proposedByProductRef = useRef(proposedByProduct);
+  useEffect(() => {
+    proposedByProductRef.current = proposedByProduct;
+  }, [proposedByProduct]);
+
+  const approvalsByProductRef = useRef(approvalsByProduct);
+  useEffect(() => {
+    approvalsByProductRef.current = approvalsByProduct;
+  }, [approvalsByProduct]);
+
+  const keepOriginalByProductRef = useRef(keepOriginalByProduct);
+  useEffect(() => {
+    keepOriginalByProductRef.current = keepOriginalByProduct;
+  }, [keepOriginalByProduct]);
+
   // Synchronize fresh loader baseline snapshots and selector page titles
-  // without erasing pending manual drafts or approvals for any product.
+  // without erasing pending manual drafts, AI alternatives, or approvals for any product.
   useEffect(() => {
     const snap = loaderData?.baselineSnapshot;
     if (snap && isExactProductGid(snap.productId)) {
@@ -519,11 +609,15 @@ export default function BenchV2Route() {
         : null;
 
   const currentProposedMap = proposedByProduct[activeProductId] || {};
+  const currentAiAlternativesMap = aiAlternativesByProduct[activeProductId] || {};
   const currentApprovalsMap = approvalsByProduct[activeProductId] || {};
   const currentKeepOriginalMap = keepOriginalByProduct[activeProductId] || {};
+  const currentAiScanReport = lastAiScanReportByProduct[activeProductId] || null;
 
   const isWriterBusy = writerFetcher.state !== "idle" || Boolean(activeSaveSubmission);
+  const isAiScanBusy = aiScanFetcher.state !== "idle" || Boolean(activeAiScanRequest);
   const isBaselineReloading = revalidator.state !== "idle";
+  const isAnyOperationBusy = isWriterBusy || isAiScanBusy || isBaselineReloading;
 
   const currentSelectorCursor = searchParams.get("cursor") || null;
   const selectorPage = loaderData?.selectorPage || {
@@ -560,16 +654,22 @@ export default function BenchV2Route() {
     (activeProductId === CANYON_RED_PRODUCT_GID ? "Canyon Red" : activeProductId);
 
   // Product Selection Handler:
-  // - Blocks switching during an active save.
+  // - Blocks switching during an active Save or active AI Scan.
   // - Selects strictly by exact Product GID.
-  // - Preserves all drafts, approvals, and Keep Original records across products.
+  // - Preserves all drafts, AI alternatives, approvals, and Keep Original records across products.
   // - Never triggers Save, approval, proposal generation, or AI calls.
   const handleSelectProductGid = (nextProductGid) => {
-    if (isWriterBusy) {
+    if (isWriterBusy || isAiScanBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
-        title: "Cannot switch products while saving",
-        reasons: ["Wait for the current save request to finish before switching products."]
+        title: isWriterBusy
+          ? "Cannot switch products while saving"
+          : "Cannot switch products while AI Scan is running",
+        reasons: [
+          isWriterBusy
+            ? "Wait for the current save request to finish before switching products."
+            : "Wait for the current AI Scan to finish before switching products."
+        ]
       });
       return;
     }
@@ -586,7 +686,7 @@ export default function BenchV2Route() {
 
   // Pagination Handlers for Lightweight Product Selector (50 products per page)
   const handleNextProductPage = () => {
-    if (isWriterBusy) return;
+    if (isAnyOperationBusy) return;
     const nextCursor = selectorPage?.pageInfo?.endCursor;
     if (!selectorPage?.pageInfo?.hasNextPage || !nextCursor) return;
 
@@ -598,7 +698,7 @@ export default function BenchV2Route() {
   };
 
   const handlePreviousProductPage = () => {
-    if (isWriterBusy || cursorHistory.length === 0) return;
+    if (isAnyOperationBusy || cursorHistory.length === 0) return;
     const prevCursor = cursorHistory[cursorHistory.length - 1] ?? null;
     setCursorHistory((prev) => prev.slice(0, -1));
 
@@ -610,6 +710,567 @@ export default function BenchV2Route() {
       nextParams.delete("cursor");
     }
     setSearchParams(nextParams);
+  };
+
+  // ==========================================================================
+  // EXPLICIT AI SCAN HANDLER (Calls existing /app/meta-injector-autofill
+  // with intent="tab3FullRescan" and benchV2OptIn="true")
+  // ==========================================================================
+  const handleExplicitAiScanProduct = () => {
+    setClientPrevalidationBanner(null);
+
+    if (isWriterBusy || isAiScanBusy || isBaselineReloading) {
+      setClientPrevalidationBanner({
+        tone: "warning",
+        title: "Operation already in progress",
+        reasons: ["Wait for the current operation to complete before starting an AI Scan."]
+      });
+      return;
+    }
+
+    if (!currentBaseline || currentBaseline.productId !== activeProductId) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: "Cannot run AI Scan: Product baseline not loaded",
+        reasons: [`Reload ${activeProductTitle} so its baseline and photos are available.`]
+      });
+      return;
+    }
+
+    if (
+      currentBaseline.metafieldsReadComplete !== true ||
+      currentBaseline.defsReadComplete !== true
+    ) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: "Cannot run AI Scan: Baseline read incomplete",
+        reasons: [
+          "Product metafields or live definitions did not finish loading. Click Reload Product first."
+        ]
+      });
+      return;
+    }
+
+    const mediaEdges = Array.isArray(currentBaseline.nativeTargets?.media?.edges)
+      ? currentBaseline.nativeTargets.media.edges
+      : [];
+    const mediaInputs = mediaEdges
+      .map((edge) => {
+        const node = edge?.node;
+        const url = node?.preview?.image?.url || "";
+        const imageId = node?.id || "";
+        return url && imageId ? { imageId, url } : null;
+      })
+      .filter(Boolean);
+
+    if (mediaInputs.length === 0) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: "Cannot run AI Scan: No product photos found",
+        reasons: [
+          `No valid MediaImage URLs were found on ${activeProductTitle} for Gemini Vision.`
+        ]
+      });
+      return;
+    }
+
+    // Build operator_locked_fields and passive_stored_fields using ONLY the 42
+    // bare keys accepted by parseProvenanceFieldSet in meta-injector.autofill.server.jsx.
+    const operatorLockedList = [];
+    const passiveStoredList = [];
+    const contextKeyValues = {};
+
+    for (const bareKey of ENGINE_ALLOWED_PROVENANCE_BARE_KEYS) {
+      if (CANCELLED_INERT_DESTINATIONS.has(bareKey)) continue;
+
+      let destKey = `custom.${bareKey}`;
+      if (bareKey === "price") destKey = "native_price";
+      else if (bareKey === "poetic_hook") destKey = "native_seo_description";
+
+      const propEntry = currentProposedMap[destKey];
+      const hasHumanDraft = Boolean(
+        propEntry &&
+          typeof propEntry === "object" &&
+          propEntry.origin === "Manual" &&
+          typeof propEntry.value === "string" &&
+          propEntry.value.trim() !== ""
+      );
+
+      const approvalRec = currentApprovalsMap[destKey];
+      const hasValidApproval = Boolean(
+        approvalRec &&
+          propEntry &&
+          isExactValueApprovalValid({
+            approvalRecord: approvalRec,
+            productId: activeProductId,
+            destinationKey: destKey,
+            currentProposedValue:
+              typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
+            baselineSnapshot: currentBaseline
+          })
+      );
+
+      const keepOrigRec = currentKeepOriginalMap[destKey];
+      const hasValidKeepOriginal = Boolean(
+        keepOrigRec &&
+          propEntry &&
+          isKeepOriginalRecordValid({
+            keepOriginalRecord: keepOrigRec,
+            productId: activeProductId,
+            destinationKey: destKey,
+            currentProposedValue:
+              typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
+            baselineSnapshot: currentBaseline
+          })
+      );
+
+      let storedVal = "";
+      if (bareKey === "price") {
+        storedVal = currentBaseline.nativeTargets?.price || "";
+      } else if (bareKey === "poetic_hook") {
+        storedVal = currentBaseline.nativeTargets?.seo?.description || "";
+      } else {
+        const rawMf = currentBaseline.currentMetafields?.[`custom.${bareKey}`];
+        storedVal = rawMf !== undefined && rawMf !== null ? String(rawMf).trim() : "";
+      }
+
+      if (hasHumanDraft || hasValidApproval) {
+        const humanVal =
+          typeof propEntry === "object" ? propEntry.value.trim() : String(propEntry || "").trim();
+        if (humanVal !== "") {
+          operatorLockedList.push(bareKey);
+          contextKeyValues[bareKey] = humanVal;
+          continue;
+        }
+      }
+
+      if (hasValidKeepOriginal && storedVal !== "") {
+        operatorLockedList.push(bareKey);
+        contextKeyValues[bareKey] = storedVal;
+        continue;
+      }
+
+      if (storedVal !== "") {
+        passiveStoredList.push(bareKey);
+        contextKeyValues[bareKey] = storedVal;
+      }
+    }
+
+    // Build observed_destination_types and explicit OOAK observed type parameters
+    const observedDestinationTypes = {};
+    for (const destKey of BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS) {
+      const obs = buildBaselineObservation(currentBaseline, destKey);
+      const contract = getFieldContractByDestination(destKey);
+      const typeCheck = evaluateDestinationTypeAndCompleteness({
+        contract,
+        baselineObs: obs
+      });
+      if (typeCheck.ready && typeCheck.verifiedActualType) {
+        observedDestinationTypes[destKey] = typeCheck.verifiedActualType;
+      }
+    }
+
+    const ooak1ObservedType = observedDestinationTypes["custom.is_one_of_a_kind"] || "";
+    const ooak2ObservedType = observedDestinationTypes["custom.is_ooak"] || "";
+
+    const requestId = `bench_v2_aiscan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setActiveAiScanRequest({
+      requestId,
+      productId: activeProductId,
+      startedAt: new Date().toISOString()
+    });
+
+    const formData = new FormData();
+    formData.append("intent", "tab3FullRescan");
+    formData.append("benchV2OptIn", "true");
+    formData.append("requestId", requestId);
+    formData.append("pieceId", activeProductId);
+    formData.append("productId", activeProductId);
+    formData.append("productTitle", currentBaseline.productTitle || activeProductTitle || "");
+
+    const humanPieceName =
+      contextKeyValues.piece_name ||
+      currentBaseline.currentMetafields?.["custom.piece_name"] ||
+      "";
+    if (humanPieceName) {
+      formData.append("pieceName", String(humanPieceName));
+      formData.append("humanPieceId", String(humanPieceName));
+    }
+
+    formData.append("mediaInputs", JSON.stringify(mediaInputs));
+    if (mediaInputs[0]?.url) {
+      formData.append("imageUrl", mediaInputs[0].url);
+    }
+    if (mediaInputs[0]?.imageId) {
+      formData.append("imageId", mediaInputs[0].imageId);
+    }
+
+    formData.append("operator_locked_fields", JSON.stringify(operatorLockedList));
+    formData.append("passive_stored_fields", JSON.stringify(passiveStoredList));
+    formData.append("observed_destination_types", JSON.stringify(observedDestinationTypes));
+    if (ooak1ObservedType) {
+      formData.append("is_one_of_a_kind_observed_type", ooak1ObservedType);
+    }
+    if (ooak2ObservedType) {
+      formData.append("is_ooak_observed_type", ooak2ObservedType);
+    }
+
+    for (const [k, v] of Object.entries(contextKeyValues)) {
+      if (v !== undefined && v !== null && String(v).trim() !== "") {
+        formData.append(k, String(v));
+      }
+    }
+
+    aiScanFetcher.submit(formData, {
+      method: "POST",
+      action: "/app/meta-injector-autofill"
+    });
+  };
+
+  // ==========================================================================
+  // AI SCAN COMPLETION EFFECT:
+  // - Validates exact requestId and pieceId before accepting any result.
+  // - Consumes ONLY rawResponse.producerProposals (never tab3Data fallbacks).
+  // - Preserves manual drafts, approvals, Keep Original, and other products' state.
+  // - Conflicting AI proposals are stored in aiAlternativesByProduct[productId]
+  //   for explicit operator choice rather than overwriting human work.
+  // ==========================================================================
+  useEffect(() => {
+    if (aiScanFetcher.state !== "idle") return;
+    const pendingScan = activeAiScanRequestRef.current;
+    if (!pendingScan) return;
+
+    if (processedAiScanRequestIdRef.current === pendingScan.requestId) {
+      return;
+    }
+    processedAiScanRequestIdRef.current = pendingScan.requestId;
+
+    const scannedProductId = pendingScan.productId;
+    const rawResponse = aiScanFetcher.data;
+
+    if (!rawResponse || typeof rawResponse !== "object") {
+      setLastAiScanReportByProduct((prev) => ({
+        ...prev,
+        [scannedProductId]: {
+          requestId: pendingScan.requestId,
+          productId: scannedProductId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          summary: "AI Scan failed: no structured response returned by /app/meta-injector-autofill.",
+          receivedCount: 0,
+          stagedCount: 0,
+          heldConflictCount: 0,
+          unchangedSkippedCount: 0,
+          rejectedInvalidCount: 0,
+          diagnostics: {},
+          details: []
+        }
+      }));
+      setActiveAiScanRequest(null);
+      return;
+    }
+
+    const returnedRequestId = rawResponse.requestId || null;
+    const returnedPieceId = rawResponse.pieceId || rawResponse.productId || null;
+
+    if (returnedRequestId !== pendingScan.requestId || returnedPieceId !== scannedProductId) {
+      setLastAiScanReportByProduct((prev) => ({
+        ...prev,
+        [scannedProductId]: {
+          requestId: pendingScan.requestId,
+          productId: scannedProductId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          summary: `Ignored mismatched or stale AI Scan response (expected product ${scannedProductId} / request ${pendingScan.requestId}, got product ${String(
+            returnedPieceId
+          )} / request ${String(returnedRequestId)}).`,
+          receivedCount: 0,
+          stagedCount: 0,
+          heldConflictCount: 0,
+          unchangedSkippedCount: 0,
+          rejectedInvalidCount: 0,
+          diagnostics: {},
+          details: []
+        }
+      }));
+      setActiveAiScanRequest(null);
+      return;
+    }
+
+    if (rawResponse.success !== true) {
+      setLastAiScanReportByProduct((prev) => ({
+        ...prev,
+        [scannedProductId]: {
+          requestId: pendingScan.requestId,
+          productId: scannedProductId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          summary: rawResponse.error || "AI Scan returned an error.",
+          receivedCount: 0,
+          stagedCount: 0,
+          heldConflictCount: 0,
+          unchangedSkippedCount: 0,
+          rejectedInvalidCount: 0,
+          diagnostics:
+            rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
+              ? rawResponse.producerDiagnostics
+              : {},
+          details: []
+        }
+      }));
+      setActiveAiScanRequest(null);
+      return;
+    }
+
+    const rawProducerProposals = rawResponse.producerProposals;
+    if (
+      !rawProducerProposals ||
+      typeof rawProducerProposals !== "object" ||
+      Array.isArray(rawProducerProposals)
+    ) {
+      setLastAiScanReportByProduct((prev) => ({
+        ...prev,
+        [scannedProductId]: {
+          requestId: pendingScan.requestId,
+          productId: scannedProductId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          summary:
+            "AI Scan response did not include producerProposals separation map; refused to stage tab3Data fallbacks.",
+          receivedCount: 0,
+          stagedCount: 0,
+          heldConflictCount: 0,
+          unchangedSkippedCount: 0,
+          rejectedInvalidCount: 0,
+          diagnostics: {},
+          details: []
+        }
+      }));
+      setActiveAiScanRequest(null);
+      return;
+    }
+
+    const targetBaseline = baselineByProductRef.current[scannedProductId] || null;
+    const existingProdProposals = { ...(proposedByProductRef.current[scannedProductId] || {}) };
+    const existingProdApprovals = approvalsByProductRef.current[scannedProductId] || {};
+    const existingProdKeepOriginal = keepOriginalByProductRef.current[scannedProductId] || {};
+    const nextAiAlternativesForProd = {};
+
+    let receivedCount = 0;
+    let stagedCount = 0;
+    let heldConflictCount = 0;
+    let unchangedSkippedCount = 0;
+    let rejectedInvalidCount = 0;
+    const details = [];
+
+    for (const [destKey, entry] of Object.entries(rawProducerProposals)) {
+      if (CANCELLED_INERT_DESTINATIONS.has(destKey)) {
+        continue;
+      }
+      if (!BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey)) {
+        continue;
+      }
+
+      const contract = getFieldContractByDestination(destKey);
+      if (!contract || !contract.isWritableInBatch1) {
+        continue;
+      }
+
+      const rawValue =
+        entry && typeof entry === "object" && typeof entry.value === "string"
+          ? entry.value
+          : "";
+      const rawSource =
+        entry && typeof entry === "object" && typeof entry.source === "string" && entry.source
+          ? entry.source
+          : "Gemini Vision";
+
+      if (rawValue.trim() === "") {
+        continue;
+      }
+
+      receivedCount++;
+
+      const validation = validateBatch1ProposedValue({
+        productId: scannedProductId,
+        destinationKey: destKey,
+        proposedValue: rawValue,
+        baselineSnapshot: targetBaseline
+      });
+
+      if (!validation.valid) {
+        rejectedInvalidCount++;
+        details.push(`[${destKey}] Rejected invalid AI suggestion: ${validation.reason}`);
+        continue;
+      }
+
+      if (validation.isUnchangedFromStored) {
+        unchangedSkippedCount++;
+        details.push(`[${destKey}] Matches current saved value ("${rawValue}"); not staged.`);
+        continue;
+      }
+
+      // Check if this field already has a human draft, active approval, or active Keep Original decision
+      const existingDraft = existingProdProposals[destKey];
+      const existingDraftVal =
+        existingDraft && typeof existingDraft === "object"
+          ? existingDraft.value
+          : typeof existingDraft === "string"
+            ? existingDraft
+            : "";
+      const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
+      const isManualDraft = Boolean(
+        hasExistingDraft &&
+          (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+      );
+
+      const approvalRec = existingProdApprovals[destKey] || null;
+      const hasValidApproval =
+        hasExistingDraft &&
+        isExactValueApprovalValid({
+          approvalRecord: approvalRec,
+          productId: scannedProductId,
+          destinationKey: destKey,
+          currentProposedValue: existingDraftVal,
+          baselineSnapshot: targetBaseline
+        });
+
+      const keepOrigRec = existingProdKeepOriginal[destKey] || null;
+      const hasValidKeepOriginal =
+        hasExistingDraft &&
+        isKeepOriginalRecordValid({
+          keepOriginalRecord: keepOrigRec,
+          productId: scannedProductId,
+          destinationKey: destKey,
+          currentProposedValue: existingDraftVal,
+          baselineSnapshot: targetBaseline
+        });
+
+      const hasProtectedHumanState =
+        isManualDraft || hasValidApproval || hasValidKeepOriginal;
+
+      if (hasProtectedHumanState) {
+        if (existingDraftVal === validation.normalizedValue && !hasValidKeepOriginal) {
+          details.push(
+            `[${destKey}] AI suggestion matches your current draft ("${validation.normalizedValue}").`
+          );
+          continue;
+        }
+        heldConflictCount++;
+        nextAiAlternativesForProd[destKey] = {
+          value: validation.normalizedValue,
+          source: rawSource,
+          requestId: pendingScan.requestId,
+          receivedAt: new Date().toISOString()
+        };
+        details.push(
+          `[${destKey}] Held AI alternative "${validation.normalizedValue}" (${rawSource}) without overwriting your current draft or decision.`
+        );
+        continue;
+      }
+
+      // Field is untouched (or only had an unapproved prior AI draft): stage as an unapproved AI draft
+      existingProdProposals[destKey] = {
+        value: validation.normalizedValue,
+        source: rawSource,
+        origin: "AI",
+        updatedAt: new Date().toISOString()
+      };
+      stagedCount++;
+      details.push(
+        `[${destKey}] Staged unapproved AI draft "${validation.normalizedValue}" (${rawSource}).`
+      );
+    }
+
+    setProposedByProduct((prev) => ({
+      ...prev,
+      [scannedProductId]: existingProdProposals
+    }));
+
+    setAiAlternativesByProduct((prev) => ({
+      ...prev,
+      [scannedProductId]: {
+        ...(prev[scannedProductId] || {}),
+        ...nextAiAlternativesForProd
+      }
+    }));
+
+    const diagnosticsObj =
+      rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
+        ? rawResponse.producerDiagnostics
+        : {};
+
+    setLastAiScanReportByProduct((prev) => ({
+      ...prev,
+      [scannedProductId]: {
+        requestId: pendingScan.requestId,
+        productId: scannedProductId,
+        completedAt: new Date().toISOString(),
+        ok: true,
+        summary: `AI Scan complete: ${receivedCount} Batch 1 suggestion${
+          receivedCount === 1 ? "" : "s"
+        } received (${stagedCount} staged as unapproved drafts, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline).`,
+        receivedCount,
+        stagedCount,
+        heldConflictCount,
+        unchangedSkippedCount,
+        rejectedInvalidCount,
+        diagnostics: diagnosticsObj,
+        details
+      }
+    }));
+
+    setActiveAiScanRequest(null);
+  }, [aiScanFetcher.state, aiScanFetcher.data]);
+
+  // Explicit Handler to Accept a Held AI Alternative on a Field
+  const handleAcceptAiAlternative = (destinationKey) => {
+    setClientPrevalidationBanner(null);
+    const altEntry = currentAiAlternativesMap[destinationKey];
+    if (!altEntry || typeof altEntry.value !== "string") return;
+
+    setProposedByProduct((prev) => {
+      const prodMap = { ...(prev[activeProductId] || {}) };
+      prodMap[destinationKey] = {
+        value: altEntry.value,
+        source: altEntry.source || "Gemini Vision",
+        origin: "AI",
+        updatedAt: new Date().toISOString()
+      };
+      return { ...prev, [activeProductId]: prodMap };
+    });
+
+    // Accepting the new value invalidates any prior approval or Keep Original on that field
+    // so the new AI draft starts strictly unapproved
+    setApprovalsByProduct((prev) => {
+      const prodApprovals = prev[activeProductId];
+      if (!prodApprovals || !prodApprovals[destinationKey]) return prev;
+      const nextApprovals = { ...prodApprovals };
+      delete nextApprovals[destinationKey];
+      return { ...prev, [activeProductId]: nextApprovals };
+    });
+
+    setKeepOriginalByProduct((prev) => {
+      const prodKeep = prev[activeProductId];
+      if (!prodKeep || !prodKeep[destinationKey]) return prev;
+      const nextKeep = { ...prodKeep };
+      delete nextKeep[destinationKey];
+      return { ...prev, [activeProductId]: nextKeep };
+    });
+
+    setAiAlternativesByProduct((prev) => {
+      const prodAlts = { ...(prev[activeProductId] || {}) };
+      delete prodAlts[destinationKey];
+      return { ...prev, [activeProductId]: prodAlts };
+    });
+  };
+
+  const handleDismissAiAlternative = (destinationKey) => {
+    setAiAlternativesByProduct((prev) => {
+      const prodAlts = { ...(prev[activeProductId] || {}) };
+      delete prodAlts[destinationKey];
+      return { ...prev, [activeProductId]: prodAlts };
+    });
   };
 
   // Handle writerFetcher completion: match exact productId & submissionId,
@@ -830,8 +1491,9 @@ export default function BenchV2Route() {
   }, [writerFetcher.state, writerFetcher.data, revalidator]);
 
   // Manual Proposal Edit Handler:
-  // Preserves exact untrimmed string in proposedByProduct[activeProductId] and
-  // immediately invalidates any prior Approval or Keep Original record for that destination.
+  // Preserves exact untrimmed string in proposedByProduct[activeProductId] with
+  // origin="Manual" and immediately invalidates any prior Approval or Keep Original
+  // record for that destination.
   const handleManualProposalChange = (destinationKey, rawNewValue) => {
     setClientPrevalidationBanner(null);
     const exactString = typeof rawNewValue === "string" ? rawNewValue : String(rawNewValue ?? "");
@@ -841,6 +1503,7 @@ export default function BenchV2Route() {
       prodMap[destinationKey] = {
         value: exactString,
         source: "Manual",
+        origin: "Manual",
         updatedAt: new Date().toISOString()
       };
       return { ...prev, [activeProductId]: prodMap };
@@ -1028,6 +1691,16 @@ export default function BenchV2Route() {
         keepOriginalMapForProduct: currentKeepOriginalMap
       });
 
+      const rawPropEntry = currentProposedMap[fieldContract.destinationKey];
+      const proposalOrigin =
+        rawPropEntry && typeof rawPropEntry === "object" && rawPropEntry.origin === "AI"
+          ? "AI"
+          : baseEval.hasProposalKey
+            ? "Manual"
+            : "None";
+
+      const heldAiAlternative = currentAiAlternativesMap[fieldContract.destinationKey] || null;
+
       const writerHoldReason = getExistingWriterHoldReason(fieldContract.destinationKey);
       const fidelityCheck =
         baseEval?.hasProposalKey && baseEval.proposedValue !== ""
@@ -1060,6 +1733,8 @@ export default function BenchV2Route() {
 
       return {
         ...baseEval,
+        proposalOrigin,
+        heldAiAlternative,
         isWriterHeld: Boolean(writerHoldReason),
         writerHoldReason,
         fidelityCheck,
@@ -1082,20 +1757,25 @@ export default function BenchV2Route() {
     (r) => r.isApproved && !r.isWriterHeld && r.fidelityCheck.faithful
   );
   const keepOriginalRows = allEvaluatedRows.filter((r) => r.isKeepOriginal);
+  const heldAiAlternativesCount = Object.keys(currentAiAlternativesMap).length;
 
   // Explicit Save Handler:
-  // - Never runs on mount, selection, or edit.
+  // - Never runs on mount, selection, AI scan, or edit.
   // - Prevalidates every entry in currentApprovalsMap for activeProductId; if ANY
   //   approved entry is invalid, stale, writer-held, or fails writer string-fidelity,
   //   stops the entire submission rather than silently filtering it out.
   const handleExplicitSaveApprovedChanges = () => {
     setClientPrevalidationBanner(null);
 
-    if (isWriterBusy) {
+    if (isWriterBusy || isAiScanBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
-        title: "Save already in progress",
-        reasons: ["Wait for the current save request to finish before clicking Save again."]
+        title: isWriterBusy ? "Save already in progress" : "AI Scan in progress",
+        reasons: [
+          isWriterBusy
+            ? "Wait for the current save request to finish before clicking Save again."
+            : "Wait for the current AI Scan to finish before saving."
+        ]
       });
       return;
     }
@@ -1115,7 +1795,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit a field in Drawers 1 to 4 and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a field in Drawers 1 to 4 and check Approve before clicking Save."
         ]
       });
       return;
@@ -1313,14 +1993,40 @@ export default function BenchV2Route() {
                     &nbsp;|&nbsp; Keep Original: <strong>{keepOriginalRows.length}</strong>
                   </span>
                 )}
+                {heldAiAlternativesCount > 0 && (
+                  <span>
+                    {" "}
+                    &nbsp;|&nbsp; AI Alternatives Held:{" "}
+                    <strong>{heldAiAlternativesCount}</strong>
+                  </span>
+                )}
               </div>
             </div>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center" }}>
               <button
                 type="button"
+                onClick={handleExplicitAiScanProduct}
+                disabled={isAnyOperationBusy || !currentBaseline}
+                style={{
+                  padding: "10px 18px",
+                  fontSize: "16px",
+                  fontWeight: 700,
+                  backgroundColor:
+                    isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#1d4ed8",
+                  color: isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                  border: "2px solid #1e3a8a",
+                  borderRadius: "8px",
+                  cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                }}
+              >
+                {isAiScanBusy ? "Scanning Photos with Gemini..." : "AI Scan Product"}
+              </button>
+
+              <button
+                type="button"
                 onClick={() => revalidator.revalidate()}
-                disabled={isBaselineReloading || isWriterBusy}
+                disabled={isAnyOperationBusy}
                 style={{
                   padding: "10px 18px",
                   fontSize: "16px",
@@ -1329,7 +2035,7 @@ export default function BenchV2Route() {
                   color: "#0f172a",
                   border: "2px solid #475569",
                   borderRadius: "8px",
-                  cursor: isBaselineReloading || isWriterBusy ? "not-allowed" : "pointer"
+                  cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
                 }}
               >
                 {isBaselineReloading ? "Loading..." : "Reload Product"}
@@ -1338,23 +2044,23 @@ export default function BenchV2Route() {
               <button
                 type="button"
                 onClick={handleExplicitSaveApprovedChanges}
-                disabled={isWriterBusy || isBaselineReloading || validApprovedRows.length === 0}
+                disabled={isAnyOperationBusy || validApprovedRows.length === 0}
                 style={{
                   padding: "10px 22px",
                   fontSize: "16px",
                   fontWeight: 700,
                   backgroundColor:
-                    isWriterBusy || isBaselineReloading || validApprovedRows.length === 0
+                    isAnyOperationBusy || validApprovedRows.length === 0
                       ? "#cbd5e1"
                       : "#15803d",
                   color:
-                    isWriterBusy || isBaselineReloading || validApprovedRows.length === 0
+                    isAnyOperationBusy || validApprovedRows.length === 0
                       ? "#334155"
                       : "#ffffff",
                   border: "2px solid #14532d",
                   borderRadius: "8px",
                   cursor:
-                    isWriterBusy || isBaselineReloading || validApprovedRows.length === 0
+                    isAnyOperationBusy || validApprovedRows.length === 0
                       ? "not-allowed"
                       : "pointer"
                 }}
@@ -1389,7 +2095,7 @@ export default function BenchV2Route() {
               id="bench-v2-product-selector"
               aria-label="Select Product"
               value={activeProductId}
-              disabled={isWriterBusy || isBaselineReloading}
+              disabled={isAnyOperationBusy}
               onChange={(e) => handleSelectProductGid(e.target.value)}
               style={{
                 flex: "1 1 320px",
@@ -1400,7 +2106,7 @@ export default function BenchV2Route() {
                 color: "#0f172a",
                 border: "2px solid #475569",
                 borderRadius: "8px",
-                cursor: isWriterBusy || isBaselineReloading ? "not-allowed" : "pointer"
+                cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
               }}
             >
               {selectorOptions.map((item) => {
@@ -1419,23 +2125,23 @@ export default function BenchV2Route() {
               <button
                 type="button"
                 onClick={handlePreviousProductPage}
-                disabled={isWriterBusy || isBaselineReloading || cursorHistory.length === 0}
+                disabled={isAnyOperationBusy || cursorHistory.length === 0}
                 style={{
                   padding: "8px 14px",
                   fontSize: "15px",
                   fontWeight: 600,
                   backgroundColor:
-                    isWriterBusy || isBaselineReloading || cursorHistory.length === 0
+                    isAnyOperationBusy || cursorHistory.length === 0
                       ? "#f1f5f9"
                       : "#ffffff",
                   color:
-                    isWriterBusy || isBaselineReloading || cursorHistory.length === 0
+                    isAnyOperationBusy || cursorHistory.length === 0
                       ? "#64748b"
                       : "#0f172a",
                   border: "1px solid #64748b",
                   borderRadius: "6px",
                   cursor:
-                    isWriterBusy || isBaselineReloading || cursorHistory.length === 0
+                    isAnyOperationBusy || cursorHistory.length === 0
                       ? "not-allowed"
                       : "pointer"
                 }}
@@ -1451,8 +2157,7 @@ export default function BenchV2Route() {
                 type="button"
                 onClick={handleNextProductPage}
                 disabled={
-                  isWriterBusy ||
-                  isBaselineReloading ||
+                  isAnyOperationBusy ||
                   !selectorPage?.pageInfo?.hasNextPage ||
                   !selectorPage?.pageInfo?.endCursor
                 }
@@ -1461,15 +2166,13 @@ export default function BenchV2Route() {
                   fontSize: "15px",
                   fontWeight: 600,
                   backgroundColor:
-                    isWriterBusy ||
-                    isBaselineReloading ||
+                    isAnyOperationBusy ||
                     !selectorPage?.pageInfo?.hasNextPage ||
                     !selectorPage?.pageInfo?.endCursor
                       ? "#f1f5f9"
                       : "#ffffff",
                   color:
-                    isWriterBusy ||
-                    isBaselineReloading ||
+                    isAnyOperationBusy ||
                     !selectorPage?.pageInfo?.hasNextPage ||
                     !selectorPage?.pageInfo?.endCursor
                       ? "#64748b"
@@ -1477,8 +2180,7 @@ export default function BenchV2Route() {
                   border: "1px solid #64748b",
                   borderRadius: "6px",
                   cursor:
-                    isWriterBusy ||
-                    isBaselineReloading ||
+                    isAnyOperationBusy ||
                     !selectorPage?.pageInfo?.hasNextPage ||
                     !selectorPage?.pageInfo?.endCursor
                       ? "not-allowed"
@@ -1506,8 +2208,9 @@ export default function BenchV2Route() {
             }}
           >
             <div>
-              Drawers 1 to 4 are connected for manual edits. Gemini AI is not connected in this
-              step. Four fields (Is OOAK, Cut and Shape, Stone Shape, Color) are on writer hold.
+              Drawers 1 to 4 are connected for manual edits and explicit Gemini AI Scan
+              suggestions (all AI suggestions stay unapproved until you check Approve). Four
+              fields (Is OOAK, Cut and Shape, Stone Shape, Color) remain on writer hold.
             </div>
 
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -1607,6 +2310,87 @@ export default function BenchV2Route() {
                   &bull; {errMsg}
                 </div>
               ))}
+          </div>
+        )}
+
+        {/* HONEST COMPACT AI SCAN REPORT BANNER */}
+        {currentAiScanReport && (
+          <div
+            role="region"
+            aria-label="AI Scan Result"
+            style={{
+              backgroundColor: currentAiScanReport.ok ? "#eff6ff" : "#fef2f2",
+              border: currentAiScanReport.ok ? "2px solid #1d4ed8" : "2px solid #b91c1c",
+              borderRadius: "10px",
+              padding: "16px 20px",
+              marginBottom: "20px",
+              color: currentAiScanReport.ok ? "#1e3a8a" : "#7f1d1d"
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "12px"
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "17px", fontWeight: 700 }}>
+                  {currentAiScanReport.ok ? "AI Scan Result" : "AI Scan Error"}
+                </div>
+                <div style={{ marginTop: "4px", fontSize: "15px", color: "#0f172a" }}>
+                  {currentAiScanReport.summary}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setLastAiScanReportByProduct((prev) => {
+                    const next = { ...prev };
+                    delete next[activeProductId];
+                    return next;
+                  })
+                }
+                style={{
+                  backgroundColor: "#ffffff",
+                  color: "#0f172a",
+                  border: "1px solid #475569",
+                  borderRadius: "6px",
+                  padding: "4px 12px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+
+            {currentAiScanReport.diagnostics &&
+              Object.keys(currentAiScanReport.diagnostics).length > 0 && (
+                <div style={{ marginTop: "8px", fontSize: "14px", color: "#9a3412" }}>
+                  {Object.entries(currentAiScanReport.diagnostics).map(([k, msg]) => (
+                    <div key={k}>
+                      &bull; <strong>{k}:</strong> {String(msg)}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+            {Array.isArray(currentAiScanReport.details) &&
+              currentAiScanReport.details.length > 0 && (
+                <details style={{ marginTop: "8px", fontSize: "14px", color: "#334155" }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+                    AI Scan Field Breakdown ({currentAiScanReport.details.length})
+                  </summary>
+                  <ul style={{ margin: "6px 0 0 0", paddingLeft: "20px" }}>
+                    {currentAiScanReport.details.map((line, idx) => (
+                      <li key={idx}>{line}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
           </div>
         )}
 
@@ -1799,6 +2583,9 @@ export default function BenchV2Route() {
             const drawerStagedCount = drawer.evaluatedRows.filter(
               (r) => r.hasProposalKey
             ).length;
+            const drawerHeldAltCount = drawer.evaluatedRows.filter(
+              (r) => Boolean(r.heldAiAlternative)
+            ).length;
 
             return (
               <section
@@ -1837,6 +2624,7 @@ export default function BenchV2Route() {
                       &bull; {drawer.evaluatedRows.length} fields
                       {drawerStagedCount > 0 && ` • ${drawerStagedCount} staged`}
                       {drawerApprovedCount > 0 && ` • ${drawerApprovedCount} approved`}
+                      {drawerHeldAltCount > 0 && ` • ${drawerHeldAltCount} AI alternative`}
                     </div>
                   </div>
 
@@ -1927,6 +2715,9 @@ export default function BenchV2Route() {
                           hasProposalKey,
                           proposedValue,
                           proposedDisplayValue,
+                          proposalSource,
+                          proposalOrigin,
+                          heldAiAlternative,
                           validation,
                           isApproved,
                           isKeepOriginal,
@@ -2036,7 +2827,9 @@ export default function BenchV2Route() {
                                   : isKeepOriginal
                                     ? "Keeping original"
                                     : hasProposalKey
-                                      ? "Draft staged"
+                                      ? proposalOrigin === "AI"
+                                        ? "AI suggestion (unapproved)"
+                                        : "Draft staged (unapproved)"
                                       : "Unchanged"}
                               </div>
                             </div>
@@ -2094,13 +2887,27 @@ export default function BenchV2Route() {
                               >
                                 <div
                                   style={{
-                                    fontSize: "14px",
-                                    fontWeight: 700,
-                                    color: "#334155",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "baseline",
+                                    gap: "8px",
                                     marginBottom: "6px"
                                   }}
                                 >
-                                  Proposed
+                                  <span
+                                    style={{
+                                      fontSize: "14px",
+                                      fontWeight: 700,
+                                      color: "#334155"
+                                    }}
+                                  >
+                                    Proposed
+                                  </span>
+                                  {hasProposalKey && proposalSource && proposalSource !== "None" && (
+                                    <span style={{ fontSize: "13px", color: "#475569" }}>
+                                      Source: {proposalSource}
+                                    </span>
+                                  )}
                                 </div>
 
                                 {contract.isWritableInBatch1 ? (
@@ -2117,7 +2924,7 @@ export default function BenchV2Route() {
                                             ? proposedValue
                                             : ""
                                         }
-                                        disabled={!canEditDraftInBatch1 || isWriterBusy}
+                                        disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
                                         onChange={(e) => {
                                           if (e.target.value === "") return;
                                           handleManualProposalChange(
@@ -2158,7 +2965,7 @@ export default function BenchV2Route() {
                                         type="text"
                                         aria-label={`Manual proposal for ${contract.destinationKey}`}
                                         value={proposedValue}
-                                        disabled={!canEditDraftInBatch1 || isWriterBusy}
+                                        disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
                                         placeholder={
                                           canEditDraftInBatch1
                                             ? "Type proposed value..."
@@ -2185,7 +2992,7 @@ export default function BenchV2Route() {
                                           onClick={() =>
                                             handleClearDraftProposal(contract.destinationKey)
                                           }
-                                          disabled={isWriterBusy}
+                                          disabled={isAnyOperationBusy}
                                           style={{
                                             padding: "8px 12px",
                                             fontSize: "14px",
@@ -2214,6 +3021,75 @@ export default function BenchV2Route() {
                                       </div>
                                     )}
 
+                                    {/* HELD AI ALTERNATIVE CHOICE BOX (WHEN AI SUGGESTION CONFLICTS WITH HUMAN DRAFT/DECISION) */}
+                                    {heldAiAlternative && (
+                                      <div
+                                        style={{
+                                          marginTop: "10px",
+                                          padding: "10px 12px",
+                                          backgroundColor: "#eff6ff",
+                                          border: "1px solid #93c5fd",
+                                          borderRadius: "6px",
+                                          fontSize: "14px",
+                                          color: "#1e3a8a"
+                                        }}
+                                      >
+                                        <div style={{ fontWeight: 700 }}>
+                                          Separate AI Suggestion Available: "{heldAiAlternative.value}"
+                                        </div>
+                                        <div style={{ fontSize: "13px", marginTop: "2px" }}>
+                                          Source: {heldAiAlternative.source} (kept separate so your
+                                          current draft or decision was not overwritten)
+                                        </div>
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            gap: "8px",
+                                            marginTop: "8px"
+                                          }}
+                                        >
+                                          <button
+                                            type="button"
+                                            disabled={isAnyOperationBusy}
+                                            onClick={() =>
+                                              handleAcceptAiAlternative(contract.destinationKey)
+                                            }
+                                            style={{
+                                              padding: "5px 10px",
+                                              fontSize: "13px",
+                                              fontWeight: 700,
+                                              backgroundColor: "#1d4ed8",
+                                              color: "#ffffff",
+                                              border: "1px solid #1e3a8a",
+                                              borderRadius: "5px",
+                                              cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
+                                            }}
+                                          >
+                                            Use AI Suggestion
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={isAnyOperationBusy}
+                                            onClick={() =>
+                                              handleDismissAiAlternative(contract.destinationKey)
+                                            }
+                                            style={{
+                                              padding: "5px 10px",
+                                              fontSize: "13px",
+                                              fontWeight: 600,
+                                              backgroundColor: "#ffffff",
+                                              color: "#0f172a",
+                                              border: "1px solid #64748b",
+                                              borderRadius: "5px",
+                                              cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
+                                            }}
+                                          >
+                                            Dismiss AI Suggestion
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
                                     {/* PLAIN-LANGUAGE APPROVE & KEEP ORIGINAL CONTROLS */}
                                     <div
                                       style={{
@@ -2234,7 +3110,8 @@ export default function BenchV2Route() {
                                           fontWeight: isApproved ? 700 : 600,
                                           color: isApproved ? "#15803d" : "#0f172a",
                                           cursor:
-                                            (canApproveForSave || isApproved) && !isWriterBusy
+                                            (canApproveForSave || isApproved) &&
+                                            !isAnyOperationBusy
                                               ? "pointer"
                                               : "not-allowed",
                                           opacity:
@@ -2245,7 +3122,8 @@ export default function BenchV2Route() {
                                           type="checkbox"
                                           checked={Boolean(isApproved && !isWriterHeld)}
                                           disabled={
-                                            isWriterBusy || (!canApproveForSave && !isApproved)
+                                            isAnyOperationBusy ||
+                                            (!canApproveForSave && !isApproved)
                                           }
                                           onChange={() =>
                                             handleToggleApproval(
@@ -2268,7 +3146,7 @@ export default function BenchV2Route() {
                                           color: "#0f172a",
                                           cursor:
                                             (canSelectKeepOriginal || isKeepOriginal) &&
-                                            !isWriterBusy
+                                            !isAnyOperationBusy
                                               ? "pointer"
                                               : "not-allowed",
                                           opacity:
@@ -2279,7 +3157,7 @@ export default function BenchV2Route() {
                                           type="checkbox"
                                           checked={Boolean(isKeepOriginal)}
                                           disabled={
-                                            isWriterBusy ||
+                                            isAnyOperationBusy ||
                                             (!canSelectKeepOriginal && !isKeepOriginal)
                                           }
                                           onChange={() =>
