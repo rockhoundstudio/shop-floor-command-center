@@ -8,25 +8,23 @@
 // 3. app/routes/app.meta-injector-api.jsx (138,970 chars — action intent="executeRepairPlan")
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars — action delegates to executeAutofill)
 // 5. app/utils/meta-injector.autofill.server.jsx (168,616 chars, SHA256: 039F7B2F8DED1E385A02A2640F540821B1638A8A95DAAC547AF83BC93C9E3AEF)
-// 6. app/routes/app.bench-v2.jsx (100,574 chars, SHA256: E8C1AB112BE3E7ED8430794DB1FD46041CC3756240405572B4B0C0BFAB22BC16)
+// 6. app/routes/app.bench-v2.jsx (Retained Tab 3 Connector Route, SHA256: EF6B537D242E1A74874F3582441D880626C2A60707E885F0071352AC59894520)
 //
-// Bounded Tab 3 Gemini Producer Connection Guarantees:
-// - Connects one explicit "AI Scan Product" button to existing POST
-//   /app/meta-injector-autofill with intent="tab3FullRescan" and
-//   benchV2OptIn="true".
-// - Never runs AI on load, product selection, pagination, or revalidation.
-// - Supplies full product/baseline/photo context required by the engine's
-//   provenance contract (operator_locked_fields, passive_stored_fields,
-//   mediaInputs, observed_destination_types, is_ooak_observed_type,
-//   is_one_of_a_kind_observed_type).
-// - Consumes ONLY response.producerProposals (never staging tab3Data fallbacks).
-// - Validates exact pieceId and requestId before accepting scan results.
-// - Locks product switching, pagination, Reload, Save, and duplicate scans
-//   while a scan is in flight; locks AI Scan while a Save is in flight.
-// - Never overwrites or clears existing human drafts, approvals, or Keep Original
-//   decisions; conflicting AI suggestions are retained visibly as separate
-//   alternatives with an explicit "Use AI Suggestion" action.
-// - New AI drafts remain strictly unapproved (zero policy preapproval).
+// Bounded Tab 3 Presentation & Connector Guarantees:
+// - Restores 120px by 120px product thumbnails near top product controls
+//   from currentBaseline.nativeTargets.media.edges (preview.image.url, alt)
+//   for the exact selected product only, with fixed dimensions, flexShrink: 0,
+//   and objectFit: "cover" / objectPosition: "center".
+// - Carries actual producerProposals[destKey].source metadata through scan
+//   response processing into the AI Scan Field Breakdown and per-field
+//   Details (including suggestions that match saved baseline or are held),
+//   using "Source not reported" when absent without inferring provenance.
+// - Replaces "(Legacy OOAK field)" on custom.is_ooak with neutral
+//   "(Second OOAK field — custom.is_ooak)".
+// - Updates Drawer 11 subtitle to "Read-only parked and protected fields"
+//   instead of blanket "Connected in Batch 1".
+// - Preserves all business logic, request/response shapes, approvals,
+//   Keep Original, writer holds, and save reconciliation verbatim.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef } from "react";
@@ -613,6 +611,11 @@ export default function BenchV2Route() {
   const currentApprovalsMap = approvalsByProduct[activeProductId] || {};
   const currentKeepOriginalMap = keepOriginalByProduct[activeProductId] || {};
   const currentAiScanReport = lastAiScanReportByProduct[activeProductId] || null;
+  const currentScanProposalsMetaMap =
+    currentAiScanReport?.proposalsByDestination &&
+    typeof currentAiScanReport.proposalsByDestination === "object"
+      ? currentAiScanReport.proposalsByDestination
+      : {};
 
   const isWriterBusy = writerFetcher.state !== "idle" || Boolean(activeSaveSubmission);
   const isAiScanBusy = aiScanFetcher.state !== "idle" || Boolean(activeAiScanRequest);
@@ -652,6 +655,29 @@ export default function BenchV2Route() {
     currentBaseline?.productTitle ||
     knownProductsById[activeProductId] ||
     (activeProductId === CANYON_RED_PRODUCT_GID ? "Canyon Red" : activeProductId);
+
+  // Extract selected product's loaded MediaImage items strictly from currentBaseline
+  // (where currentBaseline is already verified to match activeProductId).
+  const activeProductMediaItems = React.useMemo(() => {
+    if (!currentBaseline || currentBaseline.productId !== activeProductId) {
+      return [];
+    }
+    const edges = currentBaseline.nativeTargets?.media?.edges;
+    if (!Array.isArray(edges)) return [];
+    const list = [];
+    for (let i = 0; i < edges.length; i++) {
+      const node = edges[i]?.node;
+      const url = node?.preview?.image?.url;
+      if (node && typeof url === "string" && url.trim() !== "") {
+        list.push({
+          id: node.id || `media_${i}`,
+          url: url.trim(),
+          alt: typeof node.alt === "string" ? node.alt : ""
+        });
+      }
+    }
+    return list;
+  }, [currentBaseline, activeProductId]);
 
   // Product Selection Handler:
   // - Blocks switching during an active Save or active AI Scan.
@@ -931,6 +957,9 @@ export default function BenchV2Route() {
   // AI SCAN COMPLETION EFFECT:
   // - Validates exact requestId and pieceId before accepting any result.
   // - Consumes ONLY rawResponse.producerProposals (never tab3Data fallbacks).
+  // - Carries actual producerProposals[destKey].source metadata into both
+  //   breakdown lines and per-destination scan metadata (using "Source not reported"
+  //   when absent, never inferring provenance from baseline equality or field name).
   // - Preserves manual drafts, approvals, Keep Original, and other products' state.
   // - Conflicting AI proposals are stored in aiAlternativesByProduct[productId]
   //   for explicit operator choice rather than overwriting human work.
@@ -963,7 +992,8 @@ export default function BenchV2Route() {
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
           diagnostics: {},
-          details: []
+          details: [],
+          proposalsByDestination: {}
         }
       }));
       setActiveAiScanRequest(null);
@@ -990,7 +1020,8 @@ export default function BenchV2Route() {
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
           diagnostics: {},
-          details: []
+          details: [],
+          proposalsByDestination: {}
         }
       }));
       setActiveAiScanRequest(null);
@@ -1015,7 +1046,8 @@ export default function BenchV2Route() {
             rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
               ? rawResponse.producerDiagnostics
               : {},
-          details: []
+          details: [],
+          proposalsByDestination: {}
         }
       }));
       setActiveAiScanRequest(null);
@@ -1043,7 +1075,8 @@ export default function BenchV2Route() {
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
           diagnostics: {},
-          details: []
+          details: [],
+          proposalsByDestination: {}
         }
       }));
       setActiveAiScanRequest(null);
@@ -1055,6 +1088,7 @@ export default function BenchV2Route() {
     const existingProdApprovals = approvalsByProductRef.current[scannedProductId] || {};
     const existingProdKeepOriginal = keepOriginalByProductRef.current[scannedProductId] || {};
     const nextAiAlternativesForProd = {};
+    const proposalsByDestination = {};
 
     let receivedCount = 0;
     let stagedCount = 0;
@@ -1080,10 +1114,13 @@ export default function BenchV2Route() {
         entry && typeof entry === "object" && typeof entry.value === "string"
           ? entry.value
           : "";
-      const rawSource =
-        entry && typeof entry === "object" && typeof entry.source === "string" && entry.source
-          ? entry.source
-          : "Gemini Vision";
+      const reportedSource =
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.source === "string" &&
+        entry.source.trim() !== ""
+          ? entry.source.trim()
+          : "Source not reported";
 
       if (rawValue.trim() === "") {
         continue;
@@ -1100,13 +1137,28 @@ export default function BenchV2Route() {
 
       if (!validation.valid) {
         rejectedInvalidCount++;
-        details.push(`[${destKey}] Rejected invalid AI suggestion: ${validation.reason}`);
+        proposalsByDestination[destKey] = {
+          value: rawValue,
+          source: reportedSource,
+          disposition: "Rejected (invalid)",
+          reason: validation.reason
+        };
+        details.push(
+          `[${destKey}] Rejected invalid AI suggestion "${rawValue}" (Source: ${reportedSource}): ${validation.reason}`
+        );
         continue;
       }
 
       if (validation.isUnchangedFromStored) {
         unchangedSkippedCount++;
-        details.push(`[${destKey}] Matches current saved value ("${rawValue}"); not staged.`);
+        proposalsByDestination[destKey] = {
+          value: validation.normalizedValue,
+          source: reportedSource,
+          disposition: "Matches saved value (not staged)"
+        };
+        details.push(
+          `[${destKey}] Matches current saved value ("${validation.normalizedValue}") — Source: ${reportedSource}; not staged.`
+        );
         continue;
       }
 
@@ -1151,20 +1203,30 @@ export default function BenchV2Route() {
 
       if (hasProtectedHumanState) {
         if (existingDraftVal === validation.normalizedValue && !hasValidKeepOriginal) {
+          proposalsByDestination[destKey] = {
+            value: validation.normalizedValue,
+            source: reportedSource,
+            disposition: "Matches current draft"
+          };
           details.push(
-            `[${destKey}] AI suggestion matches your current draft ("${validation.normalizedValue}").`
+            `[${destKey}] AI suggestion matches your current draft ("${validation.normalizedValue}") — Source: ${reportedSource}.`
           );
           continue;
         }
         heldConflictCount++;
         nextAiAlternativesForProd[destKey] = {
           value: validation.normalizedValue,
-          source: rawSource,
+          source: reportedSource,
           requestId: pendingScan.requestId,
           receivedAt: new Date().toISOString()
         };
+        proposalsByDestination[destKey] = {
+          value: validation.normalizedValue,
+          source: reportedSource,
+          disposition: "Held as separate AI alternative"
+        };
         details.push(
-          `[${destKey}] Held AI alternative "${validation.normalizedValue}" (${rawSource}) without overwriting your current draft or decision.`
+          `[${destKey}] Held AI alternative "${validation.normalizedValue}" (Source: ${reportedSource}) without overwriting your current draft or decision.`
         );
         continue;
       }
@@ -1172,13 +1234,18 @@ export default function BenchV2Route() {
       // Field is untouched (or only had an unapproved prior AI draft): stage as an unapproved AI draft
       existingProdProposals[destKey] = {
         value: validation.normalizedValue,
-        source: rawSource,
+        source: reportedSource,
         origin: "AI",
         updatedAt: new Date().toISOString()
       };
       stagedCount++;
+      proposalsByDestination[destKey] = {
+        value: validation.normalizedValue,
+        source: reportedSource,
+        disposition: "Staged as unapproved AI draft"
+      };
       details.push(
-        `[${destKey}] Staged unapproved AI draft "${validation.normalizedValue}" (${rawSource}).`
+        `[${destKey}] Staged unapproved AI draft "${validation.normalizedValue}" (Source: ${reportedSource}).`
       );
     }
 
@@ -1216,7 +1283,8 @@ export default function BenchV2Route() {
         unchangedSkippedCount,
         rejectedInvalidCount,
         diagnostics: diagnosticsObj,
-        details
+        details,
+        proposalsByDestination
       }
     }));
 
@@ -1233,7 +1301,10 @@ export default function BenchV2Route() {
       const prodMap = { ...(prev[activeProductId] || {}) };
       prodMap[destinationKey] = {
         value: altEntry.value,
-        source: altEntry.source || "Gemini Vision",
+        source:
+          typeof altEntry.source === "string" && altEntry.source.trim() !== ""
+            ? altEntry.source.trim()
+            : "Source not reported",
         origin: "AI",
         updatedAt: new Date().toISOString()
       };
@@ -1700,6 +1771,7 @@ export default function BenchV2Route() {
             : "None";
 
       const heldAiAlternative = currentAiAlternativesMap[fieldContract.destinationKey] || null;
+      const scanProposalMeta = currentScanProposalsMetaMap[fieldContract.destinationKey] || null;
 
       const writerHoldReason = getExistingWriterHoldReason(fieldContract.destinationKey);
       const fidelityCheck =
@@ -1735,6 +1807,7 @@ export default function BenchV2Route() {
         ...baseEval,
         proposalOrigin,
         heldAiAlternative,
+        scanProposalMeta,
         isWriterHeld: Boolean(writerHoldReason),
         writerHoldReason,
         fidelityCheck,
@@ -1961,7 +2034,7 @@ export default function BenchV2Route() {
       }}
     >
       <div style={{ maxWidth: "1140px", margin: "0 auto" }}>
-        {/* SHORT TOP SUMMARY BAR + COMPACT PAGINATED PRODUCT SELECTOR */}
+        {/* SHORT TOP SUMMARY BAR + COMPACT PAGINATED PRODUCT SELECTOR + 120x120 THUMBNAILS */}
         <header
           style={{
             backgroundColor: "#ffffff",
@@ -2190,6 +2263,77 @@ export default function BenchV2Route() {
                 Next 50
               </button>
             </div>
+          </div>
+
+          {/* 120px BY 120px PRODUCT THUMBNAIL STRIP NEAR PRODUCT CONTROLS */}
+          <div
+            aria-label="Selected Product Photos"
+            style={{
+              marginTop: "14px",
+              paddingTop: "14px",
+              borderTop: "1px solid #cbd5e1"
+            }}
+          >
+            {!currentBaseline || currentBaseline.productId !== activeProductId ? (
+              <div style={{ fontSize: "15px", color: "#475569" }}>
+                Loading photos for selected product...
+              </div>
+            ) : activeProductMediaItems.length === 0 ? (
+              <div style={{ fontSize: "15px", color: "#475569" }}>
+                No product photos available on this product.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                  alignItems: "center"
+                }}
+              >
+                {activeProductMediaItems.map((mediaItem, idx) => {
+                  const accessibleAlt =
+                    mediaItem.alt && mediaItem.alt.trim() !== ""
+                      ? mediaItem.alt.trim()
+                      : `${activeProductTitle} — Photo ${idx + 1}`;
+                  return (
+                    <div
+                      key={`${activeProductId}_${mediaItem.id}_${idx}`}
+                      style={{
+                        width: "120px",
+                        height: "120px",
+                        minWidth: "120px",
+                        minHeight: "120px",
+                        flex: "0 0 120px",
+                        flexShrink: 0,
+                        borderRadius: "8px",
+                        border: "2px solid #94a3b8",
+                        backgroundColor: "#f8fafc",
+                        overflow: "hidden",
+                        boxSizing: "border-box"
+                      }}
+                    >
+                      <img
+                        src={mediaItem.url}
+                        alt={accessibleAlt}
+                        title={accessibleAlt}
+                        width={120}
+                        height={120}
+                        style={{
+                          width: "120px",
+                          height: "120px",
+                          minWidth: "120px",
+                          minHeight: "120px",
+                          objectFit: "cover",
+                          objectPosition: "center",
+                          display: "block"
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* BRIEF CONNECTION NOTE & DRAWER EXPAND/COLLAPSE CONTROLS */}
@@ -2587,15 +2731,23 @@ export default function BenchV2Route() {
               (r) => Boolean(r.heldAiAlternative)
             ).length;
 
+            const isParkedProtectedDrawer = drawer.drawerId === "parked_excluded_protected";
+            const drawerSubtitleLabel = isParkedProtectedDrawer
+              ? "Read-only parked and protected fields"
+              : drawer.isImplementedInBatch1
+                ? "Connected in Batch 1"
+                : "Read-only in Batch 1";
+
             return (
               <section
                 key={drawer.drawerId}
                 aria-label={plainDrawerTitle}
                 style={{
                   backgroundColor: "#ffffff",
-                  border: drawer.isImplementedInBatch1
-                    ? "2px solid #64748b"
-                    : "1px solid #94a3b8",
+                  border:
+                    drawer.isImplementedInBatch1 && !isParkedProtectedDrawer
+                      ? "2px solid #64748b"
+                      : "1px solid #94a3b8",
                   borderRadius: "10px",
                   overflow: "hidden"
                 }}
@@ -2618,10 +2770,7 @@ export default function BenchV2Route() {
                       {plainDrawerTitle}
                     </h2>
                     <div style={{ fontSize: "14px", color: "#334155", marginTop: "2px" }}>
-                      {drawer.isImplementedInBatch1
-                        ? "Connected in Batch 1"
-                        : "Read-only in Batch 1"}{" "}
-                      &bull; {drawer.evaluatedRows.length} fields
+                      {drawerSubtitleLabel} &bull; {drawer.evaluatedRows.length} fields
                       {drawerStagedCount > 0 && ` • ${drawerStagedCount} staged`}
                       {drawerApprovedCount > 0 && ` • ${drawerApprovedCount} approved`}
                       {drawerHeldAltCount > 0 && ` • ${drawerHeldAltCount} AI alternative`}
@@ -2718,6 +2867,7 @@ export default function BenchV2Route() {
                           proposalSource,
                           proposalOrigin,
                           heldAiAlternative,
+                          scanProposalMeta,
                           validation,
                           isApproved,
                           isKeepOriginal,
@@ -2804,7 +2954,7 @@ export default function BenchV2Route() {
                                       marginLeft: "8px"
                                     }}
                                   >
-                                    (Legacy OOAK field)
+                                    (Second OOAK field — custom.is_ooak)
                                   </span>
                                 )}
                                 {contract.destinationKey === "custom.is_one_of_a_kind" && (
@@ -2816,7 +2966,7 @@ export default function BenchV2Route() {
                                       marginLeft: "8px"
                                     }}
                                   >
-                                    (Primary OOAK field)
+                                    (Primary OOAK field — custom.is_one_of_a_kind)
                                   </span>
                                 )}
                               </div>
@@ -3038,8 +3188,13 @@ export default function BenchV2Route() {
                                           Separate AI Suggestion Available: "{heldAiAlternative.value}"
                                         </div>
                                         <div style={{ fontSize: "13px", marginTop: "2px" }}>
-                                          Source: {heldAiAlternative.source} (kept separate so your
-                                          current draft or decision was not overwritten)
+                                          Source:{" "}
+                                          {typeof heldAiAlternative.source === "string" &&
+                                          heldAiAlternative.source.trim() !== ""
+                                            ? heldAiAlternative.source.trim()
+                                            : "Source not reported"}{" "}
+                                          (kept separate so your current draft or decision was not
+                                          overwritten)
                                         </div>
                                         <div
                                           style={{
@@ -3237,6 +3392,25 @@ export default function BenchV2Route() {
                                 <div>
                                   <strong>Review Status:</strong> {effectiveReviewStatus}
                                 </div>
+                                {hasProposalKey && (
+                                  <div>
+                                    <strong>Staged Draft Source:</strong>{" "}
+                                    {proposalSource && proposalSource !== "None"
+                                      ? proposalSource
+                                      : "Source not reported"}
+                                  </div>
+                                )}
+                                {scanProposalMeta && (
+                                  <div>
+                                    <strong>Last AI Scan Suggestion:</strong> "
+                                    {scanProposalMeta.value}" | <strong>Source:</strong>{" "}
+                                    {typeof scanProposalMeta.source === "string" &&
+                                    scanProposalMeta.source.trim() !== ""
+                                      ? scanProposalMeta.source.trim()
+                                      : "Source not reported"}{" "}
+                                    | <strong>Outcome:</strong> {scanProposalMeta.disposition}
+                                  </div>
+                                )}
                                 {effectiveStatusReason && (
                                   <div>
                                     <strong>Notes:</strong> {effectiveStatusReason}
