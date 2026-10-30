@@ -5,10 +5,10 @@
 // Verified Current Sources Confirmed in Context:
 // 1. app/utils/bench-v2.contract.jsx (112,497 chars, SHA256: F31EF4BC321AFC20A3696E53686EAD076D8583B8962D24EA667AC6D7DF144DBA)
 // 2. app/utils/bench-v2.baseline.server.jsx (43,102 chars, SHA256: 81590D25E0923983958813D4EC9E323EFD1B6C247711642770A1A378C5894CCA)
-// 3. app/routes/app.meta-injector-api.jsx (138,970 chars — action intent="executeRepairPlan")
+// 3. app/routes/app.meta-injector-api.jsx (142,433 chars — action intent="executeRepairPlan" with benchV2OptIn="true")
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars — action delegates to executeAutofill)
 // 5. app/utils/meta-injector.autofill.server.jsx (168,616 chars, SHA256: 039F7B2F8DED1E385A02A2640F540821B1638A8A95DAAC547AF83BC93C9E3AEF)
-// 6. app/routes/app.bench-v2.jsx (Retained Route, SHA256: 8A4E9244DBA75631B857064DDA91A6F07B28E1BAE2925D835D09DF91FA43EEDA)
+// 6. app/routes/app.bench-v2.jsx (Retained Route, SHA256: 5B048B59D4E00ECACE46FB42D473F4DD05B29A7958A3B82147559252182EB6F5)
 // 7. app/routes/app.meta-injector.matrix.jsx (231,797 chars — filter behavior reference only; never imported)
 // 8. app/utils/meta-injector.matrix-domain.jsx (164,101 chars — FILTER_OPTIONS & predicate reference only; never imported)
 //
@@ -36,7 +36,7 @@
 //   button.
 // - Preserves fixed 120px by 120px thumbnails, initially collapsed drawers,
 //   Saved/Proposed layout, source labels, exact approvals, Keep Original,
-//   writer holds, and explicit Save/AI Scan interfaces verbatim.
+//   and explicit Save/AI Scan interfaces verbatim.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -229,24 +229,12 @@ async function loadLightweightProductPage(admin, cursor = null, rawSearch = "") 
 }
 
 // Explicit Writer-Connection Holds:
-// Verified in retained app/routes/app.meta-injector-api.jsx:
-// - custom.cut_and_shape, custom.stone_shape, and custom.color are in RETIRED_KEYS (lines 50-55)
-//   and pushed to skippedKeys in executeRepairPlan (line 795).
-// - custom.is_ooak is in the companion skip guard in executeRepairPlan (line 801)
-//   and pushed to skippedKeys.
-// Per scope rules, these 4 fields are NOT retired in the contract, and both OOAK
-// destinations remain distinct, but they are held from save-ready status and
-// blocked from submission until the shared writer endpoint is explicitly updated.
-export const EXISTING_WRITER_CONNECTION_HOLDS = Object.freeze({
-  "custom.is_ooak":
-    "Writer Connection Hold: Existing POST /app/meta-injector-api (executeRepairPlan line 801) currently pushes custom.is_ooak into skippedKeys. Held from Save until the writer skip guard is unlocked.",
-  "custom.cut_and_shape":
-    "Writer Connection Hold: Existing POST /app/meta-injector-api (RETIRED_KEYS line 50 / executeRepairPlan line 795) currently pushes custom.cut_and_shape into skippedKeys. Held from Save until the writer retirement list is updated.",
-  "custom.stone_shape":
-    "Writer Connection Hold: Existing POST /app/meta-injector-api (RETIRED_KEYS line 50 / executeRepairPlan line 795) currently pushes custom.stone_shape into skippedKeys. Held from Save until the writer retirement list is updated.",
-  "custom.color":
-    "Writer Connection Hold: Existing POST /app/meta-injector-api (RETIRED_KEYS line 50 / executeRepairPlan line 795) currently pushes custom.color into skippedKeys. Held from Save until the writer retirement list is updated."
-});
+// The four Batch 1 custom destinations (custom.is_ooak, custom.cut_and_shape,
+// custom.stone_shape, custom.color) are now connected in saved app/routes/app.meta-injector-api.jsx
+// when executeRepairPlan is submitted with benchV2OptIn="true".
+// Approval and save readiness still require all live definition, stored type,
+// completeness, baseline, string-fidelity, and exact-value approval checks.
+export const EXISTING_WRITER_CONNECTION_HOLDS = Object.freeze({});
 
 export function isDestinationHeldByExistingWriter(destinationKey) {
   return Boolean(
@@ -2479,6 +2467,7 @@ export default function BenchV2Route() {
 
     const formData = new FormData();
     formData.append("intent", "executeRepairPlan");
+    formData.append("benchV2OptIn", "true");
     formData.append("pieceId", activeProductId);
     formData.append("repairPlan", JSON.stringify(safePlanToSubmit));
     formData.append("nativeChanges", JSON.stringify({}));
@@ -3240,9 +3229,10 @@ export default function BenchV2Route() {
             }}
           >
             Drawers 1 to 4 are connected for manual edits and explicit Gemini AI Scan
-            suggestions (all AI suggestions stay unapproved until you check Approve). Four
-            fields (Is OOAK, Cut and Shape, Stone Shape, Color) remain on writer hold. Filtering
-            is view-only and never clears drafts or decisions.
+            suggestions (all AI suggestions stay unapproved until you check Approve). Is OOAK,
+            Cut and Shape, Stone Shape, and Color are no longer on writer skip hold, and still
+            require live/stored type, completeness, and exact-value approval checks before
+            saving. Filtering is view-only and never clears drafts or decisions.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
