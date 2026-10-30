@@ -14,7 +14,7 @@
 // 9. app/routes.js (@react-router/fs-routes flatRoutes, v7.16.0)
 // 10. app/routes/app.meta-injector-autofill.jsx
 // 11. app/utils/meta-injector.autofill.server.jsx
-// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: BB9BDC55F53ABF03074700DB40A14ADA65D82C11166158CDE4CF1936B0E904B1)
+// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: F31EF4BC321AFC20A3696E53686EAD076D8583B8962D24EA667AC6D7DF144DBA)
 //
 // Pure contract module only:
 // - Zero React hooks/effects, zero storage access, zero GraphQL/network calls.
@@ -102,7 +102,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Core piece identity, dominant material, and both intentional one-of-a-kind destinations (custom.is_one_of_a_kind and custom.is_ooak), plus distinct read-only inspection rows."
+    description: "Core piece identity, dominant material, base stone family (custom.stone_family), and both intentional one-of-a-kind destinations (custom.is_one_of_a_kind and custom.is_ooak), plus distinct read-only inspection rows."
   }),
   Object.freeze({
     drawerId: "origin_and_collection",
@@ -389,22 +389,23 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     optionsKey: "is_ooak",
     purposeNote: "Intentional OOAK destination #2. Preserves actual observed storage/definition type on each product ('boolean' accepts exact 'true'/'false'; 'single_line_text_field' preserves exact text) while displaying user-facing Yes/No convention. Requires its own exact-value approval with no automatic companion write."
   }),
-  // Identity Read-Only Inspection Rows (Preserved Distinct Facts, No Implicit Dual Writes)
   defineFieldContract({
     destinationKey: "custom.stone_family",
     namespace: "custom",
     key: "stone_family",
-    label: "Stone Family (Read-Only in Batch 1)",
+    label: "Stone Family",
     owner: "PRODUCT",
     drawerId: "identity",
     subHarness: "SUB_HARNESS_1",
-    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.COMPATIBILITY_INSPECTION_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
+    maxLength: 255,
     optionsKey: "stone_family",
     canonicalTarget: null,
-    purposeNote: "Distinct geological/lapidary stone family fact (not an alias for Dominant Material custom.material). Held read-only in Batch 1; never auto-populates custom.material and is never deleted."
+    purposeNote: "Base stone family (e.g. Red Jasper -> Jasper). Distinct from Dominant Material (custom.material) and Primary Medium (custom.primary_medium); requires its own exact-value approval and never auto-populates or overwrites those other destinations."
   }),
+  // Identity Read-Only Inspection Row (Preserved Distinct Fact, No Implicit Dual Writes)
   defineFieldContract({
     destinationKey: "custom.primary_medium",
     namespace: "custom",
@@ -2561,7 +2562,7 @@ export function isKeepOriginalRecordValid({
     return false;
   }
 
-  const baselineObs = buildBaselineObservation(baselineSnapshot, destinationKey);
+  const baselineObs = buildBaselineObservation(baselineSnapshot, contract.destinationKey);
   if (!baselineObs.evidenceAvailable) return false;
   if (keepOriginalRecord.baselineSignature !== baselineObs.signature) return false;
 

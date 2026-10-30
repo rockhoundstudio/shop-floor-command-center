@@ -7,9 +7,9 @@ import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 
 // Explicit Replacement-Tab3 (app/routes/app.bench-v2.jsx) Opt-In Request Marker:
 // FormData field name: "benchV2OptIn", exact string value: "true".
-// Only executeRepairPlan requests carrying benchV2OptIn="true" may pass the four
-// Bench V2 writer-held custom destinations (custom.is_ooak, custom.cut_and_shape,
-// custom.stone_shape, custom.color) through retirement/companion-skip/allowlist gates.
+// Only executeRepairPlan requests carrying benchV2OptIn="true" may pass the five
+// Bench V2 writer-held custom destinations (custom.is_ooak, custom.stone_family,
+// custom.cut_and_shape, custom.stone_shape, custom.color) through retirement/companion-skip/allowlist gates.
 // Legacy callers without benchV2OptIn="true" retain existing skip/retirement behavior unchanged.
 export const BENCH_V2_WRITER_OPT_IN_FIELD = "benchV2OptIn";
 export const BENCH_V2_WRITER_OPT_IN_VALUE = "true";
@@ -17,6 +17,7 @@ export const BENCH_V2_WRITER_OPT_IN_VALUE = "true";
 const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
   new Set([
     "custom.is_ooak",
+    "custom.stone_family",
     "custom.cut_and_shape",
     "custom.stone_shape",
     "custom.color"
@@ -26,6 +27,7 @@ const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
 const BENCH_V2_OPT_IN_UNHELD_BARE_KEYS = Object.freeze(
   new Set([
     "is_ooak",
+    "stone_family",
     "cut_and_shape",
     "stone_shape",
     "color"
@@ -2294,11 +2296,10 @@ export const action = async ({ request }) => {
         }
 
         // 🟢 SINGLE CANONICAL OOAK & IDENTITY COMPANION WRITE GUARD
-        // Retain legacy reads without dual writes for legacy callers; opted-in Bench V2 requests may write custom.is_ooak as its own distinct destination.
+        // Retain legacy reads without dual writes for legacy callers; opted-in Bench V2 requests may write custom.is_ooak and custom.stone_family as their own distinct destinations.
         if (
           ns === "custom" &&
-          ((key === "is_ooak" && !isBenchV2UnheldCustomTarget) ||
-            key === "stone_family" ||
+          (((key === "is_ooak" || key === "stone_family") && !isBenchV2UnheldCustomTarget) ||
             key === "primary_medium" ||
             key === "origin_handle")
         ) {
@@ -2399,9 +2400,9 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        // Bench V2 opt-in contract type verification for the four unheld destinations:
+        // Bench V2 opt-in contract type verification for the five unheld destinations:
         // - custom.is_ooak allows observed "single_line_text_field" or "boolean"
-        // - custom.cut_and_shape, custom.stone_shape, custom.color require observed "single_line_text_field"
+        // - custom.stone_family, custom.cut_and_shape, custom.stone_shape, custom.color require observed "single_line_text_field"
         if (isBenchV2UnheldCustomTarget) {
             if (canonicalDestinationKey === "custom.is_ooak") {
                 if (resolvedType !== "single_line_text_field" && resolvedType !== "boolean") {
