@@ -5,6 +5,33 @@ import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 
 // 🟢 Structural Engine — No Prisma Import Here
 
+// Explicit Replacement-Tab3 (app/routes/app.bench-v2.jsx) Opt-In Request Marker:
+// FormData field name: "benchV2OptIn", exact string value: "true".
+// Only executeRepairPlan requests carrying benchV2OptIn="true" may pass the four
+// Bench V2 writer-held custom destinations (custom.is_ooak, custom.cut_and_shape,
+// custom.stone_shape, custom.color) through retirement/companion-skip/allowlist gates.
+// Legacy callers without benchV2OptIn="true" retain existing skip/retirement behavior unchanged.
+export const BENCH_V2_WRITER_OPT_IN_FIELD = "benchV2OptIn";
+export const BENCH_V2_WRITER_OPT_IN_VALUE = "true";
+
+const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
+  new Set([
+    "custom.is_ooak",
+    "custom.cut_and_shape",
+    "custom.stone_shape",
+    "custom.color"
+  ])
+);
+
+const BENCH_V2_OPT_IN_UNHELD_BARE_KEYS = Object.freeze(
+  new Set([
+    "is_ooak",
+    "cut_and_shape",
+    "stone_shape",
+    "color"
+  ])
+);
+
 const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
   "shipping_weight_oz", "is_ooak", "dimensions_mm", 
@@ -1811,6 +1838,7 @@ export const action = async ({ request }) => {
       const rawPlan = body.get("repairPlan");
       const rawLegacy = body.get("legacyKeysToRemove");
       const rawNativeChanges = body.get("nativeChanges");
+      const isBenchV2OptIn = body.get(BENCH_V2_WRITER_OPT_IN_FIELD) === BENCH_V2_WRITER_OPT_IN_VALUE;
       
       if (!pieceId || !rawPlan) {
         return Response.json({ intent: "executeRepairPlan", success: false, status: "REPAIR_FAILED", message: "Missing pieceId or repairPlan payload." });
@@ -2245,16 +2273,35 @@ export const action = async ({ request }) => {
         }
 
         const canonicalDestinationKey = `${ns}.${key}`;
+        const isBenchV2UnheldCustomTarget =
+          isBenchV2OptIn &&
+          ns === "custom" &&
+          BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS.has(canonicalDestinationKey);
 
-        // 🟢 RETIREMENT GUARD
-        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
+        // 🟢 STRICT NAMESPACE ENFORCEMENT FOR BENCH V2 OPT-IN UNHELD KEYS
+        if (isBenchV2OptIn && BENCH_V2_OPT_IN_UNHELD_BARE_KEYS.has(key) && ns !== "custom") {
+            unsupportedKeys.push(fullKey);
+            continue;
+        }
+
+        // 🟢 RETIREMENT GUARD (Bypassed ONLY for opted-in Bench V2 requests on custom.cut_and_shape, custom.stone_shape, custom.color)
+        if (
+          !isBenchV2UnheldCustomTarget &&
+          (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey))
+        ) {
             skippedKeys.push(fullKey);
             continue;
         }
 
         // 🟢 SINGLE CANONICAL OOAK & IDENTITY COMPANION WRITE GUARD
-        // Retain legacy reads without dual writes: custom.is_one_of_a_kind, custom.material, and custom.origin_page_handle are the sole editable targets.
-        if (ns === "custom" && (key === "is_ooak" || key === "stone_family" || key === "primary_medium" || key === "origin_handle")) {
+        // Retain legacy reads without dual writes for legacy callers; opted-in Bench V2 requests may write custom.is_ooak as its own distinct destination.
+        if (
+          ns === "custom" &&
+          ((key === "is_ooak" && !isBenchV2UnheldCustomTarget) ||
+            key === "stone_family" ||
+            key === "primary_medium" ||
+            key === "origin_handle")
+        ) {
             skippedKeys.push(fullKey);
             continue;
         }
@@ -2276,13 +2323,23 @@ export const action = async ({ request }) => {
         }
 
         // 🟢 STRICT ALLOWLIST ENFORCEMENT
-        if (!ALLOWED_TAB3_KEYS.includes(key) && !ALLOWED_TAB3_KEYS.includes(fullKey) && !ALLOWED_TAB3_KEYS.includes(canonicalDestinationKey)) {
+        if (
+          !isBenchV2UnheldCustomTarget &&
+          !ALLOWED_TAB3_KEYS.includes(key) &&
+          !ALLOWED_TAB3_KEYS.includes(fullKey) &&
+          !ALLOWED_TAB3_KEYS.includes(canonicalDestinationKey)
+        ) {
             unsupportedKeys.push(fullKey);
             continue;
         }
 
         if (!hasMetafieldsBaseline) {
             blockedFields[fullKey] = "Product metafields baseline could not be loaded from Shopify; reload product data before saving.";
+            continue;
+        }
+
+        if (isBenchV2UnheldCustomTarget && !defsReadComplete) {
+            blockedFields[fullKey] = `Live PRODUCT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`;
             continue;
         }
 
@@ -2342,6 +2399,21 @@ export const action = async ({ request }) => {
             continue;
         }
 
+        // Bench V2 opt-in contract type verification for the four unheld destinations:
+        // - custom.is_ooak allows observed "single_line_text_field" or "boolean"
+        // - custom.cut_and_shape, custom.stone_shape, custom.color require observed "single_line_text_field"
+        if (isBenchV2UnheldCustomTarget) {
+            if (canonicalDestinationKey === "custom.is_ooak") {
+                if (resolvedType !== "single_line_text_field" && resolvedType !== "boolean") {
+                    blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected single_line_text_field or boolean.`;
+                    continue;
+                }
+            } else if (resolvedType !== "single_line_text_field") {
+                blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected single_line_text_field.`;
+                continue;
+            }
+        }
+
         // Live category / owner-subtype constraint preflight check for standardized destinations
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
             const catElig = evaluateStandardizedCategoryEligibility({
@@ -2359,7 +2431,10 @@ export const action = async ({ request }) => {
 
         let resolvedValue = normalizeMetafieldValue(key, valStr);
 
-        if (reviewedContractType === "single_line_text_field") {
+        if (
+          reviewedContractType === "single_line_text_field" ||
+          (isBenchV2UnheldCustomTarget && resolvedType === "single_line_text_field")
+        ) {
             if (isPlainTextProposalRejectedForContract(val, resolvedValue)) {
                 blockedFields[fullKey] = `Rejected non-text or reference-shaped proposal for plain-text destination ${canonicalDestinationKey}.`;
                 continue;
@@ -2394,12 +2469,19 @@ export const action = async ({ request }) => {
           }
           resolvedValue = resolvedType === "number_integer" ? String(Math.round(parsedNum)) : String(parsedNum);
         } else if (resolvedType === "boolean") {
-          const lower = String(resolvedValue).toLowerCase();
-          if (lower === "true" || lower === "false") {
-             resolvedValue = lower;
+          if (isBenchV2UnheldCustomTarget) {
+             if (resolvedValue !== "true" && resolvedValue !== "false") {
+                blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
+                continue;
+             }
           } else {
-             blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
-             continue;
+             const lower = String(resolvedValue).toLowerCase();
+             if (lower === "true" || lower === "false") {
+                resolvedValue = lower;
+             } else {
+                blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
+                continue;
+             }
           }
         } else if (resolvedType.includes("metaobject_reference")) {
           
