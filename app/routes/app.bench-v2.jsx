@@ -78,6 +78,14 @@ const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024;
 const TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
 const TELEMETRY_MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
 
+function getProposalValueString(rawEntry) {
+  return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
+    ? rawEntry.value
+    : typeof rawEntry === "string"
+      ? rawEntry
+      : "";
+}
+
 function measureUtf8BytesClient(str) {
   if (typeof str !== "string" || str.length === 0) return 0;
   try {
@@ -790,6 +798,77 @@ function mergeKnownProductsMap(prevMap, pageItems, snap) {
     };
   }
   return next;
+}
+
+const BANNER_TONE_PALETTES = Object.freeze({
+  error: Object.freeze({
+    backgroundColor: "#fef2f2",
+    border: "2px solid #b91c1c",
+    color: "#7f1d1d"
+  }),
+  warning: Object.freeze({
+    backgroundColor: "#fffbeb",
+    border: "2px solid #b45309",
+    color: "#78350f"
+  }),
+  info: Object.freeze({
+    backgroundColor: "#eff6ff",
+    border: "2px solid #1d4ed8",
+    color: "#1e3a8a"
+  }),
+  successNoColor: Object.freeze({
+    backgroundColor: "#f0fdf4",
+    border: "2px solid #15803d"
+  }),
+  errorNoColor: Object.freeze({
+    backgroundColor: "#fef2f2",
+    border: "2px solid #b91c1c"
+  })
+});
+
+function getBannerBoxStyle(tone, padding = "16px 20px") {
+  const palette = BANNER_TONE_PALETTES[tone] || BANNER_TONE_PALETTES.error;
+  return {
+    ...palette,
+    borderRadius: "10px",
+    padding,
+    marginBottom: "20px"
+  };
+}
+
+const SHORT_NOTICE_TONE_STYLES = Object.freeze({
+  error: Object.freeze({
+    backgroundColor: "#fef2f2",
+    color: "#991b1b",
+    border: "1px solid #fca5a5"
+  }),
+  warning: Object.freeze({
+    backgroundColor: "#fff7ed",
+    color: "#9a3412",
+    border: "1px solid #fdba74"
+  }),
+  muted: Object.freeze({
+    backgroundColor: "#f1f5f9",
+    color: "#334155",
+    border: "1px solid #cbd5e1"
+  })
+});
+
+function getShortNoticeBoxStyle(tone) {
+  const palette =
+    tone === "error"
+      ? SHORT_NOTICE_TONE_STYLES.error
+      : tone === "warning"
+        ? SHORT_NOTICE_TONE_STYLES.warning
+        : SHORT_NOTICE_TONE_STYLES.muted;
+  return {
+    marginTop: "10px",
+    padding: "8px 10px",
+    borderRadius: "6px",
+    fontSize: "14px",
+    fontWeight: 600,
+    ...palette
+  };
 }
 
 const DISMISS_BTN_STYLE = Object.freeze({
@@ -1882,16 +1961,15 @@ export default function BenchV2Route() {
     const submittedDestinations = pendingSub.submittedDestinations || [];
     const submittedValuesByDest = pendingSub.submittedValuesByDestination || {};
 
-    if (!rawResponse || typeof rawResponse !== "object") {
+    const recordAbortedSaveReport = (overallOutcome, writerStatus, message, errors) => {
       setLastSaveReport({
         submissionId: pendingSub.submissionId,
         productId: submittedProductId,
         variantTargetId: submittedVariantTargetId,
         completedAt: new Date().toISOString(),
-        overallOutcome: "UNCONFIRMED_NETWORK_OR_SERVER_FAILURE",
-        writerStatus: "NO_RESPONSE_PAYLOAD",
-        message:
-          "The save request ended without a response. Do not assume zero writes occurred. Reloading live data from Shopify to check what was saved.",
+        overallOutcome,
+        writerStatus,
+        message,
         submittedDestinations,
         verifiedDestinations: [],
         blockedFields: {},
@@ -1900,39 +1978,32 @@ export default function BenchV2Route() {
         unchanged: [],
         unresolvedChanges: {},
         conflicts: {},
-        errors: [{ message: "No structured response returned by writer endpoint." }],
+        errors,
         unconfirmedDestinations: [...submittedDestinations],
         readBackVerified: false
       });
       setActiveSaveSubmission(null);
       revalidator.revalidate();
+    };
+
+    if (!rawResponse || typeof rawResponse !== "object") {
+      recordAbortedSaveReport(
+        "UNCONFIRMED_NETWORK_OR_SERVER_FAILURE",
+        "NO_RESPONSE_PAYLOAD",
+        "The save request ended without a response. Do not assume zero writes occurred. Reloading live data from Shopify to check what was saved.",
+        [{ message: "No structured response returned by writer endpoint." }]
+      );
       return;
     }
 
     const responsePieceId = rawResponse.pieceId || rawResponse.productId || null;
     if (responsePieceId && responsePieceId !== submittedProductId) {
-      setLastSaveReport({
-        submissionId: pendingSub.submissionId,
-        productId: submittedProductId,
-        variantTargetId: submittedVariantTargetId,
-        completedAt: new Date().toISOString(),
-        overallOutcome: "MISMATCHED_PRODUCT_RESPONSE_IGNORED",
-        writerStatus: String(rawResponse.status || "MISMATCH"),
-        message: `Writer response pieceId (${responsePieceId}) did not match submitted productId (${submittedProductId}). Keeping all drafts and reloading live baseline.`,
-        submittedDestinations,
-        verifiedDestinations: [],
-        blockedFields: {},
-        skippedKeys: [],
-        unsupportedKeys: [],
-        unchanged: [],
-        unresolvedChanges: {},
-        conflicts: {},
-        errors: Array.isArray(rawResponse.errors) ? rawResponse.errors : [],
-        unconfirmedDestinations: [...submittedDestinations],
-        readBackVerified: false
-      });
-      setActiveSaveSubmission(null);
-      revalidator.revalidate();
+      recordAbortedSaveReport(
+        "MISMATCHED_PRODUCT_RESPONSE_IGNORED",
+        String(rawResponse.status || "MISMATCH"),
+        `Writer response pieceId (${responsePieceId}) did not match submitted productId (${submittedProductId}). Keeping all drafts and reloading live baseline.`,
+        Array.isArray(rawResponse.errors) ? rawResponse.errors : []
+      );
       return;
     }
 
@@ -2191,13 +2262,7 @@ export default function BenchV2Route() {
       return;
     }
 
-    const rawEntry = currentProposedMap[destinationKey];
-    const exactProposedValue =
-      rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
-        ? rawEntry.value
-        : typeof rawEntry === "string"
-          ? rawEntry
-          : "";
+    const exactProposedValue = getProposalValueString(currentProposedMap[destinationKey]);
 
     const fidelity = checkExistingWriterStringFidelity(exactProposedValue);
     if (!fidelity.faithful) {
@@ -2245,13 +2310,7 @@ export default function BenchV2Route() {
       return;
     }
 
-    const rawEntry = currentProposedMap[destinationKey];
-    const exactProposedValue =
-      rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
-        ? rawEntry.value
-        : typeof rawEntry === "string"
-          ? rawEntry
-          : "";
+    const exactProposedValue = getProposalValueString(currentProposedMap[destinationKey]);
 
     const created = createKeepOriginalRecord({
       productId: activeProductId,
@@ -2344,6 +2403,22 @@ export default function BenchV2Route() {
         effectiveStatusReason = fidelityCheck.reason;
       }
 
+      const obs = baseEval.baselineObservation;
+      const usesMeaningDisplay = Boolean(fieldContract.usesYesNoMeaningDisplay);
+      const plainLabel = cleanFieldHeading(fieldContract.label);
+      const readableSaved = formatReadableSavedValue(
+        obs,
+        usesMeaningDisplay,
+        baseEval.baselineDisplayValue
+      );
+      const canSelectKeepOriginal = Boolean(
+        fieldContract.isWritableInBatch1 &&
+          baseEval.hasProposalKey &&
+          obs.evidenceAvailable &&
+          baseEval.proposedValue.trim() !== "" &&
+          !(obs.presence === "present" && obs.rawValue === baseEval.proposedValue)
+      );
+
       const enrichedRow = {
         ...baseEval,
         proposalOrigin,
@@ -2353,7 +2428,10 @@ export default function BenchV2Route() {
         fidelityCheck,
         effectiveConnectionStatus,
         effectiveReviewStatus,
-        effectiveStatusReason
+        effectiveStatusReason,
+        plainLabel,
+        readableSaved,
+        canSelectKeepOriginal
       };
 
       const isEditorRetained = activeRetainedEditorsMap[destKey] === true;
@@ -2380,6 +2458,11 @@ export default function BenchV2Route() {
       visibleRows
     };
   });
+
+  const visibleDrawerGroups =
+    activeFilter === "All"
+      ? evaluatedDrawerGroups
+      : evaluatedDrawerGroups.filter((d) => d.visibleRows.length > 0);
 
   const allEvaluatedRows = evaluatedDrawerGroups.flatMap((d) => d.evaluatedRows);
   const totalVisibleFilteredRowCount = evaluatedDrawerGroups.reduce(
@@ -2689,7 +2772,10 @@ export default function BenchV2Route() {
           hasSaveErrorOrConflict,
           effectiveConnectionStatus,
           effectiveReviewStatus,
-          effectiveStatusReason
+          effectiveStatusReason,
+          plainLabel,
+          readableSaved,
+          canSelectKeepOriginal
         } = row;
 
         const destKey = contract.destinationKey;
@@ -2706,13 +2792,7 @@ export default function BenchV2Route() {
           obs.rawValue !== null &&
           String(obs.rawValue) !== "";
 
-        const canKeepOriginal = Boolean(
-          contract.isWritableInBatch1 &&
-            hasProposalKey &&
-            obs.evidenceAvailable &&
-            proposedValue.trim() !== "" &&
-            !(obs.presence === "present" && obs.rawValue === proposedValue)
-        );
+        const canKeepOriginal = canSelectKeepOriginal;
 
         const isExplicitlyApprovedValid = Boolean(
           isApproved && fidelityCheck.faithful
@@ -2842,7 +2922,7 @@ export default function BenchV2Route() {
         const readableBaselineStr =
           typeof baselineDisplayValue === "string" && baselineDisplayValue !== ""
             ? baselineDisplayValue
-            : formatReadableSavedValue(obs, usesMeaningDisplay, baselineDisplayValue);
+            : readableSaved;
 
         const rawStoredBaselineObj = {
           evidenceAvailable: obs.evidenceAvailable,
@@ -2981,7 +3061,7 @@ export default function BenchV2Route() {
           key: destKey,
           section: sectionTitle,
           drawerId: contract.drawerId,
-          label: cleanFieldHeading(contract.label) || contract.label,
+          label: plainLabel || contract.label,
           registryOwner: regMeta.registryOwner,
           ...(obs.variantId ? { variantId: obs.variantId } : {}),
           ...(regMeta.registryIdentity !== destKey
@@ -3357,13 +3437,7 @@ export default function BenchV2Route() {
         continue;
       }
 
-      const rawPropEntry = currentProposedMap[destKey];
-      const currentProposedValue =
-        rawPropEntry && typeof rawPropEntry === "object" && typeof rawPropEntry.value === "string"
-          ? rawPropEntry.value
-          : typeof rawPropEntry === "string"
-            ? rawPropEntry
-            : "";
+      const currentProposedValue = getProposalValueString(currentProposedMap[destKey]);
 
       const keepOrigRec = currentKeepOriginalMap[destKey] || null;
       if (
@@ -4271,14 +4345,7 @@ export default function BenchV2Route() {
         {hasBaselineErrors && (
           <div
             role="alert"
-            style={{
-              backgroundColor: "#fef2f2",
-              border: "2px solid #b91c1c",
-              borderRadius: "10px",
-              padding: "16px 20px",
-              marginBottom: "20px",
-              color: "#7f1d1d"
-            }}
+            style={getBannerBoxStyle("error", "16px 20px")}
           >
             <div style={{ fontWeight: 700, fontSize: "17px", marginBottom: "6px" }}>
               Product Read Warning
@@ -4300,14 +4367,10 @@ export default function BenchV2Route() {
           <div
             role="region"
             aria-label="AI Scan Result"
-            style={{
-              backgroundColor: currentAiScanReport.ok ? "#eff6ff" : "#fef2f2",
-              border: currentAiScanReport.ok ? "2px solid #1d4ed8" : "2px solid #b91c1c",
-              borderRadius: "10px",
-              padding: "16px 20px",
-              marginBottom: "20px",
-              color: currentAiScanReport.ok ? "#1e3a8a" : "#7f1d1d"
-            }}
+            style={getBannerBoxStyle(
+              currentAiScanReport.ok ? "info" : "error",
+              "16px 20px"
+            )}
           >
             <div
               style={{
@@ -4371,18 +4434,10 @@ export default function BenchV2Route() {
         {clientPrevalidationBanner && (
           <div
             role="alert"
-            style={{
-              backgroundColor:
-                clientPrevalidationBanner.tone === "error" ? "#fef2f2" : "#fffbeb",
-              border:
-                clientPrevalidationBanner.tone === "error"
-                  ? "2px solid #b91c1c"
-                  : "2px solid #b45309",
-              borderRadius: "10px",
-              padding: "16px 20px",
-              marginBottom: "20px",
-              color: clientPrevalidationBanner.tone === "error" ? "#7f1d1d" : "#78350f"
-            }}
+            style={getBannerBoxStyle(
+              clientPrevalidationBanner.tone === "error" ? "error" : "warning",
+              "16px 20px"
+            )}
           >
             <div
               style={{
@@ -4414,19 +4469,12 @@ export default function BenchV2Route() {
           <div
             role="region"
             aria-label="Last Save Result"
-            style={{
-              backgroundColor:
-                lastSaveReport.overallOutcome === "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
-                  ? "#f0fdf4"
-                  : "#fef2f2",
-              border:
-                lastSaveReport.overallOutcome === "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
-                  ? "2px solid #15803d"
-                  : "2px solid #b91c1c",
-              borderRadius: "10px",
-              padding: "18px 22px",
-              marginBottom: "20px"
-            }}
+            style={getBannerBoxStyle(
+              lastSaveReport.overallOutcome === "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
+                ? "successNoColor"
+                : "errorNoColor",
+              "18px 22px"
+            )}
           >
             <div
               style={{
@@ -4585,7 +4633,7 @@ export default function BenchV2Route() {
 
         {/* ALL 11 DRAWERS — INITIALLY COLLAPSED, PLAIN NAMES, CLEAR EXPAND/COLLAPSE */}
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {evaluatedDrawerGroups.map((drawer) => {
+          {visibleDrawerGroups.map((drawer) => {
             const isOpen = Boolean(openDrawersById[drawer.drawerId]);
             const plainDrawerTitle = PLAIN_DRAWER_TITLES[drawer.drawerId] || drawer.heading;
 
@@ -4764,7 +4812,6 @@ export default function BenchV2Route() {
                           const {
                             contract,
                             baselineObservation: obs,
-                            baselineDisplayValue,
                             options,
                             hasProposalKey,
                             proposedValue,
@@ -4779,7 +4826,10 @@ export default function BenchV2Route() {
                             fidelityCheck,
                             effectiveConnectionStatus,
                             effectiveReviewStatus,
-                            effectiveStatusReason
+                            effectiveStatusReason,
+                            plainLabel,
+                            readableSaved,
+                            canSelectKeepOriginal
                           } = row;
 
                           const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
@@ -4797,19 +4847,6 @@ export default function BenchV2Route() {
                             Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
                             fidelityCheck.faithful;
 
-                          const canSelectKeepOriginal =
-                            contract.isWritableInBatch1 &&
-                            hasProposalKey &&
-                            obs.evidenceAvailable &&
-                            proposedValue.trim() !== "" &&
-                            !(obs.presence === "present" && obs.rawValue === proposedValue);
-
-                          const plainLabel = cleanFieldHeading(contract.label);
-                          const readableSaved = formatReadableSavedValue(
-                            obs,
-                            usesMeaningDisplay,
-                            baselineDisplayValue
-                          );
                           const shortNotice = getShortPlainNotice(row);
 
                           let inputPlaceholder = "Type proposed value...";
@@ -5297,33 +5334,7 @@ export default function BenchV2Route() {
 
                                   {/* SHORT PLAIN-LANGUAGE VISIBLE REASON FOR HOLDS OR ERRORS */}
                                   {shortNotice && contract.isWritableInBatch1 && (
-                                    <div
-                                      style={{
-                                        marginTop: "10px",
-                                        padding: "8px 10px",
-                                        borderRadius: "6px",
-                                        fontSize: "14px",
-                                        fontWeight: 600,
-                                        backgroundColor:
-                                          shortNotice.tone === "error"
-                                            ? "#fef2f2"
-                                            : shortNotice.tone === "warning"
-                                              ? "#fff7ed"
-                                              : "#f1f5f9",
-                                        color:
-                                          shortNotice.tone === "error"
-                                            ? "#991b1b"
-                                            : shortNotice.tone === "warning"
-                                              ? "#9a3412"
-                                              : "#334155",
-                                        border:
-                                          shortNotice.tone === "error"
-                                            ? "1px solid #fca5a5"
-                                            : shortNotice.tone === "warning"
-                                              ? "1px solid #fdba74"
-                                              : "1px solid #cbd5e1"
-                                      }}
-                                    >
+                                    <div style={getShortNoticeBoxStyle(shortNotice.tone)}>
                                       {shortNotice.text}
                                     </div>
                                   )}
