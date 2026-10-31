@@ -2441,11 +2441,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         // ====================================================================
         // OPT-IN BENCH V2 PRODUCER PROPOSALS SEPARATION (tab3FullRescan ONLY)
-        // Emits ONLY genuine nonblank Batch 1 producer outputs captured BEFORE
-        // passive stored fallback substitution, OOAK collapsing/deletion, or
+        // Emits ONLY genuine nonblank Batch 1 + Drawer 6 producer outputs captured
+        // BEFORE passive stored fallback substitution, OOAK collapsing/deletion, or
         // baseline merges. Never labels currentData or caller-echo values as
-        // generated. Never emits cancelled overall_solid_length_in, AI dates,
-        // or later-batch/parked/protected fields.
+        // generated. Never emits cancelled overall_solid_length_in, manual-only
+        // measurements (dimensions_mm, weight_grams), AI dates, or later-batch/
+        // parked/protected fields.
         // ====================================================================
         let producerProposals = undefined;
         let producerDiagnostics = undefined;
@@ -2806,6 +2807,45 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               "custom.color_pattern",
               rawVisColorPattern,
               "Gemini Vision (color_pattern)"
+            );
+          }
+
+          // 7. Setting and Hardware Drawer 6 Destinations (from rawVisionSnapshot before protectedKeys overwrote them):
+          // Emits ONLY genuine nonblank Vision outputs that do not merely echo caller-supplied currentData.
+          // Preserves descriptive hardware strings verbatim without fabricating plating, bail construction,
+          // wire material, or readiness. Manual measurements (dimensions_mm, weight_grams) remain excluded.
+          const DRAWER_6_HARDWARE_KEYS = [
+            "secondary_medium",
+            "jewelry_type",
+            "setting_ready",
+            "bail_included",
+            "chain_material",
+            "chain_link_type",
+            "jewelry_finding_type",
+            "wire_material"
+          ];
+
+          for (const hwKey of DRAWER_6_HARDWARE_KEYS) {
+            const rawHwVal = rawVisionSnapshot[hwKey];
+            const cleanHwStr =
+              typeof rawHwVal === "boolean"
+                ? (rawHwVal ? "Yes" : "No")
+                : cleanNonBlankVisionStr(rawHwVal);
+            if (!cleanHwStr) continue;
+
+            // Never emit a caller-supplied baseline/locked echo as an AI-generated suggestion
+            const callerSuppliedVal =
+              currentData[hwKey] !== undefined && currentData[hwKey] !== null
+                ? String(currentData[hwKey]).trim()
+                : "";
+            if (callerSuppliedVal !== "" && cleanHwStr === callerSuppliedVal) {
+              continue;
+            }
+
+            addProposal(
+              `custom.${hwKey}`,
+              cleanHwStr,
+              `Gemini Vision (${hwKey})`
             );
           }
         }
