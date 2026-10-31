@@ -1,28 +1,29 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE + SIDEKICK SNAPSHOT SYNC)
+// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE + GEOLOGY + SIDEKICK SNAPSHOT SYNC)
 // File: app/routes/app.bench-v2.jsx
 //
 // Verified Current Sources Confirmed in Context:
-// 1. app/utils/bench-v2.contract.jsx (120,942 chars, SHA256: AF1820B2565627F83DFEA26BE343B447B6949EB1A20AE9615995379092CABEEB)
+// 1. app/utils/bench-v2.contract.jsx (Current saved contract with Drawer 7 Geology 12 connected + 1 read-only compatibility custom.geological_era)
 // 2. app/utils/bench-v2.baseline.server.jsx (43,102 chars, SHA256: 81590D25E0923983958813D4EC9E323EFD1B6C247711642770A1A378C5894CCA)
 // 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75 — action intent="executeRepairPlan" with benchV2OptIn="true")
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars, SHA256: FC207DA09F4DD0F6942CC9C4B4B83B6694B9749BB86748355227ADDA494CE5C5 — action delegates to executeAutofill)
-// 5. app/utils/meta-injector.autofill.server.jsx (170,362 chars, SHA256: B309A4CD931DCEFA907A50891BEBB2CD6B910333D7264997000ABEDB7865EC8B)
-// 6. app/routes/app.bench-v2.jsx (Current Route, SHA256: 0F250ED36409AA660713EEE025959F8CA05785477E81646FC7DCD4AA98BEC58B)
+// 5. app/utils/meta-injector.autofill.server.jsx (Current saved producer with Section 8 Drawer 7 Geology proposals & 54-key ALLOWED_PROVENANCE_FIELD_KEYS)
+// 6. app/routes/app.bench-v2.jsx (Current Route, SHA256: 21B6250FEEFF67C1CC3BD394014D1F0A5E468860B9A9166061EB2A19F0748667)
 // 7. app/routes/api.meta-injector-telemetry.jsx (31,525 chars, SHA256: 9E7654DF52CAE0A13638B9A8BF48A2D619ADEC4CA92E68D952259556A609B947)
-// 8. app/utils/meta-injector.sidekick-report-cache.server.js (134,851 chars, SHA256: 2ADB59716156403125DDA8AC869496FA198B3C28E3713F6B637EFE80189BA79C)
+// 8. app/utils/meta-injector.sidekick-report-cache.server.js (Current saved cache with MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024)
 //
-// Authorized Snapshot Serialization Budget Fix:
-// - Root Cause of 416,479 UTF-8 byte / 416,221 char payload on Canyon (9226849616123):
-//   In every one of the ~120 entries in `fieldsByKey`:
-//   1) `rawStoredBaseline.signature` duplicated `obs.signature` (which embeds `${productGid}::${destKey}::...::${rawVal}`, repeating the full multi-KB HTML/story/widget strings a 3rd time per field!).
-//   2) `evaluatedBaseline.value` and `evaluatedBaseline.displayValue` duplicated `rawStoredBaseline.value` (repeating every present string value a 2nd and 3rd time per field, including `native_description`, `custom.generated_description`, `custom.origin_story`, and `judgeme.*` widgets).
-//   3) Every unchanged field serialized ~1,800 chars of default `false` / `null` / `"None"` / empty sub-properties (`targetKey === key`, `approvalKey === key`, `registryIdentity === key`, `workingState` null defaults, `conflictsAndSaveEvidence` null defaults, and `statusAndHolds` false defaults) where `evaluateFieldAttentionFlags` and `buildReviewViewData` in `meta-injector.sidekick-report-cache.server.js` already fall back to `fieldObj.targetKey || k`, `Boolean(...)`, and `rawBase.exists / rawBase.value`.
-// - Fix:
-//   - Retains all ~120 field entries in `fieldsByKey` and `sectionOrder` in exact order with zero text clipping, zero list truncation, and full fidelity for absent vs. null vs. empty_string vs. present vs. unknown_incomplete_read.
-//   - Stores `rawStoredBaseline.value` in full (unclipped) while omitting `rawStoredBaseline.signature` (unless needed in an active `approvalRecord` or `keepOriginalDecision`, where `baselineSignature` is already preserved verbatim).
-//   - In `evaluatedBaseline`, sets `currentExists: rawBaselineExists` and omits redundant `evaluatedBaseline.value` when identical to `rawStoredBaseline.value` (because `evaluateFieldAttentionFlags` lines 1134-1138 falls back to `else if (rawBase.exists && rawBase.value !== null && rawBase.value !== undefined) baselineComparable = normalizeComparableFieldValue(rawBase.value)`), and includes `evaluatedBaseline.displayValue` when it differs from the raw value (e.g. Yes/No meaning display or non-present readable status).
-//   - Omits redundant per-field identity aliases when identical to `key` (`targetKey === key`, `approvalKey === key`, `registryIdentity === key` when `resolveFieldTarget` and `buildReviewViewData` fall back to `k`) and omits `false`/`null` default properties in `workingState`, `statusAndHolds`, and `conflictsAndSaveEvidence` when inactive, while preserving every active proposal, source, origin, approvalRecord, keepOriginalDecision, heldAiAlternative, scan outcome, hold flag, reason, and save evidence.
+// Authorized Geology Route Connection Update:
+// - Adds the 12 active geology bare keys (mohs_hardness, specific_gravity, crystal_system,
+//   luster, cleavage, fracture_pattern, diaphaneity, tenacity, mineral_class,
+//   rock_composition, rock_formation, geological_age) to ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+//   keeping legacy custom.geological_era excluded from active provenance/proposals and read-only.
+// - Updates getDrawerConnectionSubtitle and header/Save empty-state notes to describe
+//   Drawers 1 to 7 (including Drawer 7 Geology: 12 connected destinations + 1 read-only
+//   legacy ERA compatibility slot).
+// - Preserves Sidekick Live Snapshot Sync (TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024),
+//   Product Search & Picker, 11 Tab 3 FILTER_OPTIONS, fixed 120px by 120px thumbnails,
+//   initially collapsed drawers, per-product drafts, exact approvals, Keep Original,
+//   and explicit Save/AI Scan interfaces verbatim.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -69,8 +70,9 @@ export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
   { label: "Source: Manual", value: "Manual" }
 ]);
 
-// Exact 42 bare provenance keys allowed by parseProvenanceFieldSet in
-// app/utils/meta-injector.autofill.server.jsx (lines 433-444).
+// Exact 54 bare provenance keys allowed by parseProvenanceFieldSet in
+// app/utils/meta-injector.autofill.server.jsx (42 original + 12 active Drawer 7 geology keys;
+// legacy geological_era remains excluded).
 // Any key outside this set causes parseProvenanceFieldSet to mark provenance invalid!
 const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "color_pattern",
@@ -116,7 +118,19 @@ const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "collection_date",
   "found_object",
   "is_one_of_a_kind",
-  "is_ooak"
+  "is_ooak",
+  "mohs_hardness",
+  "specific_gravity",
+  "crystal_system",
+  "luster",
+  "cleavage",
+  "fracture_pattern",
+  "diaphaneity",
+  "tenacity",
+  "mineral_class",
+  "rock_composition",
+  "rock_formation",
+  "geological_age"
 ]);
 
 // Explicit guard set for all manual-measurement and manual-only destinations
@@ -412,9 +426,9 @@ async function loadLightweightProductPage(admin, cursor = null, rawSearch = "") 
 // Explicit Writer-Connection Holds:
 // The five previously held Batch 1 custom destinations (custom.is_ooak,
 // custom.stone_family, custom.cut_and_shape, custom.stone_shape, custom.color)
-// plus custom.dimensions_mm, custom.weight_grams, and the 8 Drawer 6 Setting & Hardware
-// destinations are supported by saved app/routes/app.meta-injector-api.jsx when
-// executeRepairPlan is submitted with benchV2OptIn="true".
+// plus custom.dimensions_mm, custom.weight_grams, the 8 Drawer 6 Setting & Hardware
+// destinations, and the 12 active Drawer 7 Geology destinations are supported by saved
+// app/routes/app.meta-injector-api.jsx when executeRepairPlan is submitted with benchV2OptIn="true".
 // Approval and save readiness still require all live definition, stored type,
 // completeness, baseline, string-fidelity, and exact-value approval checks.
 export const EXISTING_WRITER_CONNECTION_HOLDS = Object.freeze({});
@@ -849,7 +863,12 @@ function getDrawerConnectionSubtitle(drawer) {
     return `Manual-only (${writableCount} connected for manual entry, ${heldCount} unverified on hold — no AI scan staging)`;
   }
   if (drawer.drawerId === "conditional_setting_accessory") {
-    return "Connected for manual entry & exact approval (AI Scan hardware suggestions pending producer map)";
+    return "Connected for manual entry, AI Scan hardware suggestions & exact approval";
+  }
+  if (drawer.drawerId === "geology") {
+    const writableCount = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1).length;
+    const readOnlyCount = drawer.evaluatedRows.length - writableCount;
+    return `Connected in Batch 1 (${writableCount} connected geology destinations, ${readOnlyCount} read-only legacy ERA compatibility slot)`;
   }
   if (drawer.isImplementedInBatch1) {
     return "Connected in Batch 1";
@@ -1471,7 +1490,7 @@ export default function BenchV2Route() {
       return;
     }
 
-    // Build operator_locked_fields and passive_stored_fields using ONLY the 42
+    // Build operator_locked_fields and passive_stored_fields using ONLY the 54
     // bare keys accepted by parseProvenanceFieldSet in meta-injector.autofill.server.jsx.
     const operatorLockedList = [];
     const passiveStoredList = [];
@@ -3544,7 +3563,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 6 and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 7 and check Approve before clicking Save."
         ]
       });
       return;
@@ -4429,13 +4448,15 @@ export default function BenchV2Route() {
               color: "#334155"
             }}
           >
-            Drawers 1 to 6 are connected for manual edits and exact-value approval where
+            Drawers 1 to 7 are connected for manual edits and exact-value approval where
             Shopify type/completeness evidence is verified. In Drawer 5 (Manual Measurements),{" "}
             <strong>Dimensions (mm)</strong> and <strong>Weight (grams)</strong> are manual-only
             (excluded from AI Scan staging), while the 4 unverified measurement keepers remain on
             read-only hold. Drawer 6 (Setting and Hardware) is connected for manual edits and
-            ready for AI Scan suggestions once the server producer map includes Drawer 6 keys.
-            Filtering is view-only and never clears drafts or decisions.
+            AI Scan hardware suggestions. Drawer 7 (Geology) connects 12 deterministic geology
+            destinations while keeping legacy <strong>Geological Era</strong> (
+            <code>custom.geological_era</code>) on read-only compatibility hold. Filtering is
+            view-only and never clears drafts or decisions.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>

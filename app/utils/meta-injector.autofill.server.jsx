@@ -505,6 +505,9 @@ function parseIdentityAndOriginInputs(body, provenance = null) {
   return {
     rawTitleInput: rawProductTitle || rawPieceName,
     hasSegmentedTitle: hasSegmentedProductTitle || hasSegmentedPieceName,
+    titleStoneSegment: !isSettingOrHardwareMediumValue(titleFamilyCandidate)
+      ? cleanStoneFamilyShape(titleFamilyCandidate)
+      : "",
     preservedPieceName,
     derivedFamily,
     derivedShape,
@@ -518,6 +521,67 @@ function parseIdentityAndOriginInputs(body, provenance = null) {
     isPurchasedProvenance,
     isOriginOperatorLocked
   };
+}
+
+/**
+ * Builds an ordered list of stone identity lookup candidates for getGeoData:
+ * prioritizes explicit operator-locked stone identity (material / stone_family),
+ * then the explicit stone variety from the 3-segment title's first (STONE) segment
+ * or valid material variety before falling back to broad stone_family.
+ * Never derives or synthesizes a stone variety from origin, location, collection,
+ * trip, product nickname, or the second/third title segments.
+ */
+function buildGeoLookupCandidates({
+  idOrigin,
+  stoneIdentityContext,
+  currentData = {},
+  provenance = null
+}) {
+  const candidates = [];
+  const seenLower = new Set();
+
+  const pushCandidate = (rawVal) => {
+    if (typeof rawVal !== "string") return;
+    const cleaned = cleanStoneFamilyShape(rawVal.trim());
+    if (
+      !cleaned ||
+      cleaned.toLowerCase() === "unknown" ||
+      cleaned.toLowerCase() === "unknown stone" ||
+      isGenericBareStoneProposal(cleaned) ||
+      isSettingOrHardwareMediumValue(cleaned)
+    ) {
+      return;
+    }
+    const lower = cleaned.toLowerCase();
+    if (!seenLower.has(lower)) {
+      seenLower.add(lower);
+      candidates.push(cleaned);
+    }
+  };
+
+  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
+  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+
+  if (operatorLockedSet.has("material") && currentData.material) {
+    pushCandidate(currentData.material);
+  }
+  if (operatorLockedSet.has("stone_family") && currentData.stone_family) {
+    pushCandidate(currentData.stone_family);
+  }
+  if (idOrigin?.titleStoneSegment) {
+    pushCandidate(idOrigin.titleStoneSegment);
+  }
+  if (stoneIdentityContext?.effectiveMaterial) {
+    pushCandidate(stoneIdentityContext.effectiveMaterial);
+  }
+  if (stoneIdentityContext?.effectiveFamily) {
+    pushCandidate(stoneIdentityContext.effectiveFamily);
+  }
+  if (idOrigin?.derivedFamily) {
+    pushCandidate(idOrigin.derivedFamily);
+  }
+
+  return candidates;
 }
 
 async function getGeoData(admin, stoneFamily) {
@@ -537,21 +601,58 @@ async function getGeoData(admin, stoneFamily) {
     geological_age: "",
     geoSource: "none"
   };
-  if (!stoneFamily || stoneFamily === "Unknown Stone" || isSettingOrHardwareMediumValue(stoneFamily) || !admin) return emptyGeo;
-  const fullStoneCandidate = cleanStoneFamilyShape(String(stoneFamily || "").trim());
-  const cleanStoneName = extractStoneName(stoneFamily);
-  if ((!fullStoneCandidate || fullStoneCandidate.toLowerCase() === "unknown") && (!cleanStoneName || cleanStoneName === "Unknown")) {
+
+  if (!admin) return emptyGeo;
+
+  const rawCandidates = Array.isArray(stoneFamily) ? stoneFamily : [stoneFamily];
+  const fullCandidates = [];
+  const seenFullLower = new Set();
+
+  for (const rawItem of rawCandidates) {
+    if (typeof rawItem !== "string") continue;
+    const cleaned = cleanStoneFamilyShape(rawItem.trim());
+    if (
+      !cleaned ||
+      cleaned.toLowerCase() === "unknown" ||
+      cleaned.toLowerCase() === "unknown stone" ||
+      isSettingOrHardwareMediumValue(cleaned)
+    ) {
+      continue;
+    }
+    const lower = cleaned.toLowerCase();
+    if (!seenFullLower.has(lower)) {
+      seenFullLower.add(lower);
+      fullCandidates.push(cleaned);
+    }
+  }
+
+  if (fullCandidates.length === 0) return emptyGeo;
+
+  const primaryStoneCandidate = fullCandidates[0];
+  const cleanStoneName = extractStoneName(primaryStoneCandidate);
+  if (
+    (!primaryStoneCandidate || primaryStoneCandidate.toLowerCase() === "unknown") &&
+    (!cleanStoneName || cleanStoneName === "Unknown")
+  ) {
     return emptyGeo;
   }
 
   try {
     const { lookupStone } = await import("../utils/geoLibrary.jsx");
-    // Try full stone family / variety first (preserving exact multi-word entries like "Fire Obsidian",
+    // Try explicit stone variety / title stone segment candidates in order first
+    // (preserving exact multi-word entries like "Yakima Jasper", "Fire Obsidian",
     // "Dalmatian Stone", "Botswana Agate", "Montana Agate", "Picture Jasper", "Brecciated Jasper"),
     // then fall back to cleaned base rock name.
-    const localResult =
-      (fullStoneCandidate ? lookupStone(fullStoneCandidate) : null) ||
-      (cleanStoneName && cleanStoneName !== "Unknown" ? lookupStone(cleanStoneName) : null);
+    let localResult = null;
+    for (const candidate of fullCandidates) {
+      localResult = lookupStone(candidate);
+      if (localResult && Object.keys(localResult).length > 0) {
+        break;
+      }
+    }
+    if (!localResult && cleanStoneName && cleanStoneName !== "Unknown") {
+      localResult = lookupStone(cleanStoneName);
+    }
     if (localResult && Object.keys(localResult).length > 0) {
       return {
         mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
@@ -562,25 +663,28 @@ async function getGeoData(admin, stoneFamily) {
         diaphaneity: localResult.diaphaneity || "",
         tenacity: localResult.tenacity || "",
         crystal_system: localResult.crystal_system || "",
-        geological_era: localResult.geological_era || localResult.geological_age || "",
+        geological_era: localResult.geological_era || "",
         mineral_class: localResult.mineral_class || "",
         rock_composition: localResult.rock_composition || "",
         rock_formation: localResult.rock_formation || "",
-        geological_age: localResult.geological_era || localResult.geological_age || "",
+        geological_age: localResult.geological_age || "",
         geoSource: "library"
       };
     }
   } catch (err) {}
 
-  const search = (cleanStoneName && cleanStoneName !== "Unknown" ? cleanStoneName : fullStoneCandidate).toLowerCase().trim();
-  const fullSearch = fullStoneCandidate ? fullStoneCandidate.toLowerCase().trim() : search;
+  const search = (cleanStoneName && cleanStoneName !== "Unknown" ? cleanStoneName : primaryStoneCandidate).toLowerCase().trim();
 
   try {
     let cacheRows = [];
-    if (fullSearch && fullSearch !== search) {
-      cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [fullSearch]);
+    for (const candidate of fullCandidates) {
+      const candidateLower = candidate.toLowerCase().trim();
+      if (candidateLower) {
+        cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [candidateLower]);
+        if (cacheRows.length > 0 && cacheRows[0].data) break;
+      }
     }
-    if (cacheRows.length === 0 && search) {
+    if (cacheRows.length === 0 && search && !fullCandidates.some(c => c.toLowerCase().trim() === search)) {
       cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
     }
     if (cacheRows.length > 0 && cacheRows[0].data) {
@@ -589,6 +693,7 @@ async function getGeoData(admin, stoneFamily) {
         ...emptyGeo,
         ...parsed,
         tenacity: parsed?.tenacity || "",
+        geological_age: parsed?.geological_age || "",
         geoSource: "cache"
       };
     }
@@ -597,7 +702,7 @@ async function getGeoData(admin, stoneFamily) {
   try {
     if (stoneProfileCache.has(search)) {
       const cached = stoneProfileCache.get(search);
-      if (cached) return { ...emptyGeo, ...cached, tenacity: cached.tenacity || "", geoSource: "cache" };
+      if (cached) return { ...emptyGeo, ...cached, tenacity: cached.tenacity || "", geological_age: cached.geological_age || "", geoSource: "database" };
     } else {
       const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
       if (rows.length > 0) {
@@ -615,7 +720,7 @@ async function getGeoData(admin, stoneFamily) {
           mineral_class: s.mineral_class || "",
           rock_composition: s.rock_composition || "",
           rock_formation: s.rock_formation || "",
-          geological_age: s.geological_era || "",
+          geological_age: "",
           geoSource: "database"
         };
         stoneProfileCache.set(search, geoResult);
@@ -682,7 +787,10 @@ const ALLOWED_PROVENANCE_FIELD_KEYS = new Set([
   "seo_title", "alt_text", "google_product_category", "treated", "treatment_status",
   "stone_family", "material", "origin_location", "origin_handle", "origin_page_handle",
   "collection_name", "collection_location", "collection_date", "found_object",
-  "is_one_of_a_kind", "is_ooak"
+  "is_one_of_a_kind", "is_ooak",
+  "mohs_hardness", "specific_gravity", "crystal_system", "luster",
+  "cleavage", "fracture_pattern", "diaphaneity", "tenacity",
+  "mineral_class", "rock_composition", "rock_formation", "geological_age"
 ]);
 
 const CLASSIFICATION_OVERRIDE_KEYS = new Set([
@@ -712,6 +820,22 @@ const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
   "collection_location",
   "seo_title",
   "poetic_hook"
+]);
+
+// Passive stored geology keys so non-locked stored baseline geology values do not become operator-locked facts in CURRENT KNOWN DATA
+const PASSIVE_GEOLOGY_REVIEW_KEYS = new Set([
+  "mohs_hardness",
+  "specific_gravity",
+  "crystal_system",
+  "luster",
+  "cleavage",
+  "fracture_pattern",
+  "diaphaneity",
+  "tenacity",
+  "mineral_class",
+  "rock_composition",
+  "rock_formation",
+  "geological_age"
 ]);
 
 const STONE_IDENTITY_KEYS = new Set([
@@ -1401,7 +1525,9 @@ function buildTab3VisionPrompt({
     }
     if (
       hasValidProvenance &&
-      (CLASSIFICATION_OVERRIDE_KEYS.has(k) || PASSIVE_PROVENANCE_AND_SEO_KEYS.has(k)) &&
+      (CLASSIFICATION_OVERRIDE_KEYS.has(k) ||
+        PASSIVE_PROVENANCE_AND_SEO_KEYS.has(k) ||
+        PASSIVE_GEOLOGY_REVIEW_KEYS.has(k)) &&
       passiveStoredSet.has(k) &&
       !operatorLockedSet.has(k)
     ) {
@@ -1561,6 +1687,7 @@ export async function executeAutofill(intent, body, admin) {
       const isPurchasedProvenance = foundPolarity === "purchased";
       const isOriginLocked = provenance.hasValidProvenance && provenance.operatorLockedSet.has("origin_location") && Boolean(explicitOriginLocation);
 
+      const rawSegment1Stone = cleanStoneFamilyShape(segments[0] || "");
       const segment1 = resolvePicklistStoneFamily(segments[0] || "");
       // When explicit human/locked provenance establishes purchased material or locks origin_location,
       // do not let the middle title segment override origin_location with a river/field location.
@@ -1628,7 +1755,10 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         }
 
         const verifiedFamily = resolvePicklistStoneFamily(parsed.stone_family || segment1) || segment1;
-        const dbGeoData = await getGeoData(admin, verifiedFamily);
+        const dbGeoData = await getGeoData(
+          admin,
+          [rawSegment1Stone, verifiedFamily].filter(Boolean)
+        );
         const correctedOriginLoc = isOriginLocked
           ? explicitOriginLocation
           : isPurchasedProvenance
@@ -1713,7 +1843,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
       const stoneIdentityContext = resolveVerifiedStoneIdentityContext(rawInputFacts, idOrigin.derivedFamily);
       const effectiveStoneFamilyForScan = stoneIdentityContext.effectiveFamily || idOrigin.derivedFamily || "";
-      const geoFields = await getGeoData(admin, effectiveStoneFamilyForScan);
+      const geoLookupCandidates = buildGeoLookupCandidates({
+        idOrigin,
+        stoneIdentityContext,
+        currentData: rawInputFacts,
+        provenance
+      });
+      const geoFields = await getGeoData(
+        admin,
+        geoLookupCandidates.length > 0 ? geoLookupCandidates : effectiveStoneFamilyForScan
+      );
 
       let imageBase64 = (body.get("imageBase64") || "").trim();
       let imageMimeType = body.get("imageMimeType") || "image/jpeg";
@@ -2001,7 +2140,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           ? (isOriginPassive ? "" : (idOrigin.originSegment || ""))
           : (idOrigin.originSegment || resolveEvidencedOriginLocation(currentData.origin_location) || "");
 
-      const geoFields = await getGeoData(admin, effectiveFamily);
+      const geoLookupCandidates = buildGeoLookupCandidates({
+        idOrigin,
+        stoneIdentityContext,
+        currentData,
+        provenance
+      });
+      const geoFields = await getGeoData(
+        admin,
+        geoLookupCandidates.length > 0 ? geoLookupCandidates : effectiveFamily
+      );
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const defaultOriginSlug = resolveOriginHandle(
         effectiveOriginLoc,
@@ -2337,12 +2485,23 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         ];
         const verifiedGeoValues = {};
         geoKeys.forEach(key => {
-          if (currentData[key] !== undefined && currentData[key] !== "") {
+          const isGeoOperatorLocked =
+            provenance.hasValidProvenance &&
+            provenance.operatorLockedSet.has(key);
+          const isGeoPassiveStored =
+            provenance.hasValidProvenance &&
+            provenance.passiveStoredSet.has(key) &&
+            !isGeoOperatorLocked;
+
+          if (currentData[key] !== undefined && currentData[key] !== "" && !isGeoPassiveStored) {
             verifiedGeoValues[key] = currentData[key];
             parsedVision[key] = currentData[key];
           } else if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
             verifiedGeoValues[key] = geoFields[key];
             parsedVision[key] = geoFields[key];
+          } else if (currentData[key] !== undefined && currentData[key] !== "") {
+            verifiedGeoValues[key] = currentData[key];
+            parsedVision[key] = currentData[key];
           }
         });
 
@@ -2452,12 +2611,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         // ====================================================================
         // OPT-IN BENCH V2 PRODUCER PROPOSALS SEPARATION (tab3FullRescan ONLY)
-        // Emits ONLY genuine nonblank Batch 1 + Drawer 6 producer outputs captured
-        // BEFORE passive stored fallback substitution, OOAK collapsing/deletion, or
-        // baseline merges. Never substitutes stored values for absent model outputs.
+        // Emits ONLY genuine nonblank Batch 1 + Drawer 6 + Drawer 7 producer outputs
+        // captured BEFORE passive stored fallback substitution, OOAK collapsing/deletion,
+        // or baseline merges. Never substitutes stored values for absent model/lookup outputs.
         // Never emits cancelled overall_solid_length_in, manual-only
-        // measurements (dimensions_mm, weight_grams), AI dates, or later-batch/
-        // parked/protected fields.
+        // measurements (dimensions_mm, weight_grams), AI dates, legacy geological_era,
+        // or later-batch/parked/protected fields.
         // ====================================================================
         let producerProposals = undefined;
         let producerDiagnostics = undefined;
@@ -2480,6 +2639,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             ) {
               return true;
             }
+            if (
+              (destOrBareKey === "cleavage" || destOrBareKey === "custom.cleavage") &&
+              /^none$/i.test(cleanedVal)
+            ) {
+              return true;
+            }
             return false;
           };
 
@@ -2492,6 +2657,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
             if (
               (destOrBareKey === "chain_material" || destOrBareKey === "custom.chain_material") &&
+              /^none$/i.test(cleanedVal)
+            ) {
+              return "None";
+            }
+            if (
+              (destOrBareKey === "cleavage" || destOrBareKey === "custom.cleavage") &&
               /^none$/i.test(cleanedVal)
             ) {
               return "None";
@@ -2895,6 +3066,63 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               cleanHwStr,
               `Gemini Vision (${hwKey})`
             );
+          }
+
+          // 8. Geology Drawer 7 Destinations (12 active destinations from getGeoData ONLY;
+          // legacy custom.geological_era is intentionally omitted):
+          // Uses actual getGeoData-derived values and truthful per-field source labels:
+          // - library facts: "Geo Library (GEO_LIBRARY)"
+          // - library computed luster: "Geo Library (computed stone luster default)"
+          // - cache: "Geo Library (StoneCache)"
+          // - profile: "Geo Library (StoneProfile DB)"
+          // - Mindat: "Mindat API"
+          // Never substitutes stored values or speculative Vision guesses when getGeoData has no value.
+          const DRAWER_7_ACTIVE_GEOLOGY_KEYS = [
+            "mohs_hardness",
+            "specific_gravity",
+            "crystal_system",
+            "luster",
+            "cleavage",
+            "fracture_pattern",
+            "diaphaneity",
+            "tenacity",
+            "mineral_class",
+            "rock_composition",
+            "rock_formation",
+            "geological_age"
+          ];
+
+          const geoSourceTag = geoFields?.geoSource || "none";
+          if (geoSourceTag !== "none") {
+            const resolveGeologySourceLabel = (geoKey) => {
+              if (geoSourceTag === "library") {
+                return geoKey === "luster"
+                  ? "Geo Library (computed stone luster default)"
+                  : "Geo Library (GEO_LIBRARY)";
+              }
+              if (geoSourceTag === "cache") {
+                return "Geo Library (StoneCache)";
+              }
+              if (geoSourceTag === "database") {
+                return "Geo Library (StoneProfile DB)";
+              }
+              if (geoSourceTag === "mindat") {
+                return "Mindat API";
+              }
+              return "Geo Library";
+            };
+
+            for (const geoKey of DRAWER_7_ACTIVE_GEOLOGY_KEYS) {
+              const rawGeoVal = geoFields[geoKey];
+              const cleanGeoStr = cleanNonBlankVisionStr(rawGeoVal, geoKey);
+              if (!cleanGeoStr) continue;
+
+              addProposal(
+                `custom.${geoKey}`,
+                cleanGeoStr,
+                resolveGeologySourceLabel(geoKey)
+              );
+            }
           }
         }
         

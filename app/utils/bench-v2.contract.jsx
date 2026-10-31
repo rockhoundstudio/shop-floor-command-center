@@ -14,14 +14,15 @@
 // 9. app/routes.js (@react-router/fs-routes flatRoutes, v7.16.0)
 // 10. app/routes/app.meta-injector-autofill.jsx
 // 11. app/utils/meta-injector.autofill.server.jsx (168,616 chars)
-// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: C8BB24C2FEA3FD6E0A13C396A6C95F7F44DA4498F9F5A18B62D815FE9A56A293)
+// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: AF1820B2565627F83DFEA26BE343B447B6949EB1A20AE9615995379092CABEEB)
 //
 // Pure contract module only:
 // - Zero React hooks/effects, zero storage access, zero GraphQL/network calls.
 // - Does NOT import legacy evaluators, execution hooks, or writers.
-// - Separates connected contracts (Drawers 1 to 6: Identity, Origin and collection,
+// - Separates connected contracts (Drawers 1 to 7: Identity, Origin and collection,
 //   Treatment, Appearance and character, Manual measurements [dimensions_mm, weight_grams],
-//   and Conditional setting/accessory facts) from future-batch descriptors and
+//   Conditional setting/accessory facts, and Geology [12 active destinations + 1 read-only
+//   compatibility inspection slot custom.geological_era]) from future-batch descriptors and
 //   read-only compatibility/parked/protected inventory.
 // - Never advertises unwired future-batch or unverified-hold fields as writable.
 // - Enforces strict baseline vs. proposed separation, zero automatic
@@ -155,9 +156,9 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     drawerNumber: 7,
     heading: "7. Geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    isImplementedInBatch1: false,
-    description: "Future Batch 2 descriptor: 13 deterministic geology metafields."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Connected geology facts: 12 deterministic custom.* geology destinations connected for manual edit, lookup staging, and exact-value approval, plus read-only compatibility inspection for custom.geological_era (authoritative ERA dropdown is shopify.geological-era)."
   }),
   Object.freeze({
     drawerId: "other_channel",
@@ -942,7 +943,12 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
   }),
 
   // ------------------------------------------------------------------------
-  // DRAWER 7: GEOLOGY (SUB_HARNESS_3 — FUTURE BATCH 2 DESCRIPTOR)
+  // DRAWER 7: GEOLOGY (SUB_HARNESS_3 — CONNECTED)
+  // 12 deterministic custom.* single_line_text_field geology destinations
+  // connected for manual edit, lookup staging, and exact-value approval.
+  // Legacy custom.geological_era remains visible as READ_ONLY_COMPATIBILITY /
+  // COMPATIBILITY_INSPECTION_ONLY (authoritative ERA dropdown is shopify.geological-era;
+  // custom.geological_age is separate library AGE text where "Variable" can be valid).
   // ------------------------------------------------------------------------
   defineFieldContract({
     destinationKey: "custom.mohs_hardness",
@@ -952,10 +958,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Mohs hardness scale value or range (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.specific_gravity",
@@ -965,10 +972,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Specific gravity value or range (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.crystal_system",
@@ -978,10 +986,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Crystal system classification as plain text (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.luster",
@@ -991,10 +1000,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Mineralogical luster (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.cleavage",
@@ -1004,10 +1014,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Mineralogical cleavage (single_line_text_field; 'None' is a valid mineralogical value)."
   }),
   defineFieldContract({
     destinationKey: "custom.fracture_pattern",
@@ -1017,10 +1028,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Mineralogical fracture pattern (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.diaphaneity",
@@ -1030,10 +1042,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Light transmission / diaphaneity (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.tenacity",
@@ -1043,10 +1056,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Mineralogical tenacity (single_line_text_field, e.g. Brittle)."
   }),
   defineFieldContract({
     destinationKey: "custom.mineral_class",
@@ -1056,10 +1070,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Mineral class as plain text (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.rock_composition",
@@ -1069,10 +1084,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Rock or mineral composition as plain text (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.rock_formation",
@@ -1082,23 +1098,26 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Geological rock formation as plain text (single_line_text_field)."
   }),
   defineFieldContract({
     destinationKey: "custom.geological_era",
     namespace: "custom",
     key: "geological_era",
-    label: "Geological Era",
+    label: "Geological Era (Saved Compatibility — Read-Only)",
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.COMPATIBILITY_INSPECTION_ONLY,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    canonicalTarget: "shopify.geological-era",
+    purposeNote: "Legacy custom geological_era field kept read-only for inspection only; authoritative ERA dropdown is shopify.geological-era and AGE text is custom.geological_age."
   }),
   defineFieldContract({
     destinationKey: "custom.geological_age",
@@ -1108,10 +1127,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "geology",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Library geological age text (single_line_text_field; distinct from shopify.geological-era and custom.geological_era; 'Variable' can be valid)."
   }),
 
   // ------------------------------------------------------------------------
