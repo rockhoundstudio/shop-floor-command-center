@@ -13,8 +13,6 @@ import {
   isExactProductVariantGid
 } from "../utils/bench-v2.contract.jsx";
 import {
-  normalizeTaxonomyCategoryCode,
-  doesCategoryMatchConstraintValue,
   evaluateStandardizedCategoryEligibility,
   readProductMetafieldDefinitionsWithConstraints as fetchProductMetafieldDefinitionsWithConstraints,
   readVariantMetafieldDefinitionsWithConstraints as fetchVariantMetafieldDefinitionsWithConstraints,
@@ -22,13 +20,12 @@ import {
   readSingleVariantMetafields as fetchSingleVariantMetafieldsForWriter
 } from "../utils/bench-v2.baseline.server.jsx";
 
-export {
-  BENCH_V2_WRITER_OPT_IN_FIELD,
-  BENCH_V2_WRITER_OPT_IN_VALUE,
-  BENCH_V2_OPT_IN_VARIANT_DESTINATIONS
-};
-
 // 🟢 Structural Engine — No Prisma Import Here
+// Note: Non-framework exports (BENCH_V2_WRITER_OPT_IN_FIELD, BENCH_V2_WRITER_OPT_IN_VALUE,
+// BENCH_V2_OPT_IN_VARIANT_DESTINATIONS) are kept module-private here (and owned/exported
+// by browser-safe ../utils/bench-v2.contract.jsx) so React Router treats this route as a
+// pure server resource route (exporting only `action`) without generating a client chunk
+// that fails on `../utils/bench-v2.baseline.server.jsx`.
 
 const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams",
@@ -341,7 +338,7 @@ function canonicalizeDescriptionHtmlForReadBack(html) {
       continue;
     }
 
-    const tagMatch = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?=[\t\n\f\r />])/.exec(html.slice(i));
+    const tagMatch = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?=[\t\n\f\\r />])/.exec(html.slice(i));
     if (!tagMatch) {
       return null;
     }
@@ -552,7 +549,7 @@ export const action = async ({ request }) => {
               metafields(first: 250) { edges { node { namespace key value } } }
               variants(first: 250) {
                 pageInfo { hasNextPage endCursor }
-                edges { node { id title price inventoryItem { measurement { weight { value unit } } } } }
+                edges { node { id title price inventoryItem { measurement { weight { value unit } } } }
               }
               media(first: 250) {
                 pageInfo { hasNextPage endCursor }
@@ -3122,7 +3119,7 @@ export const action = async ({ request }) => {
         message: diagnosticMsg,
         currentMetafields: hasMetafieldsReadBack ? newMetafields : currentMetafields,
         currentMetafieldTypes: hasMetafieldsReadBack ? newMetafieldTypes : currentMetafieldsTypes,
-        metafieldsReadComplete: hasMetafieldsReadBack,
+        metafieldsReadComplete: hasMetafieldsBaseline,
         primaryVariantId: verifiedSingleVariantGid,
         variantCount,
         variantTargetStatus,
