@@ -8,31 +8,21 @@
 // 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75 — action intent="executeRepairPlan" with benchV2OptIn="true")
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars, SHA256: FC207DA09F4DD0F6942CC9C4B4B83B6694B9749BB86748355227ADDA494CE5C5 — action delegates to executeAutofill)
 // 5. app/utils/meta-injector.autofill.server.jsx (170,362 chars, SHA256: B309A4CD931DCEFA907A50891BEBB2CD6B910333D7264997000ABEDB7865EC8B)
-// 6. app/routes/app.bench-v2.jsx (Retained Route, 188,376 chars, SHA256: 540D1B64399EA1EAC06533926A6D218CDC614E3A774761999C2A64777D23471B)
+// 6. app/routes/app.bench-v2.jsx (Current Route, SHA256: 0F250ED36409AA660713EEE025959F8CA05785477E81646FC7DCD4AA98BEC58B)
 // 7. app/routes/api.meta-injector-telemetry.jsx (31,525 chars, SHA256: 9E7654DF52CAE0A13638B9A8BF48A2D619ADEC4CA92E68D952259556A609B947)
 // 8. app/utils/meta-injector.sidekick-report-cache.server.js (134,851 chars, SHA256: 2ADB59716156403125DDA8AC869496FA198B3C28E3713F6B637EFE80189BA79C)
 //
-// Authorized Connected Manual Measurements + Setting & Hardware + Read-Only Sidekick Snapshot Sync:
-// - Uses saved contract exports/interfaces (BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
-//   contract.isManualOnlyNoAi, contract.usesYesNoMeaningDisplay, baselineDisplayValue,
-//   proposedDisplayValue, and number_decimal validation).
-// - Enables manual controls for custom.dimensions_mm and custom.weight_grams in Drawer 5
-//   plus the 8 mapped Setting & Hardware destinations in Drawer 6, while keeping the
-//   4 unverified measurement keepers on read-only hold and custom.overall_solid_length_in
-//   permanently excluded.
-// - Explicitly blocks ALL manual-measurement / manual-only destinations (including
-//   dimensions_mm, weight_grams, collection_date, and the 4 held measurement keepers)
-//   from AI Scan staging with a clear reported reason.
-// - Renders user-facing Yes/No + actual meaning in ordinary Saved/Proposed displays and
-//   option labels via the contract formatter while keeping exact raw values/types
-//   internally for validation, exact approvals, Keep Original, save payloads, and Details.
-// - Publishes read-only schemaVersion=1, stateKind="live_bench_state" snapshots to
-//   POST /api/meta-injector-telemetry using a deterministic content fingerprint
-//   (excluding publication bookkeeping/status) and a single-flight latest-queued sender
-//   with monotonic benchRevision and server revision-guard reconciliation.
-// - Preserves Product Search & Picker, 11 Tab 3 FILTER_OPTIONS, fixed 120px by 120px
-//   thumbnails, initially collapsed drawers, per-product drafts, exact approvals,
-//   Keep Original, and explicit Save/AI Scan interfaces verbatim.
+// Authorized Snapshot Serialization Budget Fix:
+// - Root Cause of 416,479 UTF-8 byte / 416,221 char payload on Canyon (9226849616123):
+//   In every one of the ~120 entries in `fieldsByKey`:
+//   1) `rawStoredBaseline.signature` duplicated `obs.signature` (which embeds `${productGid}::${destKey}::...::${rawVal}`, repeating the full multi-KB HTML/story/widget strings a 3rd time per field!).
+//   2) `evaluatedBaseline.value` and `evaluatedBaseline.displayValue` duplicated `rawStoredBaseline.value` (repeating every present string value a 2nd and 3rd time per field, including `native_description`, `custom.generated_description`, `custom.origin_story`, and `judgeme.*` widgets).
+//   3) Every unchanged field serialized ~1,800 chars of default `false` / `null` / `"None"` / empty sub-properties (`targetKey === key`, `approvalKey === key`, `registryIdentity === key`, `workingState` null defaults, `conflictsAndSaveEvidence` null defaults, and `statusAndHolds` false defaults) where `evaluateFieldAttentionFlags` and `buildReviewViewData` in `meta-injector.sidekick-report-cache.server.js` already fall back to `fieldObj.targetKey || k`, `Boolean(...)`, and `rawBase.exists / rawBase.value`.
+// - Fix:
+//   - Retains all ~120 field entries in `fieldsByKey` and `sectionOrder` in exact order with zero text clipping, zero list truncation, and full fidelity for absent vs. null vs. empty_string vs. present vs. unknown_incomplete_read.
+//   - Stores `rawStoredBaseline.value` in full (unclipped) while omitting `rawStoredBaseline.signature` (unless needed in an active `approvalRecord` or `keepOriginalDecision`, where `baselineSignature` is already preserved verbatim).
+//   - In `evaluatedBaseline`, sets `currentExists: rawBaselineExists` and omits redundant `evaluatedBaseline.value` when identical to `rawStoredBaseline.value` (because `evaluateFieldAttentionFlags` lines 1134-1138 falls back to `else if (rawBase.exists && rawBase.value !== null && rawBase.value !== undefined) baselineComparable = normalizeComparableFieldValue(rawBase.value)`), and includes `evaluatedBaseline.displayValue` when it differs from the raw value (e.g. Yes/No meaning display or non-present readable status).
+//   - Omits redundant per-field identity aliases when identical to `key` (`targetKey === key`, `approvalKey === key`, `registryIdentity === key` when `resolveFieldTarget` and `buildReviewViewData` fall back to `k`) and omits `false`/`null` default properties in `workingState`, `statusAndHolds`, and `conflictsAndSaveEvidence` when inactive, while preserving every active proposal, source, origin, approvalRecord, keepOriginalDecision, heldAiAlternative, scan outcome, hold flag, reason, and save evidence.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -168,7 +158,7 @@ const CATALOG_META_BY_OWNER_IDENTITY = Object.freeze(
 // and app/utils/meta-injector.sidekick-report-cache.server.js
 const TELEMETRY_ENDPOINT_PATH = "/api/meta-injector-telemetry";
 const TELEMETRY_LIVE_BENCH_MODE = "live_bench_state";
-const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 400000;
+const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024;
 const TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
 const TELEMETRY_MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -875,7 +865,7 @@ export default function BenchV2Route() {
   const pickerFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  //Requested product from URL searchParams vs. loaderData.targetProductId:
+  // Requested product from URL searchParams vs. loaderData.targetProductId:
   // Detects in-flight product navigation so we never publish the previous product's
   // baseline/rows under a newly selected productId while the loader is still fetching.
   const rawUrlProductId = searchParams.get("productId");
@@ -2622,11 +2612,12 @@ export default function BenchV2Route() {
   // - Expands loaded per-image MediaImage alt rows (native_image_alts_<MediaImageGid>)
   //   alongside native_image_alt capability descriptor in Drawer 9 so per-photo
   //   alt baselines are inspectable via view="drawer" and view="field".
-  // - Uses a deterministic content fingerprint (excluding benchRevision,
-  //   clientStateChangedAt, and telemetrySyncStatus) so UI status updates never
-  //   cause render or network loops.
-  // - Never publishes previous product's fields under a newly requested productId
-  //   while URL selection navigation is in flight.
+  // - Eliminates redundant multi-copy string duplication (`rawStoredBaseline.signature`
+  //   and duplicate `evaluatedBaseline.value` when identical to `rawStoredBaseline.value`)
+  //   and omits inactive `false`/`null` defaults where the existing cache reader
+  //   (`evaluateFieldAttentionFlags`, `buildReviewViewData`, `resolveFieldTarget`)
+  //   already falls back to the exact same values, keeping Canyon well under the
+  //   1 MiB character/byte ceiling without clipping a single character of actual data.
   // ==========================================================================
   const drainTelemetryPublishQueue = useCallback(async () => {
     if (isTelemetrySendInFlightRef.current) return;
@@ -2661,7 +2652,7 @@ export default function BenchV2Route() {
           ) {
             return {
               localOversize: true,
-              message: `Snapshot payload (${fullTextUtf8Bytes} UTF-8 bytes / ${fullTextCodeUnits} chars) exceeds cache limit; refused to clip or truncate.`
+              message: `Snapshot payload (${fullTextUtf8Bytes} UTF-8 bytes / ${fullTextCodeUnits} chars) exceeds cache limit (${TELEMETRY_MAX_FULL_TEXT_CODE_UNITS} chars / ${TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES} bytes); refused to clip or truncate.`
             };
           }
 
@@ -2928,6 +2919,7 @@ export default function BenchV2Route() {
 
         const regMeta = resolveFieldRegistryAndApplicabilityMeta(contract);
         const isMediaCapabilityDescriptor = destKey === "native_image_alt";
+        const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
 
         const rawBaselineExists =
           obs.evidenceAvailable &&
@@ -3064,115 +3056,178 @@ export default function BenchV2Route() {
                 }
               : saveConflictEntry || null;
 
-        fieldsByKey[destKey] = {
+        const rawValueToStore = obs.rawValue !== undefined ? obs.rawValue : null;
+        const readableBaselineStr =
+          typeof baselineDisplayValue === "string" && baselineDisplayValue !== ""
+            ? baselineDisplayValue
+            : formatReadableSavedValue(obs, usesMeaningDisplay, baselineDisplayValue);
+
+        // Build compact, lossless rawStoredBaseline without repeating obs.signature
+        // (which embedded another full copy of rawValue on every field).
+        const rawStoredBaselineObj = {
+          evidenceAvailable: obs.evidenceAvailable,
+          exists: rawBaselineExists,
+          presence: obs.presence,
+          value: rawValueToStore,
+          ...(obs.storedType ? { storedType: obs.storedType } : {}),
+          ...(obs.liveDefType ? { liveDefType: obs.liveDefType } : {}),
+          ...(obs.metafieldsCompleteState !== "complete"
+            ? { metafieldsCompleteState: obs.metafieldsCompleteState }
+            : {}),
+          ...(obs.defsCompleteState !== "complete"
+            ? { defsCompleteState: obs.defsCompleteState }
+            : {}),
+          ...(obs.destinationDefError
+            ? { destinationDefError: obs.destinationDefError }
+            : {})
+        };
+
+        // In evaluatedBaseline, evaluateFieldAttentionFlags falls back directly to
+        // rawStoredBaseline.exists and rawStoredBaseline.value when evaluatedBaseline.value
+        // is omitted. Only include displayValue when it differs from rawValueToStore
+        // (such as Yes/No meaning display or non-present status labels), avoiding a 2nd/3rd
+        // copy of multi-KB HTML descriptions, stories, and third-party widgets.
+        const evaluatedBaselineObj = {
+          currentExists: rawBaselineExists,
+          ...(readableBaselineStr !== rawValueToStore
+            ? { displayValue: readableBaselineStr }
+            : {}),
+          ...(usesMeaningDisplay ? { usesYesNoMeaningDisplay: true } : {}),
+          ...(isMediaCapabilityDescriptor
+            ? { isDisplayOnlyPlaceholderOrNa: true }
+            : {})
+        };
+
+        const effectiveSource =
+          hasProposalKey && proposalSource && proposalSource !== "None"
+            ? proposalSource
+            : scanProposalMeta?.source || null;
+
+        const workingStateObj = {
+          proposalExists: hasProposalKey,
+          isProposed: Boolean(
+            hasProposalKey && !isKeepOriginal && !validation?.isUnchangedFromStored
+          ),
+          proposedValue: hasProposalKey ? proposedValue : null,
+          ...(hasProposalKey &&
+          proposedDisplayValue &&
+          proposedDisplayValue !== proposedValue
+            ? { proposedDisplayValue }
+            : {}),
+          ...(proposalStatus !== "none" ? { proposalStatus } : {}),
+          ...(effectiveSource ? { source: effectiveSource } : {}),
+          ...(proposalOrigin !== "None" ? { origin: proposalOrigin } : {}),
+          ...(hasProposalKey && proposalOrigin === "Manual"
+            ? { isManualEdit: true }
+            : {}),
+          ...(isExplicitlyApprovedValid ? { isApproved: true } : {}),
+          ...(currentApprovalsMap[destKey]
+            ? { approvalRecord: currentApprovalsMap[destKey] }
+            : {}),
+          ...(isKeepOriginal ? { isKeepOriginal: true } : {}),
+          ...(currentKeepOriginalMap[destKey]
+            ? { keepOriginalDecision: currentKeepOriginalMap[destKey] }
+            : {}),
+          ...(canKeepOriginal ? { canKeepOriginal: true } : {}),
+          ...(contentNeedsReview ? { contentNeedsReview: true } : {}),
+          ...(heldAiAlternative ? { heldAiAlternative } : {}),
+          ...(scanProposalMeta ? { lastAiScanOutcome: scanProposalMeta } : {})
+        };
+
+        const isVariantHold =
+          contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+        const isExplicitStorageHold =
+          contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD";
+        const isChannelFlagHold =
+          contract.destinationKey === "mm-google-shopping.custom_product";
+
+        const statusAndHoldsObj = {
+          fieldStatus: mappedFieldStatus,
+          connectionStatus: effectiveConnectionStatus,
+          ...(effectiveReviewStatus !== "Unchanged"
+            ? { reviewStatus: effectiveReviewStatus }
+            : {}),
+          applicability: regMeta.applicability,
+          writeCapability: contract.writeCapability,
+          batchStage: contract.batchStage,
+          expectedType: contract.expectedType,
+          ...(Array.isArray(contract.allowedTypes) &&
+          (contract.allowedTypes.length > 1 ||
+            contract.allowedTypes[0] !== contract.expectedType)
+            ? { allowedTypes: contract.allowedTypes }
+            : {}),
+          ...(contract.maxLength !== null ? { maxLength: contract.maxLength } : {}),
+          ...(contract.canonicalTarget
+            ? { canonicalTarget: contract.canonicalTarget }
+            : {}),
+          ...(regMeta.isParkedExcluded ? { isParkedExcluded: true } : {}),
+          ...(regMeta.isProtectedAppData ? { isProtectedAppData: true } : {}),
+          ...(isMediaCapabilityDescriptor
+            ? { isImageAltCapabilityPlaceholder: true }
+            : {}),
+          ...(isActualBlockedProposal ? { isActualBlockedProposal: true } : {}),
+          ...(hasTechnicalBlock ? { hasTechnicalBlock: true } : {}),
+          ...(hasContractOrOwnerHold ? { hasContractOrOwnerHold: true } : {}),
+          ...(isExplicitStorageHold ? { hasExplicitStorageHold: true } : {}),
+          ...(isVariantHold ? { isVariantMetafieldHold: true } : {}),
+          ...(!contract.isWritableInBatch1 ? { isPendingReadOnly: true } : {}),
+          ...(isChannelFlagHold ? { isChannelFlagReadOnly: true } : {}),
+          ...(reasonsList.length > 0 ? { reasons: reasonsList } : {})
+        };
+
+        const wasSubmittedInLastRepair = Boolean(
+          activeSaveReportForCurrentProduct?.submittedDestinations?.includes(destKey)
+        );
+        const verifiedInLastRepair = Boolean(
+          activeSaveReportForCurrentProduct?.verifiedDestinations?.includes(destKey)
+        );
+        const blockedInLastRepair =
+          activeSaveReportForCurrentProduct?.blockedFields?.[destKey] || null;
+        const unconfirmedInLastRepair = Boolean(
+          activeSaveReportForCurrentProduct?.unconfirmedDestinations?.includes(destKey)
+        );
+
+        const hasAnySaveOrConflictEvidence = Boolean(
+          combinedConflictData ||
+            wasSubmittedInLastRepair ||
+            verifiedInLastRepair ||
+            blockedInLastRepair ||
+            unconfirmedInLastRepair
+        );
+
+        const fieldEntry = {
           key: destKey,
-          targetKey: destKey,
-          approvalKey: destKey,
           section: sectionTitle,
           drawerId: contract.drawerId,
           label: cleanFieldHeading(contract.label) || contract.label,
           registryOwner: regMeta.registryOwner,
-          registryIdentity: regMeta.registryIdentity,
+          ...(regMeta.registryIdentity !== destKey
+            ? { registryIdentity: regMeta.registryIdentity }
+            : {}),
           registryRole: regMeta.registryRole,
-          isParkedExcluded: regMeta.isParkedExcluded,
-          isProtectedAppData: regMeta.isProtectedAppData,
-          isManualOnlyNoAi: isManualOnlyNoAiDestination(destKey, contract),
-          rawStoredBaseline: {
-            evidenceAvailable: obs.evidenceAvailable,
-            positiveEvidenceObserved: obs.positiveEvidenceObserved,
-            exists: rawBaselineExists,
-            presence: obs.presence,
-            value: obs.rawValue !== undefined ? obs.rawValue : null,
-            storedType: obs.storedType || null,
-            liveDefType: obs.liveDefType || null,
-            metafieldsCompleteState: obs.metafieldsCompleteState,
-            defsCompleteState: obs.defsCompleteState,
-            destinationDefError: obs.destinationDefError || null,
-            signature: obs.signature
-          },
-          evaluatedBaseline: {
-            currentExists: rawBaselineExists,
-            value: obs.rawValue !== undefined ? obs.rawValue : null,
-            displayValue:
-              typeof baselineDisplayValue === "string" && baselineDisplayValue !== ""
-                ? baselineDisplayValue
-                : formatReadableSavedValue(
-                    obs,
-                    Boolean(contract.usesYesNoMeaningDisplay),
-                    baselineDisplayValue
-                  ),
-            usesYesNoMeaningDisplay: Boolean(contract.usesYesNoMeaningDisplay),
-            isDisplayOnlyPlaceholderOrNa: isMediaCapabilityDescriptor
-          },
-          workingState: {
-            proposalExists: hasProposalKey,
-            isProposed: Boolean(
-              hasProposalKey && !isKeepOriginal && !validation?.isUnchangedFromStored
-            ),
-            proposedValue: hasProposalKey ? proposedValue : null,
-            proposedDisplayValue: hasProposalKey ? proposedDisplayValue : null,
-            proposalStatus,
-            source:
-              hasProposalKey && proposalSource && proposalSource !== "None"
-                ? proposalSource
-                : scanProposalMeta?.source || null,
-            origin: proposalOrigin,
-            stage: contract.batchStage,
-            isManualEdit: Boolean(hasProposalKey && proposalOrigin === "Manual"),
-            isApproved: isExplicitlyApprovedValid,
-            approvalRecord: currentApprovalsMap[destKey] || null,
-            isKeepOriginal: Boolean(isKeepOriginal),
-            keepOriginalDecision: currentKeepOriginalMap[destKey] || null,
-            canKeepOriginal,
-            isContentPreApproved: false,
-            preApprovalReason: null,
-            contentNeedsReview,
-            heldAiAlternative: heldAiAlternative || null,
-            lastAiScanOutcome: scanProposalMeta || null
-          },
-          statusAndHolds: {
-            fieldStatus: mappedFieldStatus,
-            connectionStatus: effectiveConnectionStatus,
-            reviewStatus: effectiveReviewStatus,
-            applicability: regMeta.applicability,
-            writeCapability: contract.writeCapability,
-            batchStage: contract.batchStage,
-            expectedType: contract.expectedType,
-            allowedTypes: contract.allowedTypes || [contract.expectedType],
-            maxLength: contract.maxLength,
-            canonicalTarget: contract.canonicalTarget || null,
-            isParkedExcluded: regMeta.isParkedExcluded,
-            isProtectedAppData: regMeta.isProtectedAppData,
-            isImageAltCapabilityPlaceholder: isMediaCapabilityDescriptor,
-            isActualBlockedProposal,
-            hasTechnicalBlock,
-            hasContractOrOwnerHold,
-            hasExplicitStorageHold:
-              contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD",
-            hasExplicitProducerHold: false,
-            isVariantMetafieldHold:
-              contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native",
-            isPendingReadOnly: !contract.isWritableInBatch1,
-            isChannelFlagReadOnly:
-              contract.destinationKey === "mm-google-shopping.custom_product",
-            reasons: reasonsList
-          },
-          conflictsAndSaveEvidence: {
-            conflictData: combinedConflictData,
-            nativeDescConflictData: null,
-            wasSubmittedInLastRepair: Boolean(
-              activeSaveReportForCurrentProduct?.submittedDestinations?.includes(destKey)
-            ),
-            verifiedInLastRepair: Boolean(
-              activeSaveReportForCurrentProduct?.verifiedDestinations?.includes(destKey)
-            ),
-            blockedInLastRepair:
-              activeSaveReportForCurrentProduct?.blockedFields?.[destKey] || null,
-            unconfirmedInLastRepair: Boolean(
-              activeSaveReportForCurrentProduct?.unconfirmedDestinations?.includes(destKey)
-            )
-          }
+          ...(regMeta.isParkedExcluded ? { isParkedExcluded: true } : {}),
+          ...(regMeta.isProtectedAppData ? { isProtectedAppData: true } : {}),
+          ...(isManualOnlyNoAiDestination(destKey, contract)
+            ? { isManualOnlyNoAi: true }
+            : {}),
+          rawStoredBaseline: rawStoredBaselineObj,
+          evaluatedBaseline: evaluatedBaselineObj,
+          workingState: workingStateObj,
+          statusAndHolds: statusAndHoldsObj,
+          ...(hasAnySaveOrConflictEvidence
+            ? {
+                conflictsAndSaveEvidence: {
+                  ...(combinedConflictData ? { conflictData: combinedConflictData } : {}),
+                  ...(wasSubmittedInLastRepair ? { wasSubmittedInLastRepair: true } : {}),
+                  ...(verifiedInLastRepair ? { verifiedInLastRepair: true } : {}),
+                  ...(blockedInLastRepair ? { blockedInLastRepair } : {}),
+                  ...(unconfirmedInLastRepair ? { unconfirmedInLastRepair: true } : {})
+                }
+              }
+            : {})
         };
+
+        fieldsByKey[destKey] = fieldEntry;
 
         // Expand loaded per-image MediaImage alt baseline rows in Drawer 9 right after native_image_alt
         if (
@@ -3203,8 +3258,6 @@ export default function BenchV2Route() {
             drawerFieldKeys.push(mediaKey);
             fieldsByKey[mediaKey] = {
               key: mediaKey,
-              targetKey: mediaKey,
-              approvalKey: mediaKey,
               mediaImageGid: mediaGid,
               photoIndex: mIdx + 1,
               section: sectionTitle,
@@ -3213,12 +3266,8 @@ export default function BenchV2Route() {
               registryOwner: "MEDIAIMAGE",
               registryIdentity: "native_image_alt",
               registryRole: "PRIMARY_CANDIDATE_DESTINATION",
-              isParkedExcluded: false,
-              isProtectedAppData: false,
-              isManualOnlyNoAi: false,
               rawStoredBaseline: {
                 evidenceAvailable: mediaComplete,
-                positiveEvidenceObserved: mediaComplete,
                 exists: mediaComplete && hasAltText,
                 presence: !mediaComplete
                   ? "unknown_incomplete_read"
@@ -3227,75 +3276,35 @@ export default function BenchV2Route() {
                     : "empty_string",
                 value: mediaComplete ? rawAlt : null,
                 storedType: "native_media_alt",
-                liveDefType: "native_media_alt",
-                metafieldsCompleteState: obs.metafieldsCompleteState,
-                defsCompleteState: obs.defsCompleteState,
-                destinationDefError: null,
-                signature: `${activeProductId}::${mediaKey}::${mediaComplete ? "complete" : "incomplete"}::${rawAlt}`
+                liveDefType: "native_media_alt"
               },
               evaluatedBaseline: {
                 currentExists: mediaComplete && hasAltText,
-                value: mediaComplete ? rawAlt : null,
-                displayValue: !mediaComplete
-                  ? "Read incomplete"
-                  : hasAltText
-                    ? rawAlt
-                    : "Not set",
-                usesYesNoMeaningDisplay: false,
-                isDisplayOnlyPlaceholderOrNa: false
+                ...(!mediaComplete
+                  ? { displayValue: "Read incomplete" }
+                  : !hasAltText
+                    ? { displayValue: "Not set" }
+                    : {})
               },
               workingState: {
                 proposalExists: false,
                 isProposed: false,
-                proposedValue: null,
-                proposedDisplayValue: null,
-                proposalStatus: "none",
-                source: null,
-                origin: "None",
-                stage: contract.batchStage,
-                isManualEdit: false,
-                isApproved: false,
-                approvalRecord: null,
-                isKeepOriginal: false,
-                keepOriginalDecision: null,
-                canKeepOriginal: false,
-                isContentPreApproved: false,
-                preApprovalReason: null,
-                contentNeedsReview: false,
-                heldAiAlternative: null,
-                lastAiScanOutcome: null
+                proposedValue: null
               },
               statusAndHolds: {
                 fieldStatus: !mediaComplete ? "Incomplete Read" : "Unchanged",
                 connectionStatus: "Read-Only Descriptor (FUTURE_BATCH_3_DESCRIPTOR)",
-                reviewStatus: "Unchanged",
                 applicability: "all_products",
                 writeCapability: contract.writeCapability,
                 batchStage: contract.batchStage,
                 expectedType: "single_line_text_field",
-                allowedTypes: ["single_line_text_field"],
                 maxLength: 125,
-                canonicalTarget: null,
-                isParkedExcluded: false,
-                isProtectedAppData: false,
-                isImageAltCapabilityPlaceholder: false,
-                isActualBlockedProposal: false,
-                hasTechnicalBlock: !mediaComplete,
+                ...(!mediaComplete ? { hasTechnicalBlock: true } : {}),
                 hasContractOrOwnerHold: true,
-                hasExplicitStorageHold: false,
-                hasExplicitProducerHold: false,
-                isVariantMetafieldHold: false,
                 isPendingReadOnly: true,
-                isChannelFlagReadOnly: false,
-                reasons: ["Per-image media alt writes are scheduled for Future Batch 3; read-only in Batch 1."]
-              },
-              conflictsAndSaveEvidence: {
-                conflictData: null,
-                nativeDescConflictData: null,
-                wasSubmittedInLastRepair: false,
-                verifiedInLastRepair: false,
-                blockedInLastRepair: null,
-                unconfirmedInLastRepair: false
+                reasons: [
+                  "Per-image media alt writes are scheduled for Future Batch 3; read-only in Batch 1."
+                ]
               }
             };
           }
