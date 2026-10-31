@@ -698,6 +698,8 @@ const PASSIVE_CONSTRUCTION_REVIEW_KEYS = new Set([
   "jewelry_finding_type",
   "secondary_medium",
   "wire_material",
+  "chain_material",
+  "chain_link_type",
   "alt_text"
 ]);
 
@@ -2284,14 +2286,23 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               parsedVision[k] !== undefined && parsedVision[k] !== null
                 ? String(parsedVision[k]).trim()
                 : "";
+            const isAllowedDestinationDomainValue =
+              (k === "jewelry_type" && /^n\/a$/i.test(rawProposedVal)) ||
+              (k === "chain_material" && /^none$/i.test(rawProposedVal));
             const hasFreshProposal =
               rawProposedVal !== "" &&
-              !INVALID_CANDIDATE_FILLERS.has(rawProposedVal.toLowerCase());
+              (isAllowedDestinationDomainValue || !INVALID_CANDIDATE_FILLERS.has(rawProposedVal.toLowerCase()));
 
             if (isPassiveClassification || isPassiveConstruction || isPassiveProvenanceOrSeo) {
               if (hasFreshProposal && rawProposedVal !== currentData[k]) {
-                parsedVision[k] = rawProposedVal;
-                reviewProposals[k] = rawProposedVal;
+                const normalizedDomainVal =
+                  k === "jewelry_type" && /^n\/a$/i.test(rawProposedVal)
+                    ? "N/A"
+                    : k === "chain_material" && /^none$/i.test(rawProposedVal)
+                      ? "None"
+                      : rawProposedVal;
+                parsedVision[k] = normalizedDomainVal;
+                reviewProposals[k] = normalizedDomainVal;
               } else {
                 parsedVision[k] = currentData[k];
               }
@@ -2443,8 +2454,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         // OPT-IN BENCH V2 PRODUCER PROPOSALS SEPARATION (tab3FullRescan ONLY)
         // Emits ONLY genuine nonblank Batch 1 + Drawer 6 producer outputs captured
         // BEFORE passive stored fallback substitution, OOAK collapsing/deletion, or
-        // baseline merges. Never labels currentData or caller-echo values as
-        // generated. Never emits cancelled overall_solid_length_in, manual-only
+        // baseline merges. Never substitutes stored values for absent model outputs.
+        // Never emits cancelled overall_solid_length_in, manual-only
         // measurements (dimensions_mm, weight_grams), AI dates, or later-batch/
         // parked/protected fields.
         // ====================================================================
@@ -2455,10 +2466,46 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           producerProposals = {};
           producerDiagnostics = {};
 
-          const cleanNonBlankVisionStr = (rawVal) => {
+          const isAllowedDestinationSpecificFiller = (destOrBareKey, cleanedVal) => {
+            if (typeof cleanedVal !== "string") return false;
+            if (
+              (destOrBareKey === "jewelry_type" || destOrBareKey === "custom.jewelry_type") &&
+              /^n\/a$/i.test(cleanedVal)
+            ) {
+              return true;
+            }
+            if (
+              (destOrBareKey === "chain_material" || destOrBareKey === "custom.chain_material") &&
+              /^none$/i.test(cleanedVal)
+            ) {
+              return true;
+            }
+            return false;
+          };
+
+          const normalizeDestinationSpecificFiller = (destOrBareKey, cleanedVal) => {
+            if (
+              (destOrBareKey === "jewelry_type" || destOrBareKey === "custom.jewelry_type") &&
+              /^n\/a$/i.test(cleanedVal)
+            ) {
+              return "N/A";
+            }
+            if (
+              (destOrBareKey === "chain_material" || destOrBareKey === "custom.chain_material") &&
+              /^none$/i.test(cleanedVal)
+            ) {
+              return "None";
+            }
+            return cleanedVal;
+          };
+
+          const cleanNonBlankVisionStr = (rawVal, destOrBareKey = "") => {
             if (typeof rawVal !== "string") return "";
             const cleaned = sanitizeCandidateString(rawVal);
             if (!cleaned) return "";
+            if (isAllowedDestinationSpecificFiller(destOrBareKey, cleaned)) {
+              return normalizeDestinationSpecificFiller(destOrBareKey, cleaned);
+            }
             if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return "";
             return cleaned;
           };
@@ -2466,7 +2513,15 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           const addProposal = (destKey, value, source) => {
             if (typeof value !== "string") return;
             const cleaned = sanitizeCandidateString(value);
-            if (!cleaned || INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return;
+            if (!cleaned) return;
+            if (isAllowedDestinationSpecificFiller(destKey, cleaned)) {
+              producerProposals[destKey] = {
+                value: normalizeDestinationSpecificFiller(destKey, cleaned),
+                source
+              };
+              return;
+            }
+            if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return;
             producerProposals[destKey] = { value: cleaned, source };
           };
 
@@ -2811,9 +2866,11 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
 
           // 7. Setting and Hardware Drawer 6 Destinations (from rawVisionSnapshot before protectedKeys overwrote them):
-          // Emits ONLY genuine nonblank Vision outputs that do not merely echo caller-supplied currentData.
-          // Preserves descriptive hardware strings verbatim without fabricating plating, bail construction,
-          // wire material, or readiness. Manual measurements (dimensions_mm, weight_grams) remain excluded.
+          // Emits genuine nonblank Vision outputs captured in rawVisionSnapshot (even when matching
+          // baseline, which the client reports as matching saved value and not staged). Never substitutes
+          // stored values for absent model outputs. Allows destination-specific domain answers "N/A" for
+          // jewelry_type and "None" for chain_material only when actually returned by the model.
+          // Manual measurements (dimensions_mm, weight_grams) remain excluded.
           const DRAWER_6_HARDWARE_KEYS = [
             "secondary_medium",
             "jewelry_type",
@@ -2830,17 +2887,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             const cleanHwStr =
               typeof rawHwVal === "boolean"
                 ? (rawHwVal ? "Yes" : "No")
-                : cleanNonBlankVisionStr(rawHwVal);
+                : cleanNonBlankVisionStr(rawHwVal, hwKey);
             if (!cleanHwStr) continue;
-
-            // Never emit a caller-supplied baseline/locked echo as an AI-generated suggestion
-            const callerSuppliedVal =
-              currentData[hwKey] !== undefined && currentData[hwKey] !== null
-                ? String(currentData[hwKey]).trim()
-                : "";
-            if (callerSuppliedVal !== "" && cleanHwStr === callerSuppliedVal) {
-              continue;
-            }
 
             addProposal(
               `custom.${hwKey}`,
