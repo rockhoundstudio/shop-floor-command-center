@@ -1,18 +1,18 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE)
+// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE + SIDEKICK SNAPSHOT SYNC)
 // File: app/routes/app.bench-v2.jsx
 //
 // Verified Current Sources Confirmed in Context:
 // 1. app/utils/bench-v2.contract.jsx (120,942 chars, SHA256: AF1820B2565627F83DFEA26BE343B447B6949EB1A20AE9615995379092CABEEB)
 // 2. app/utils/bench-v2.baseline.server.jsx (43,102 chars, SHA256: 81590D25E0923983958813D4EC9E323EFD1B6C247711642770A1A378C5894CCA)
 // 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75 — action intent="executeRepairPlan" with benchV2OptIn="true")
-// 4. app/routes/app.meta-injector-autofill.jsx (698 chars — action delegates to executeAutofill)
-// 5. app/utils/meta-injector.autofill.server.jsx (168,616 chars, SHA256: 039F7B2F8DED1E385A02A2640F540821B1638A8A95DAAC547AF83BC93C9E3AEF)
-// 6. app/routes/app.bench-v2.jsx (Retained Route, SHA256: 47413FBEC6D29F931C52F498A83A7EDE07DD1D98A4487BC8788349653B77EBF2)
-// 7. app/routes/app.meta-injector.matrix.jsx (231,797 chars — filter behavior reference only; never imported)
-// 8. app/utils/meta-injector.matrix-domain.jsx (164,101 chars — FILTER_OPTIONS & predicate reference only; never imported)
+// 4. app/routes/app.meta-injector-autofill.jsx (698 chars, SHA256: FC207DA09F4DD0F6942CC9C4B4B83B6694B9749BB86748355227ADDA494CE5C5 — action delegates to executeAutofill)
+// 5. app/utils/meta-injector.autofill.server.jsx (170,362 chars, SHA256: B309A4CD931DCEFA907A50891BEBB2CD6B910333D7264997000ABEDB7865EC8B)
+// 6. app/routes/app.bench-v2.jsx (Retained Route, 188,376 chars, SHA256: 540D1B64399EA1EAC06533926A6D218CDC614E3A774761999C2A64777D23471B)
+// 7. app/routes/api.meta-injector-telemetry.jsx (31,525 chars, SHA256: 9E7654DF52CAE0A13638B9A8BF48A2D619ADEC4CA92E68D952259556A609B947)
+// 8. app/utils/meta-injector.sidekick-report-cache.server.js (134,851 chars, SHA256: 2ADB59716156403125DDA8AC869496FA198B3C28E3713F6B637EFE80189BA79C)
 //
-// Authorized Connected Manual Measurements + Setting & Hardware Route Update:
+// Authorized Connected Manual Measurements + Setting & Hardware + Read-Only Sidekick Snapshot Sync:
 // - Uses saved contract exports/interfaces (BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
 //   contract.isManualOnlyNoAi, contract.usesYesNoMeaningDisplay, baselineDisplayValue,
 //   proposedDisplayValue, and number_decimal validation).
@@ -26,6 +26,10 @@
 // - Renders user-facing Yes/No + actual meaning in ordinary Saved/Proposed displays and
 //   option labels via the contract formatter while keeping exact raw values/types
 //   internally for validation, exact approvals, Keep Original, save payloads, and Details.
+// - Publishes read-only schemaVersion=1, stateKind="live_bench_state" snapshots to
+//   POST /api/meta-injector-telemetry using a deterministic content fingerprint
+//   (excluding publication bookkeeping/status) and a single-flight latest-queued sender
+//   with monotonic benchRevision and server revision-guard reconciliation.
 // - Preserves Product Search & Picker, 11 Tab 3 FILTER_OPTIONS, fixed 120px by 120px
 //   thumbnails, initially collapsed drawers, per-product drafts, exact approvals,
 //   Keep Original, and explicit Save/AI Scan interfaces verbatim.
@@ -52,6 +56,10 @@ import {
   isKeepOriginalRecordValid,
   evaluateBenchV2FieldRow
 } from "../utils/bench-v2.contract.jsx";
+import {
+  REGISTRY_BY_OWNER_IDENTITY,
+  FIELD_CATALOG
+} from "../utils/meta-injector.constants.jsx";
 
 export const CANYON_RED_PRODUCT_GID = "gid://shopify/Product/9226849616123";
 
@@ -143,6 +151,172 @@ function isManualOnlyNoAiDestination(destinationKey, contract = null) {
     return true;
   }
   return false;
+}
+
+// Lookup map for actual FIELD_CATALOG metadata (applicability, registryRole, role)
+// so snapshot publication uses actual catalog/registry facts without inventing classifications.
+const CATALOG_META_BY_OWNER_IDENTITY = Object.freeze(
+  (Array.isArray(FIELD_CATALOG) ? FIELD_CATALOG : []).reduce((acc, entry) => {
+    if (entry && entry.registryOwner && entry.registryIdentity) {
+      acc[`${entry.registryOwner}:${entry.registryIdentity}`] = entry;
+    }
+    return acc;
+  }, {})
+);
+
+// Telemetry endpoint & cache limits from app/routes/api.meta-injector-telemetry.jsx
+// and app/utils/meta-injector.sidekick-report-cache.server.js
+const TELEMETRY_ENDPOINT_PATH = "/api/meta-injector-telemetry";
+const TELEMETRY_LIVE_BENCH_MODE = "live_bench_state";
+const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 400000;
+const TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
+const TELEMETRY_MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
+
+function measureUtf8BytesClient(str) {
+  if (typeof str !== "string" || str.length === 0) return 0;
+  try {
+    if (typeof TextEncoder !== "undefined") {
+      return new TextEncoder().encode(str).byteLength;
+    }
+  } catch {
+    // Fallback below
+  }
+  let bytes = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    const code = str.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function generateBenchSessionId() {
+  let randPart = "";
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      randPart = crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, "");
+    }
+  } catch {
+    // Fallback below
+  }
+  if (!randPart) {
+    randPart = `${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
+  }
+  const candidate = `bv2_${Date.now()}_${randPart}`.replace(/[^A-Za-z0-9._:-]/g, "");
+  return candidate.slice(0, 96);
+}
+
+function resolveActualEventOrdering(aiScanReport, saveReport) {
+  const aiCompletedAt =
+    aiScanReport && typeof aiScanReport.completedAt === "string"
+      ? aiScanReport.completedAt
+      : null;
+  const saveCompletedAt =
+    saveReport && typeof saveReport.completedAt === "string"
+      ? saveReport.completedAt
+      : null;
+
+  const aiMs = aiCompletedAt ? Date.parse(aiCompletedAt) : NaN;
+  const saveMs = saveCompletedAt ? Date.parse(saveCompletedAt) : NaN;
+  const hasValidAiMs = Number.isFinite(aiMs);
+  const hasValidSaveMs = Number.isFinite(saveMs);
+
+  if (hasValidAiMs && hasValidSaveMs) {
+    if (saveMs >= aiMs) {
+      return {
+        runIdentity: saveReport.submissionId || null,
+        runTimestamp: saveCompletedAt,
+        latestEventKind: "save_attempt"
+      };
+    }
+    return {
+      runIdentity: aiScanReport.requestId || null,
+      runTimestamp: aiCompletedAt,
+      latestEventKind: "ai_scan"
+    };
+  }
+  if (hasValidSaveMs) {
+    return {
+      runIdentity: saveReport.submissionId || null,
+      runTimestamp: saveCompletedAt,
+      latestEventKind: "save_attempt"
+    };
+  }
+  if (hasValidAiMs) {
+    return {
+      runIdentity: aiScanReport.requestId || null,
+      runTimestamp: aiCompletedAt,
+      latestEventKind: "ai_scan"
+    };
+  }
+  return {
+    runIdentity: null,
+    runTimestamp: null,
+    latestEventKind: null
+  };
+}
+
+function resolveFieldRegistryAndApplicabilityMeta(contract) {
+  const owner = contract.owner || "PRODUCT";
+  const destKey = contract.destinationKey;
+  const compositeKey = `${owner}:${destKey}`;
+
+  const regEntry = REGISTRY_BY_OWNER_IDENTITY?.[compositeKey] || null;
+  const catEntry = CATALOG_META_BY_OWNER_IDENTITY?.[compositeKey] || null;
+
+  let registryRole = regEntry?.role || catEntry?.registryRole || null;
+  if (!registryRole) {
+    if (contract.batchStage === "PROTECTED_READ_ONLY") {
+      registryRole = "PROTECTED_DATA";
+    } else if (contract.batchStage === "PARKED_EXCLUDED_READ_ONLY") {
+      registryRole = "EXCLUDED_INPUT";
+    } else if (contract.batchStage === "READ_ONLY_COMPATIBILITY") {
+      registryRole = "COMPAT_REP";
+    } else if (
+      contract.drawerId === "manual_measurements" &&
+      contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD"
+    ) {
+      registryRole = "APPROVED_MEASUREMENT_ADDITION";
+    } else {
+      registryRole = "PRIMARY_CANDIDATE_DESTINATION";
+    }
+  }
+
+  // Only mark true parked/excluded entries as isParkedExcluded; Protected third-party
+  // app data (PROTECTED_DATA / PROTECTED_READ_ONLY) stays distinct as protected read-only.
+  const isProtectedAppData =
+    registryRole === "PROTECTED_DATA" ||
+    contract.batchStage === "PROTECTED_READ_ONLY" ||
+    contract.writeCapability === "PROTECTED_NO_WRITE";
+
+  const isParkedExcluded =
+    !isProtectedAppData &&
+    (registryRole === "EXCLUDED_INPUT" ||
+      contract.batchStage === "PARKED_EXCLUDED_READ_ONLY" ||
+      contract.writeCapability === "PARKED_EXCLUDED_NO_WRITE");
+
+  // Preserve actual catalog applicability scope when known; never label read-only rows as "inapplicable".
+  const applicability =
+    typeof catEntry?.applicability === "string" && catEntry.applicability.trim() !== ""
+      ? catEntry.applicability.trim()
+      : isProtectedAppData
+        ? "protected_read_only"
+        : isParkedExcluded
+          ? "parked_excluded"
+          : "not_evaluated";
+
+  return {
+    registryOwner: owner,
+    registryIdentity: destKey,
+    registryRole,
+    isProtectedAppData,
+    isParkedExcluded,
+    applicability
+  };
 }
 
 // Lightweight single-page product list query patterned from Shopify Admin GraphQL
@@ -701,9 +875,22 @@ export default function BenchV2Route() {
   const pickerFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  //Requested product from URL searchParams vs. loaderData.targetProductId:
+  // Detects in-flight product navigation so we never publish the previous product's
+  // baseline/rows under a newly selected productId while the loader is still fetching.
+  const rawUrlProductId = searchParams.get("productId");
+  const requestedUrlProductId =
+    rawUrlProductId && isExactProductGid(rawUrlProductId.trim())
+      ? rawUrlProductId.trim()
+      : null;
+
   const activeProductId = isExactProductGid(loaderData?.targetProductId)
     ? loaderData.targetProductId
     : CANYON_RED_PRODUCT_GID;
+
+  const isSwitchingSelectedProduct = Boolean(
+    requestedUrlProductId && requestedUrlProductId !== activeProductId
+  );
 
   // 1. Authoritative Baseline State (Strictly separated from proposals, keyed by Product GID)
   const [baselineByProduct, setBaselineByProduct] = useState(() => {
@@ -820,10 +1007,32 @@ export default function BenchV2Route() {
   const blurClearTimersRef = useRef(new Map());
   const isMountedRef = useRef(true);
 
+  // 12. Read-Only Sidekick Live Snapshot Publication State (Strictly excluded from content fingerprint)
+  const benchSessionIdRef = useRef(null);
+  if (!benchSessionIdRef.current) {
+    benchSessionIdRef.current = generateBenchSessionId();
+  }
+  const benchRevisionRef = useRef(0);
+  const lastEnqueuedFingerprintRef = useRef(null);
+  const latestQueuedSnapshotSpecRef = useRef(null);
+  const isTelemetrySendInFlightRef = useRef(false);
+  const [telemetrySyncStatus, setTelemetrySyncStatus] = useState(() => ({
+    state: "idle",
+    benchSessionId: benchSessionIdRef.current,
+    benchRevision: 0,
+    reportId: null,
+    productId: null,
+    clientStateChangedAt: null,
+    serverReceivedAt: null,
+    errorCode: null,
+    message: "Waiting for initial bench state sync."
+  }));
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      latestQueuedSnapshotSpecRef.current = null;
       for (const timerId of blurClearTimersRef.current.values()) {
         clearTimeout(timerId);
       }
@@ -2397,6 +2606,899 @@ export default function BenchV2Route() {
   const keepOriginalRows = allEvaluatedRows.filter((r) => r.isKeepOriginal);
   const heldAiAlternativesCount = Object.keys(currentAiAlternativesMap).length;
 
+  const hasBaselineErrors = Boolean(
+    loaderData?.selectionError ||
+      pickerPageState?.error ||
+      loaderData?.loadError ||
+      (Array.isArray(currentBaseline?.errors) && currentBaseline.errors.length > 0) ||
+      currentBaseline?.metafieldsReadComplete !== true ||
+      currentBaseline?.defsReadComplete !== true
+  );
+
+  // ==========================================================================
+  // SIDEKICK LIVE BENCH SNAPSHOT BUILDER & SINGLE-FLIGHT PUBLISHER
+  // - Builds the complete schemaVersion=1, stateKind="live_bench_state" payload
+  //   across ALL 11 drawers (never filtered by activeFilter or openDrawersById).
+  // - Expands loaded per-image MediaImage alt rows (native_image_alts_<MediaImageGid>)
+  //   alongside native_image_alt capability descriptor in Drawer 9 so per-photo
+  //   alt baselines are inspectable via view="drawer" and view="field".
+  // - Uses a deterministic content fingerprint (excluding benchRevision,
+  //   clientStateChangedAt, and telemetrySyncStatus) so UI status updates never
+  //   cause render or network loops.
+  // - Never publishes previous product's fields under a newly requested productId
+  //   while URL selection navigation is in flight.
+  // ==========================================================================
+  const drainTelemetryPublishQueue = useCallback(async () => {
+    if (isTelemetrySendInFlightRef.current) return;
+    isTelemetrySendInFlightRef.current = true;
+
+    try {
+      while (latestQueuedSnapshotSpecRef.current && isMountedRef.current) {
+        const spec = latestQueuedSnapshotSpecRef.current;
+        latestQueuedSnapshotSpecRef.current = null;
+
+        let nextRevision = Math.max(1, benchRevisionRef.current + 1);
+        benchRevisionRef.current = nextRevision;
+
+        const attemptPublishWithRevision = async (revisionToUse) => {
+          const fullSnapshotObj = {
+            ...spec.snapshotBodyWithoutRevision,
+            benchSessionId: spec.benchSessionId,
+            benchRevision: revisionToUse,
+            selectionState: spec.selectionState,
+            productId: spec.productId,
+            baselineLoadedAt: spec.baselineLoadedAt,
+            clientStateChangedAt: spec.clientStateChangedAt
+          };
+
+          const fullText = JSON.stringify(fullSnapshotObj);
+          const fullTextCodeUnits = fullText.length;
+          const fullTextUtf8Bytes = measureUtf8BytesClient(fullText);
+
+          if (
+            fullTextCodeUnits > TELEMETRY_MAX_FULL_TEXT_CODE_UNITS ||
+            fullTextUtf8Bytes > TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES
+          ) {
+            return {
+              localOversize: true,
+              message: `Snapshot payload (${fullTextUtf8Bytes} UTF-8 bytes / ${fullTextCodeUnits} chars) exceeds cache limit; refused to clip or truncate.`
+            };
+          }
+
+          const postEnvelope = {
+            packet: {
+              productId: spec.productId,
+              productTitle: spec.productTitle,
+              mode: TELEMETRY_LIVE_BENCH_MODE,
+              sectionKey: TELEMETRY_LIVE_BENCH_MODE,
+              sectionLabel: "LIVE BENCH FIELD STATE",
+              runIdentity: spec.runIdentity,
+              runTimestamp: spec.runTimestamp,
+              capturedAt: spec.clientStateChangedAt,
+              benchSessionId: spec.benchSessionId,
+              benchRevision: revisionToUse,
+              selectionState: spec.selectionState,
+              baselineLoadedAt: spec.baselineLoadedAt,
+              fullText
+            },
+            uiAudit: null,
+            liveState: {
+              mode: TELEMETRY_LIVE_BENCH_MODE,
+              benchSessionId: spec.benchSessionId,
+              benchRevision: revisionToUse,
+              selectionState: spec.selectionState,
+              productId: spec.productId,
+              clientStateChangedAt: spec.clientStateChangedAt,
+              baselineLoadedAt: spec.baselineLoadedAt
+            }
+          };
+
+          const serializedEnvelope = JSON.stringify(postEnvelope);
+          const envelopeBytes = measureUtf8BytesClient(serializedEnvelope);
+          if (envelopeBytes > TELEMETRY_MAX_POST_BODY_BYTES) {
+            return {
+              localOversize: true,
+              message: `POST body (${envelopeBytes} bytes) exceeds ${TELEMETRY_MAX_POST_BODY_BYTES}-byte endpoint limit; refused to clip.`
+            };
+          }
+
+          const response = await fetch(TELEMETRY_ENDPOINT_PATH, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json"
+            },
+            body: serializedEnvelope
+          });
+
+          const contentType = response.headers.get("content-type") || "";
+          let parsedJson = null;
+          if (contentType.toLowerCase().includes("application/json")) {
+            try {
+              parsedJson = await response.json();
+            } catch {
+              parsedJson = null;
+            }
+          }
+
+          return {
+            localOversize: false,
+            httpStatus: response.status,
+            redirected: response.redirected,
+            parsedJson
+          };
+        };
+
+        if (isMountedRef.current) {
+          setTelemetrySyncStatus((prev) => ({
+            ...prev,
+            state: "syncing",
+            benchRevision: nextRevision,
+            productId: spec.productId,
+            clientStateChangedAt: spec.clientStateChangedAt,
+            errorCode: null,
+            message: `Publishing revision ${nextRevision} to Sidekick cache...`
+          }));
+        }
+
+        try {
+          let result = await attemptPublishWithRevision(nextRevision);
+
+          // If server reports stale_bench_revision (e.g., an earlier timed-out or concurrent request
+          // on the same session advanced highestRevision), adopt highestRevision + 1 once if no newer
+          // state is already queued.
+          if (
+            !result.localOversize &&
+            result.httpStatus === 409 &&
+            result.parsedJson?.code === "stale_bench_revision" &&
+            typeof result.parsedJson?.highestRevision === "number" &&
+            Number.isSafeInteger(result.parsedJson.highestRevision) &&
+            !latestQueuedSnapshotSpecRef.current &&
+            isMountedRef.current
+          ) {
+            nextRevision = result.parsedJson.highestRevision + 1;
+            benchRevisionRef.current = nextRevision;
+            result = await attemptPublishWithRevision(nextRevision);
+          }
+
+          if (!isMountedRef.current) break;
+
+          if (result.localOversize) {
+            setTelemetrySyncStatus({
+              state: "error",
+              benchSessionId: spec.benchSessionId,
+              benchRevision: nextRevision,
+              reportId: null,
+              productId: spec.productId,
+              clientStateChangedAt: spec.clientStateChangedAt,
+              serverReceivedAt: null,
+              errorCode: "payload_too_large_unclipped",
+              message: result.message
+            });
+            continue;
+          }
+
+          const { httpStatus, redirected, parsedJson } = result;
+          if ((httpStatus === 200 || httpStatus === 201) && parsedJson?.ok === true) {
+            const reportMeta = parsedJson.report || null;
+            const sessionMeta = parsedJson.liveSession || null;
+            setTelemetrySyncStatus({
+              state: "stored",
+              benchSessionId: spec.benchSessionId,
+              benchRevision: nextRevision,
+              reportId: reportMeta?.reportId || sessionMeta?.activeReportId || null,
+              productId: spec.productId,
+              clientStateChangedAt: spec.clientStateChangedAt,
+              serverReceivedAt:
+                reportMeta?.serverReceivedAt ||
+                reportMeta?.storedAt ||
+                sessionMeta?.serverReceivedAt ||
+                null,
+              errorCode: null,
+              message: `Revision ${nextRevision} stored in process memory cache (volatile across server restarts or separate workers).`
+            });
+          } else {
+            const errCode =
+              parsedJson?.code ||
+              (redirected || httpStatus === 401 || httpStatus === 403
+                ? "auth_or_origin_rejected"
+                : `http_${httpStatus}`);
+            const errMsg =
+              parsedJson?.message ||
+              (redirected
+                ? "Telemetry POST was redirected (session authentication required)."
+                : `Telemetry POST returned HTTP ${httpStatus}.`);
+            setTelemetrySyncStatus({
+              state: "error",
+              benchSessionId: spec.benchSessionId,
+              benchRevision: nextRevision,
+              reportId: null,
+              productId: spec.productId,
+              clientStateChangedAt: spec.clientStateChangedAt,
+              serverReceivedAt: null,
+              errorCode: errCode,
+              message: errMsg
+            });
+          }
+        } catch (networkErr) {
+          if (!isMountedRef.current) break;
+          setTelemetrySyncStatus({
+            state: "error",
+            benchSessionId: spec.benchSessionId,
+            benchRevision: nextRevision,
+            reportId: null,
+            productId: spec.productId,
+            clientStateChangedAt: spec.clientStateChangedAt,
+            serverReceivedAt: null,
+            errorCode: "network_error",
+            message: `Telemetry sync request failed: ${networkErr?.message || "Network error"}`
+          });
+        }
+      }
+    } finally {
+      isTelemetrySendInFlightRef.current = false;
+      if (latestQueuedSnapshotSpecRef.current && isMountedRef.current) {
+        drainTelemetryPublishQueue();
+      }
+    }
+  }, []);
+
+  // Build deterministic snapshot content (without benchRevision or clientStateChangedAt)
+  // and enqueue publication ONLY when actual bench content changes.
+  useEffect(() => {
+    // Guard against publishing previous product's fields under a newly requested productId
+    // while URL selection navigation is in flight.
+    if (isSwitchingSelectedProduct) {
+      return;
+    }
+
+    if (!isExactProductGid(activeProductId)) {
+      return;
+    }
+
+    const hasMatchedBaseline = Boolean(
+      currentBaseline && currentBaseline.productId === activeProductId
+    );
+    const isManifestFullyLoaded = Boolean(
+      hasMatchedBaseline &&
+        currentBaseline.metafieldsReadComplete === true &&
+        currentBaseline.defsReadComplete === true
+    );
+    const baselineLoadedAt =
+      hasMatchedBaseline &&
+      typeof currentBaseline.loadedAt === "string" &&
+      currentBaseline.loadedAt.trim() !== ""
+        ? currentBaseline.loadedAt.trim()
+        : null;
+
+    const baselineState = !hasMatchedBaseline
+      ? "not_loaded"
+      : isManifestFullyLoaded
+        ? "complete"
+        : "incomplete_read";
+
+    const baselineEventKind = isBaselineReloading
+      ? "reloading"
+      : isWriterBusy
+        ? "saving"
+        : isAiScanBusy
+          ? "ai_scanning"
+          : "idle";
+
+    const orderedEvents = resolveActualEventOrdering(
+      currentAiScanReport,
+      activeSaveReportForCurrentProduct
+    );
+
+    const fieldsByKey = {};
+    const sectionOrder = [];
+
+    for (let dIdx = 0; dIdx < evaluatedDrawerGroups.length; dIdx += 1) {
+      const drawer = evaluatedDrawerGroups[dIdx];
+      const sectionTitle = PLAIN_DRAWER_TITLES[drawer.drawerId] || drawer.heading;
+      const drawerFieldKeys = [];
+
+      for (let rIdx = 0; rIdx < drawer.evaluatedRows.length; rIdx += 1) {
+        const row = drawer.evaluatedRows[rIdx];
+        const {
+          contract,
+          baselineObservation: obs,
+          baselineDisplayValue,
+          hasProposalKey,
+          proposedValue,
+          proposedDisplayValue,
+          proposalSource,
+          proposalOrigin,
+          heldAiAlternative,
+          scanProposalMeta,
+          validation,
+          isApproved,
+          isKeepOriginal,
+          isWriterHeld,
+          fidelityCheck,
+          hasSaveErrorOrConflict,
+          effectiveConnectionStatus,
+          effectiveReviewStatus,
+          effectiveStatusReason
+        } = row;
+
+        const destKey = contract.destinationKey;
+        drawerFieldKeys.push(destKey);
+
+        const regMeta = resolveFieldRegistryAndApplicabilityMeta(contract);
+        const isMediaCapabilityDescriptor = destKey === "native_image_alt";
+
+        const rawBaselineExists =
+          obs.evidenceAvailable &&
+          obs.presence === "present" &&
+          obs.rawValue !== undefined &&
+          obs.rawValue !== null &&
+          String(obs.rawValue) !== "";
+
+        const canKeepOriginal = Boolean(
+          contract.isWritableInBatch1 &&
+            hasProposalKey &&
+            obs.evidenceAvailable &&
+            proposedValue.trim() !== "" &&
+            !(obs.presence === "present" && obs.rawValue === proposedValue)
+        );
+
+        const isExplicitlyApprovedValid = Boolean(
+          isApproved && !isWriterHeld && fidelityCheck.faithful
+        );
+
+        const isActualBlockedProposal = Boolean(
+          hasProposalKey &&
+            (!validation?.valid || !fidelityCheck.faithful || isWriterHeld)
+        );
+
+        const hasTechnicalBlock = Boolean(
+          !obs.evidenceAvailable ||
+            obs.metafieldsCompleteState !== "complete" ||
+            obs.defsCompleteState !== "complete" ||
+            Boolean(obs.destinationDefError) ||
+            (contract.isWritableInBatch1 &&
+              ((!obs.liveDefType && !obs.storedType) ||
+                (obs.liveDefType &&
+                  obs.storedType &&
+                  obs.liveDefType !== obs.storedType)))
+        );
+
+        const hasContractOrOwnerHold = Boolean(
+          !contract.isWritableInBatch1 || isWriterHeld
+        );
+
+        let mappedFieldStatus = "Unchanged";
+        if (!obs.evidenceAvailable) {
+          mappedFieldStatus =
+            obs.presence === "unknown_incomplete_read"
+              ? "Incomplete Read"
+              : "Baseline Not Loaded";
+        } else if (hasSaveErrorOrConflict) {
+          const isBlockedInSave = Boolean(
+            activeSaveReportForCurrentProduct?.blockedFields &&
+              Object.prototype.hasOwnProperty.call(
+                activeSaveReportForCurrentProduct.blockedFields,
+                destKey
+              )
+          );
+          mappedFieldStatus = isBlockedInSave ? "API Error / Blocked" : "Save Conflict";
+        } else if (isKeepOriginal) {
+          mappedFieldStatus = "Keep original (suggestion rejected)";
+        } else if (
+          isApproved &&
+          (isWriterHeld || !fidelityCheck.faithful || !validation?.valid)
+        ) {
+          mappedFieldStatus = "Approved, blocked";
+        } else if (isExplicitlyApprovedValid) {
+          mappedFieldStatus = "Approved, not saved";
+        } else if (isActualBlockedProposal) {
+          mappedFieldStatus =
+            validation?.code === "exceeds_max_length"
+              ? "Over limit"
+              : "API Error / Blocked";
+        } else if (hasProposalKey && !validation?.isUnchangedFromStored) {
+          mappedFieldStatus = "Proposed";
+        } else if (
+          !regMeta.isParkedExcluded &&
+          !regMeta.isProtectedAppData &&
+          obs.evidenceAvailable &&
+          (obs.presence === "absent" ||
+            obs.presence === "null" ||
+            obs.presence === "empty_string") &&
+          (destKey === "native_title" || destKey === "native_price")
+        ) {
+          mappedFieldStatus = "Required missing";
+        }
+
+        const proposalStatus = !hasProposalKey
+          ? "none"
+          : isKeepOriginal
+            ? "rejected_keep_original"
+            : isActualBlockedProposal
+              ? "blocked"
+              : validation?.isUnchangedFromStored
+                ? "unchanged"
+                : "proposed";
+
+        const contentNeedsReview = Boolean(
+          !regMeta.isParkedExcluded &&
+            !regMeta.isProtectedAppData &&
+            !isKeepOriginal &&
+            ((hasProposalKey &&
+              !isExplicitlyApprovedValid &&
+              !validation?.isUnchangedFromStored) ||
+              Boolean(heldAiAlternative) ||
+              hasSaveErrorOrConflict)
+        );
+
+        const reasonsList = [];
+        if (effectiveStatusReason) reasonsList.push(effectiveStatusReason);
+        if (hasProposalKey && validation && !validation.valid && validation.reason) {
+          if (!reasonsList.includes(validation.reason)) {
+            reasonsList.push(validation.reason);
+          }
+        }
+        if (hasProposalKey && !fidelityCheck.faithful && fidelityCheck.reason) {
+          if (!reasonsList.includes(fidelityCheck.reason)) {
+            reasonsList.push(fidelityCheck.reason);
+          }
+        }
+
+        const saveConflictEntry =
+          activeSaveReportForCurrentProduct?.conflicts?.[destKey] ||
+          activeSaveReportForCurrentProduct?.unresolvedChanges?.[destKey] ||
+          null;
+
+        const combinedConflictData =
+          heldAiAlternative && saveConflictEntry
+            ? {
+                heldAiAlternative,
+                saveConflict: saveConflictEntry
+              }
+            : heldAiAlternative
+              ? {
+                  kind: "held_ai_alternative",
+                  ...heldAiAlternative
+                }
+              : saveConflictEntry || null;
+
+        fieldsByKey[destKey] = {
+          key: destKey,
+          targetKey: destKey,
+          approvalKey: destKey,
+          section: sectionTitle,
+          drawerId: contract.drawerId,
+          label: cleanFieldHeading(contract.label) || contract.label,
+          registryOwner: regMeta.registryOwner,
+          registryIdentity: regMeta.registryIdentity,
+          registryRole: regMeta.registryRole,
+          isParkedExcluded: regMeta.isParkedExcluded,
+          isProtectedAppData: regMeta.isProtectedAppData,
+          isManualOnlyNoAi: isManualOnlyNoAiDestination(destKey, contract),
+          rawStoredBaseline: {
+            evidenceAvailable: obs.evidenceAvailable,
+            positiveEvidenceObserved: obs.positiveEvidenceObserved,
+            exists: rawBaselineExists,
+            presence: obs.presence,
+            value: obs.rawValue !== undefined ? obs.rawValue : null,
+            storedType: obs.storedType || null,
+            liveDefType: obs.liveDefType || null,
+            metafieldsCompleteState: obs.metafieldsCompleteState,
+            defsCompleteState: obs.defsCompleteState,
+            destinationDefError: obs.destinationDefError || null,
+            signature: obs.signature
+          },
+          evaluatedBaseline: {
+            currentExists: rawBaselineExists,
+            value: obs.rawValue !== undefined ? obs.rawValue : null,
+            displayValue:
+              typeof baselineDisplayValue === "string" && baselineDisplayValue !== ""
+                ? baselineDisplayValue
+                : formatReadableSavedValue(
+                    obs,
+                    Boolean(contract.usesYesNoMeaningDisplay),
+                    baselineDisplayValue
+                  ),
+            usesYesNoMeaningDisplay: Boolean(contract.usesYesNoMeaningDisplay),
+            isDisplayOnlyPlaceholderOrNa: isMediaCapabilityDescriptor
+          },
+          workingState: {
+            proposalExists: hasProposalKey,
+            isProposed: Boolean(
+              hasProposalKey && !isKeepOriginal && !validation?.isUnchangedFromStored
+            ),
+            proposedValue: hasProposalKey ? proposedValue : null,
+            proposedDisplayValue: hasProposalKey ? proposedDisplayValue : null,
+            proposalStatus,
+            source:
+              hasProposalKey && proposalSource && proposalSource !== "None"
+                ? proposalSource
+                : scanProposalMeta?.source || null,
+            origin: proposalOrigin,
+            stage: contract.batchStage,
+            isManualEdit: Boolean(hasProposalKey && proposalOrigin === "Manual"),
+            isApproved: isExplicitlyApprovedValid,
+            approvalRecord: currentApprovalsMap[destKey] || null,
+            isKeepOriginal: Boolean(isKeepOriginal),
+            keepOriginalDecision: currentKeepOriginalMap[destKey] || null,
+            canKeepOriginal,
+            isContentPreApproved: false,
+            preApprovalReason: null,
+            contentNeedsReview,
+            heldAiAlternative: heldAiAlternative || null,
+            lastAiScanOutcome: scanProposalMeta || null
+          },
+          statusAndHolds: {
+            fieldStatus: mappedFieldStatus,
+            connectionStatus: effectiveConnectionStatus,
+            reviewStatus: effectiveReviewStatus,
+            applicability: regMeta.applicability,
+            writeCapability: contract.writeCapability,
+            batchStage: contract.batchStage,
+            expectedType: contract.expectedType,
+            allowedTypes: contract.allowedTypes || [contract.expectedType],
+            maxLength: contract.maxLength,
+            canonicalTarget: contract.canonicalTarget || null,
+            isParkedExcluded: regMeta.isParkedExcluded,
+            isProtectedAppData: regMeta.isProtectedAppData,
+            isImageAltCapabilityPlaceholder: isMediaCapabilityDescriptor,
+            isActualBlockedProposal,
+            hasTechnicalBlock,
+            hasContractOrOwnerHold,
+            hasExplicitStorageHold:
+              contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD",
+            hasExplicitProducerHold: false,
+            isVariantMetafieldHold:
+              contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native",
+            isPendingReadOnly: !contract.isWritableInBatch1,
+            isChannelFlagReadOnly:
+              contract.destinationKey === "mm-google-shopping.custom_product",
+            reasons: reasonsList
+          },
+          conflictsAndSaveEvidence: {
+            conflictData: combinedConflictData,
+            nativeDescConflictData: null,
+            wasSubmittedInLastRepair: Boolean(
+              activeSaveReportForCurrentProduct?.submittedDestinations?.includes(destKey)
+            ),
+            verifiedInLastRepair: Boolean(
+              activeSaveReportForCurrentProduct?.verifiedDestinations?.includes(destKey)
+            ),
+            blockedInLastRepair:
+              activeSaveReportForCurrentProduct?.blockedFields?.[destKey] || null,
+            unconfirmedInLastRepair: Boolean(
+              activeSaveReportForCurrentProduct?.unconfirmedDestinations?.includes(destKey)
+            )
+          }
+        };
+
+        // Expand loaded per-image MediaImage alt baseline rows in Drawer 9 right after native_image_alt
+        if (
+          isMediaCapabilityDescriptor &&
+          hasMatchedBaseline &&
+          Array.isArray(currentBaseline?.nativeTargets?.media?.edges)
+        ) {
+          const mediaComplete =
+            currentBaseline.nativeTargets?.isComplete === true &&
+            !currentBaseline.nativeTargets?.loadError &&
+            !(
+              Array.isArray(currentBaseline.nativeTargets?.unverifiedFields) &&
+              currentBaseline.nativeTargets.unverifiedFields.includes("media")
+            );
+          const mediaEdges = currentBaseline.nativeTargets.media.edges;
+
+          for (let mIdx = 0; mIdx < mediaEdges.length; mIdx += 1) {
+            const mediaNode = mediaEdges[mIdx]?.node;
+            if (!mediaNode || typeof mediaNode.id !== "string" || !mediaNode.id.trim()) {
+              continue;
+            }
+            const mediaGid = mediaNode.id.trim();
+            const mediaKey = `native_image_alts_${mediaGid}`;
+            const rawAlt =
+              typeof mediaNode.alt === "string" ? mediaNode.alt : "";
+            const hasAltText = rawAlt.trim() !== "";
+
+            drawerFieldKeys.push(mediaKey);
+            fieldsByKey[mediaKey] = {
+              key: mediaKey,
+              targetKey: mediaKey,
+              approvalKey: mediaKey,
+              mediaImageGid: mediaGid,
+              photoIndex: mIdx + 1,
+              section: sectionTitle,
+              drawerId: contract.drawerId,
+              label: `Photo ${mIdx + 1} Alt Text (${mediaGid})`,
+              registryOwner: "MEDIAIMAGE",
+              registryIdentity: "native_image_alt",
+              registryRole: "PRIMARY_CANDIDATE_DESTINATION",
+              isParkedExcluded: false,
+              isProtectedAppData: false,
+              isManualOnlyNoAi: false,
+              rawStoredBaseline: {
+                evidenceAvailable: mediaComplete,
+                positiveEvidenceObserved: mediaComplete,
+                exists: mediaComplete && hasAltText,
+                presence: !mediaComplete
+                  ? "unknown_incomplete_read"
+                  : hasAltText
+                    ? "present"
+                    : "empty_string",
+                value: mediaComplete ? rawAlt : null,
+                storedType: "native_media_alt",
+                liveDefType: "native_media_alt",
+                metafieldsCompleteState: obs.metafieldsCompleteState,
+                defsCompleteState: obs.defsCompleteState,
+                destinationDefError: null,
+                signature: `${activeProductId}::${mediaKey}::${mediaComplete ? "complete" : "incomplete"}::${rawAlt}`
+              },
+              evaluatedBaseline: {
+                currentExists: mediaComplete && hasAltText,
+                value: mediaComplete ? rawAlt : null,
+                displayValue: !mediaComplete
+                  ? "Read incomplete"
+                  : hasAltText
+                    ? rawAlt
+                    : "Not set",
+                usesYesNoMeaningDisplay: false,
+                isDisplayOnlyPlaceholderOrNa: false
+              },
+              workingState: {
+                proposalExists: false,
+                isProposed: false,
+                proposedValue: null,
+                proposedDisplayValue: null,
+                proposalStatus: "none",
+                source: null,
+                origin: "None",
+                stage: contract.batchStage,
+                isManualEdit: false,
+                isApproved: false,
+                approvalRecord: null,
+                isKeepOriginal: false,
+                keepOriginalDecision: null,
+                canKeepOriginal: false,
+                isContentPreApproved: false,
+                preApprovalReason: null,
+                contentNeedsReview: false,
+                heldAiAlternative: null,
+                lastAiScanOutcome: null
+              },
+              statusAndHolds: {
+                fieldStatus: !mediaComplete ? "Incomplete Read" : "Unchanged",
+                connectionStatus: "Read-Only Descriptor (FUTURE_BATCH_3_DESCRIPTOR)",
+                reviewStatus: "Unchanged",
+                applicability: "all_products",
+                writeCapability: contract.writeCapability,
+                batchStage: contract.batchStage,
+                expectedType: "single_line_text_field",
+                allowedTypes: ["single_line_text_field"],
+                maxLength: 125,
+                canonicalTarget: null,
+                isParkedExcluded: false,
+                isProtectedAppData: false,
+                isImageAltCapabilityPlaceholder: false,
+                isActualBlockedProposal: false,
+                hasTechnicalBlock: !mediaComplete,
+                hasContractOrOwnerHold: true,
+                hasExplicitStorageHold: false,
+                hasExplicitProducerHold: false,
+                isVariantMetafieldHold: false,
+                isPendingReadOnly: true,
+                isChannelFlagReadOnly: false,
+                reasons: ["Per-image media alt writes are scheduled for Future Batch 3; read-only in Batch 1."]
+              },
+              conflictsAndSaveEvidence: {
+                conflictData: null,
+                nativeDescConflictData: null,
+                wasSubmittedInLastRepair: false,
+                verifiedInLastRepair: false,
+                blockedInLastRepair: null,
+                unconfirmedInLastRepair: false
+              }
+            };
+          }
+        }
+      }
+
+      sectionOrder.push({
+        sectionTitle,
+        drawerId: drawer.drawerId,
+        fieldKeys: drawerFieldKeys
+      });
+    }
+
+    const manualEditedKeys = allEvaluatedRows
+      .filter((r) => r.hasProposalKey && r.proposalOrigin === "Manual")
+      .map((r) => r.contract.destinationKey);
+
+    const explicitlyApprovedKeys = validApprovedRows.map(
+      (r) => r.contract.destinationKey
+    );
+
+    const keepOriginalKeys = keepOriginalRows.map(
+      (r) => r.contract.destinationKey
+    );
+
+    const saveVerificationEvidence = {
+      hasRepairAttemptInSession: Boolean(activeSaveReportForCurrentProduct),
+      lastRepairSubmissionId: activeSaveReportForCurrentProduct?.submissionId || null,
+      lastRepairCompletedAt: activeSaveReportForCurrentProduct?.completedAt || null,
+      lastRepairOverallOutcome: activeSaveReportForCurrentProduct?.overallOutcome || null,
+      lastRepairStatus: activeSaveReportForCurrentProduct?.writerStatus || null,
+      lastRepairMessage: activeSaveReportForCurrentProduct?.message || null,
+      lastRepairSuccess: activeSaveReportForCurrentProduct
+        ? activeSaveReportForCurrentProduct.overallOutcome ===
+          "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
+        : null,
+      readBackVerified:
+        activeSaveReportForCurrentProduct?.readBackVerified !== undefined
+          ? activeSaveReportForCurrentProduct.readBackVerified
+          : null,
+      verifiedDestinations: Array.isArray(
+        activeSaveReportForCurrentProduct?.verifiedDestinations
+      )
+        ? activeSaveReportForCurrentProduct.verifiedDestinations
+        : [],
+      attemptedDestinations: Array.isArray(
+        activeSaveReportForCurrentProduct?.submittedDestinations
+      )
+        ? activeSaveReportForCurrentProduct.submittedDestinations
+        : [],
+      unconfirmedDestinations: Array.isArray(
+        activeSaveReportForCurrentProduct?.unconfirmedDestinations
+      )
+        ? activeSaveReportForCurrentProduct.unconfirmedDestinations
+        : [],
+      skippedKeys: Array.isArray(activeSaveReportForCurrentProduct?.skippedKeys)
+        ? activeSaveReportForCurrentProduct.skippedKeys
+        : [],
+      unsupportedKeys: Array.isArray(activeSaveReportForCurrentProduct?.unsupportedKeys)
+        ? activeSaveReportForCurrentProduct.unsupportedKeys
+        : [],
+      unchanged: Array.isArray(activeSaveReportForCurrentProduct?.unchanged)
+        ? activeSaveReportForCurrentProduct.unchanged
+        : [],
+      blockedFields:
+        activeSaveReportForCurrentProduct?.blockedFields &&
+        typeof activeSaveReportForCurrentProduct.blockedFields === "object"
+          ? activeSaveReportForCurrentProduct.blockedFields
+          : {},
+      conflicts:
+        activeSaveReportForCurrentProduct?.conflicts &&
+        typeof activeSaveReportForCurrentProduct.conflicts === "object"
+          ? activeSaveReportForCurrentProduct.conflicts
+          : {},
+      unresolvedChanges:
+        activeSaveReportForCurrentProduct?.unresolvedChanges &&
+        typeof activeSaveReportForCurrentProduct.unresolvedChanges === "object"
+          ? activeSaveReportForCurrentProduct.unresolvedChanges
+          : {},
+      errors: Array.isArray(activeSaveReportForCurrentProduct?.errors)
+        ? activeSaveReportForCurrentProduct.errors
+        : []
+    };
+
+    const snapshotBodyWithoutRevision = {
+      schemaVersion: 1,
+      stateKind: TELEMETRY_LIVE_BENCH_MODE,
+      productTitle: activeProductHeadline,
+      pieceName: activeProductPieceName,
+      rawShopifyProductTitle: activeProductTitle,
+      manifestLoaded: isManifestFullyLoaded,
+      baselineState,
+      baselineEventKind,
+      productQueueStatus: null,
+      dataAuthorityNote:
+        "rawStoredBaseline reflects the last Shopify Admin GraphQL baseline read at baselineLoadedAt (not a fresh live Shopify query on snapshot read). workingState reflects unsaved browser drafts, exact approvals, and Keep Original decisions at clientStateChangedAt.",
+      runIdentity: orderedEvents.runIdentity,
+      runTimestamp: orderedEvents.runTimestamp,
+      latestEventKind: orderedEvents.latestEventKind,
+      systemStatus: {
+        contractVersion: BENCH_V2_CONTRACT_VERSION,
+        activeFilter,
+        openDrawerIds: Object.entries(openDrawersById)
+          .filter(([, isOpen]) => Boolean(isOpen))
+          .map(([id]) => id),
+        isWriterBusy,
+        isAiScanBusy,
+        isBaselineReloading,
+        isPickerLoading,
+        hasBaselineErrors,
+        metafieldsReadComplete: currentBaseline?.metafieldsReadComplete ?? null,
+        defsReadComplete: currentBaseline?.defsReadComplete ?? null,
+        nativeTargetsComplete: currentBaseline?.nativeTargets?.isComplete ?? null,
+        selectionError: loaderData?.selectionError || null,
+        loadError: loaderData?.loadError || null,
+        baselineErrors: Array.isArray(currentBaseline?.errors)
+          ? currentBaseline.errors
+          : [],
+        clientPrevalidationBanner: clientPrevalidationBanner || null
+      },
+      diagnosticsStats: {
+        totalContractFields: allEvaluatedRows.length,
+        totalFieldsInSnapshotMap: Object.keys(fieldsByKey).length,
+        visibleFilteredRowCount: totalVisibleFilteredRowCount,
+        stagedDraftCount: stagedProposalRows.length,
+        approvedToSaveCount: validApprovedRows.length,
+        keepOriginalCount: keepOriginalRows.length,
+        heldAiAlternativesCount,
+        mediaPhotoCount: activeProductMediaItems.length,
+        lastAiScanSummary: currentAiScanReport
+          ? {
+              requestId: currentAiScanReport.requestId,
+              completedAt: currentAiScanReport.completedAt,
+              ok: currentAiScanReport.ok,
+              summary: currentAiScanReport.summary,
+              receivedCount: currentAiScanReport.receivedCount,
+              stagedCount: currentAiScanReport.stagedCount,
+              heldConflictCount: currentAiScanReport.heldConflictCount,
+              unchangedSkippedCount: currentAiScanReport.unchangedSkippedCount,
+              rejectedInvalidCount: currentAiScanReport.rejectedInvalidCount,
+              ignoredManualOnlyCount: currentAiScanReport.ignoredManualOnlyCount,
+              diagnostics: currentAiScanReport.diagnostics || {},
+              details: Array.isArray(currentAiScanReport.details)
+                ? currentAiScanReport.details
+                : [],
+              proposalsByDestination:
+                currentAiScanReport.proposalsByDestination || {}
+            }
+          : null
+      },
+      manualEditedKeys,
+      explicitlyApprovedKeys,
+      keepOriginalKeys,
+      standardizedReferenceState: {
+        readinessState: "locked_in_batch_1",
+        readinessReason:
+          "Standardized shopify.* taxonomy reference attributes are read-only in Batch 1; no candidate matching is active in this batch.",
+        stagedCandidateCount: 0,
+        stagedCandidates: {},
+        eligibleDestinationKeys: [],
+        blockedDestinationKeys: [],
+        lastMatchRequestId: null,
+        lastMatchedAt: null,
+        lastMatchSuccess: null,
+        lastMatchIsComplete: null,
+        productCategory: currentBaseline?.productCategory || null
+      },
+      saveVerificationEvidence,
+      sectionOrder,
+      fieldsByKey
+    };
+
+    const fingerprintObj = {
+      benchSessionId: benchSessionIdRef.current,
+      selectionState: "selected",
+      productId: activeProductId,
+      baselineLoadedAt,
+      snapshotBodyWithoutRevision
+    };
+
+    const contentFingerprint = JSON.stringify(fingerprintObj);
+    if (contentFingerprint === lastEnqueuedFingerprintRef.current) {
+      return;
+    }
+
+    lastEnqueuedFingerprintRef.current = contentFingerprint;
+    const clientStateChangedAt = new Date().toISOString();
+
+    latestQueuedSnapshotSpecRef.current = {
+      benchSessionId: benchSessionIdRef.current,
+      selectionState: "selected",
+      productId: activeProductId,
+      productTitle: activeProductHeadline,
+      baselineLoadedAt,
+      clientStateChangedAt,
+      runIdentity: orderedEvents.runIdentity,
+      runTimestamp: orderedEvents.runTimestamp,
+      snapshotBodyWithoutRevision
+    };
+
+    drainTelemetryPublishQueue();
+  });
+
   // Explicit Save Handler:
   // - Never runs on mount, selection, AI scan, or edit.
   // - Prevalidates every entry in currentApprovalsMap for activeProductId; if ANY
@@ -2577,15 +3679,6 @@ export default function BenchV2Route() {
       action: "/app/meta-injector-api"
     });
   };
-
-  const hasBaselineErrors = Boolean(
-    loaderData?.selectionError ||
-      pickerPageState?.error ||
-      loaderData?.loadError ||
-      (Array.isArray(currentBaseline?.errors) && currentBaseline.errors.length > 0) ||
-      currentBaseline?.metafieldsReadComplete !== true ||
-      currentBaseline?.defsReadComplete !== true
-  );
 
   const pickerItems = Array.isArray(pickerPageState?.items) ? pickerPageState.items : [];
   const isSelectedProductInCurrentPickerPage = pickerItems.some(
@@ -3373,6 +4466,40 @@ export default function BenchV2Route() {
               <div>
                 <strong>Loaded At:</strong> {currentBaseline?.loadedAt || "Not loaded"} |{" "}
                 <strong>Contract:</strong> {BENCH_V2_CONTRACT_VERSION}
+              </div>
+              <div style={{ marginTop: "4px", paddingTop: "4px", borderTop: "1px solid #e2e8f0" }}>
+                <strong>Sidekick Live Snapshot Sync:</strong>{" "}
+                {telemetrySyncStatus.state === "stored"
+                  ? `Stored (rev ${telemetrySyncStatus.benchRevision})`
+                  : telemetrySyncStatus.state === "syncing"
+                    ? `Syncing (rev ${telemetrySyncStatus.benchRevision})...`
+                    : telemetrySyncStatus.state === "error"
+                      ? `Error (${telemetrySyncStatus.errorCode || "failed"})`
+                      : "Idle"}{" "}
+                | <strong>Session:</strong> <code>{telemetrySyncStatus.benchSessionId}</code>
+                {telemetrySyncStatus.reportId && (
+                  <>
+                    {" "}
+                    | <strong>Report ID:</strong> <code>{telemetrySyncStatus.reportId}</code>
+                  </>
+                )}
+                {telemetrySyncStatus.clientStateChangedAt && (
+                  <>
+                    {" "}
+                    | <strong>State Changed At:</strong>{" "}
+                    {telemetrySyncStatus.clientStateChangedAt}
+                  </>
+                )}
+                {telemetrySyncStatus.serverReceivedAt && (
+                  <>
+                    {" "}
+                    | <strong>Server Received At:</strong>{" "}
+                    {telemetrySyncStatus.serverReceivedAt}
+                  </>
+                )}
+                <div style={{ fontSize: "13px", color: "#475569", marginTop: "2px" }}>
+                  {telemetrySyncStatus.message}
+                </div>
               </div>
             </div>
           </details>
