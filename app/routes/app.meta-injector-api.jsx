@@ -9,7 +9,9 @@ import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 // FormData field name: "benchV2OptIn", exact string value: "true".
 // Only executeRepairPlan requests carrying benchV2OptIn="true" may pass the five
 // Bench V2 writer-held custom destinations (custom.is_ooak, custom.stone_family,
-// custom.cut_and_shape, custom.stone_shape, custom.color) through retirement/companion-skip/allowlist gates.
+// custom.cut_and_shape, custom.stone_shape, custom.color) and the three explicit
+// single-variant PRODUCTVARIANT destinations (mm-google-shopping.age_group,
+// mm-google-shopping.condition, mm-google-shopping.gender) through retirement/companion-skip/allowlist gates.
 // Legacy callers without benchV2OptIn="true" retain existing skip/retirement behavior unchanged.
 export const BENCH_V2_WRITER_OPT_IN_FIELD = "benchV2OptIn";
 export const BENCH_V2_WRITER_OPT_IN_VALUE = "true";
@@ -33,6 +35,19 @@ const BENCH_V2_OPT_IN_UNHELD_BARE_KEYS = Object.freeze(
     "color"
   ])
 );
+
+// Explicit Bench V2 Opt-In Single-Variant PRODUCTVARIANT Allowlist:
+// Only these three exact namespace.key destinations are permitted on PRODUCTVARIANT
+// when benchV2OptIn="true" and caller supplies an exact verified variantTargetId.
+export const BENCH_V2_OPT_IN_VARIANT_DESTINATIONS = Object.freeze(
+  new Set([
+    "mm-google-shopping.age_group",
+    "mm-google-shopping.condition",
+    "mm-google-shopping.gender"
+  ])
+);
+
+const EXACT_PRODUCT_VARIANT_GID_REGEX = /^gid:\/\/shopify\/ProductVariant\/\d+$/;
 
 const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
@@ -466,7 +481,9 @@ function doesCategoryMatchConstraintValue(productCategoryId, constraintValue) {
   return false;
 }
 
-async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
+async function fetchMetafieldDefinitionsByOwnerWithConstraints(admin, ownerType = "PRODUCT") {
+  const normalizedOwnerType =
+    ownerType === "PRODUCTVARIANT" ? "PRODUCTVARIANT" : "PRODUCT";
   const defs = {};
   let defsReadComplete = true;
   const errors = [];
@@ -475,13 +492,38 @@ async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
   let defPagesFetched = 0;
   const MAX_DEF_PAGES = 10;
   const MAX_CONSTRAINT_PAGES = 20;
+  const seenDefRequestedCursors = new Set();
+  const seenDefReturnedCursors = new Set();
 
   try {
     while (defPageInfo.hasNextPage && defPagesFetched < MAX_DEF_PAGES) {
+      const requestedDefCursor =
+        typeof defPageInfo.endCursor === "string" && defPageInfo.endCursor.trim() !== ""
+          ? defPageInfo.endCursor.trim()
+          : null;
+
+      if (defPagesFetched > 0) {
+        if (!requestedDefCursor) {
+          defsReadComplete = false;
+          errors.push(
+            `${normalizedOwnerType} metafield definitions pagination stopped after page ${defPagesFetched}: hasNextPage is true but endCursor is missing.`
+          );
+          break;
+        }
+        if (seenDefRequestedCursors.has(requestedDefCursor)) {
+          defsReadComplete = false;
+          errors.push(
+            `${normalizedOwnerType} metafield definitions pagination stopped at page ${defPagesFetched}: repeated cursor "${requestedDefCursor}".`
+          );
+          break;
+        }
+        seenDefRequestedCursors.add(requestedDefCursor);
+      }
+
       defPagesFetched++;
       const defRes = await admin.graphql(`
-        query getProductMetafieldDefsWithConstraints($cursor: String) {
-          metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
+        query getMetafieldDefsByOwnerWithConstraints($ownerType: MetafieldOwnerType!, $cursor: String) {
+          metafieldDefinitions(first: 250, ownerType: $ownerType, after: $cursor) {
             nodes {
               id
               name
@@ -500,7 +542,7 @@ async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
             pageInfo { hasNextPage endCursor }
           }
         }
-      `, { variables: { cursor: defPageInfo.endCursor } });
+      `, { variables: { ownerType: normalizedOwnerType, cursor: requestedDefCursor } });
 
       const defJson = await defRes.json();
       if (defJson.errors?.length) {
@@ -509,7 +551,7 @@ async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
 
       const defConn = defJson?.data?.metafieldDefinitions;
       if (!defConn || !Array.isArray(defConn.nodes) || typeof defConn.pageInfo?.hasNextPage !== "boolean") {
-        throw new Error("Malformed metafieldDefinitions connection response.");
+        throw new Error(`Malformed ${normalizedOwnerType} metafieldDefinitions connection response.`);
       }
 
       for (const node of defConn.nodes) {
@@ -726,6 +768,7 @@ async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
           name: node.name || null,
           namespace: node.namespace,
           key: node.key,
+          ownerType: normalizedOwnerType,
           type: typeName || null,
           requiredDefinitionId: validation?.value || null,
           restrictedMetaobjectDefinitionId: validation?.value || null,
@@ -741,16 +784,42 @@ async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
         };
       }
 
-      defPageInfo = defConn.pageInfo;
+      const nextDefPageInfo = defConn.pageInfo;
+      const returnedDefCursor =
+        typeof nextDefPageInfo.endCursor === "string" ? nextDefPageInfo.endCursor.trim() : "";
+
+      if (nextDefPageInfo.hasNextPage) {
+        if (!returnedDefCursor) {
+          defsReadComplete = false;
+          errors.push(
+            `${normalizedOwnerType} metafield definitions pagination stopped on page ${defPagesFetched}: hasNextPage is true with a missing endCursor.`
+          );
+          break;
+        }
+        if (
+          returnedDefCursor === requestedDefCursor ||
+          seenDefReturnedCursors.has(returnedDefCursor) ||
+          seenDefRequestedCursors.has(returnedDefCursor)
+        ) {
+          defsReadComplete = false;
+          errors.push(
+            `${normalizedOwnerType} metafield definitions pagination stopped on page ${defPagesFetched}: repeated cursor "${returnedDefCursor}" while hasNextPage:true.`
+          );
+          break;
+        }
+        seenDefReturnedCursors.add(returnedDefCursor);
+      }
+
+      defPageInfo = nextDefPageInfo;
     }
 
-    if (defPageInfo.hasNextPage) {
+    if (defPageInfo.hasNextPage && defsReadComplete) {
       defsReadComplete = false;
-      errors.push(`Metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`);
+      errors.push(`${normalizedOwnerType} metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`);
     }
   } catch (err) {
     defsReadComplete = false;
-    errors.push(`Failed reading live PRODUCT metafield definitions: ${err.message}`);
+    errors.push(`Failed reading live ${normalizedOwnerType} metafield definitions: ${err.message}`);
   }
 
   return {
@@ -759,6 +828,370 @@ async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
     errors,
     constraintErrorsByDestination
   };
+}
+
+async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
+  return fetchMetafieldDefinitionsByOwnerWithConstraints(admin, "PRODUCT");
+}
+
+async function fetchVariantMetafieldDefinitionsWithConstraints(admin) {
+  return fetchMetafieldDefinitionsByOwnerWithConstraints(admin, "PRODUCTVARIANT");
+}
+
+/**
+ * Paginates metafields for a single verified owner GID (Product or ProductVariant)
+ * with cursor-loop and page-budget guards.
+ */
+async function paginateOwnerMetafieldsConnection({
+  admin,
+  ownerGid,
+  connectionLabel,
+  initialEdges,
+  initialPageInfo,
+  maxPages = 10,
+  buildPageQuery,
+  extractConnection
+}) {
+  const edges = Array.isArray(initialEdges) ? [...initialEdges] : [];
+  let pageInfo =
+    initialPageInfo && typeof initialPageInfo.hasNextPage === "boolean"
+      ? {
+          hasNextPage: initialPageInfo.hasNextPage,
+          endCursor: initialPageInfo.endCursor ?? null
+        }
+      : { hasNextPage: true, endCursor: null };
+
+  if (
+    !initialPageInfo ||
+    typeof initialPageInfo.hasNextPage !== "boolean" ||
+    !Array.isArray(initialEdges)
+  ) {
+    return {
+      edges,
+      pageInfo,
+      isComplete: false,
+      error: `Initial ${connectionLabel} connection or pageInfo was missing or malformed.`
+    };
+  }
+
+  let pagesFetched = 1;
+  const seenRequestedCursors = new Set();
+  const seenReturnedCursors = new Set();
+  if (typeof pageInfo.endCursor === "string" && pageInfo.endCursor.trim() !== "") {
+    seenReturnedCursors.add(pageInfo.endCursor.trim());
+  }
+
+  while (pageInfo.hasNextPage && pagesFetched < maxPages) {
+    const requestedCursor =
+      typeof pageInfo.endCursor === "string" ? pageInfo.endCursor.trim() : "";
+
+    if (!requestedCursor) {
+      return {
+        edges,
+        pageInfo: { hasNextPage: true, endCursor: pageInfo.endCursor ?? null },
+        isComplete: false,
+        error: `${connectionLabel} pagination stopped after page ${pagesFetched}: hasNextPage is true, but endCursor is missing or blank.`
+      };
+    }
+
+    if (seenRequestedCursors.has(requestedCursor)) {
+      return {
+        edges,
+        pageInfo: { hasNextPage: true, endCursor: requestedCursor },
+        isComplete: false,
+        error: `${connectionLabel} pagination stopped on page ${pagesFetched}: cursor "${requestedCursor}" was already requested.`
+      };
+    }
+
+    seenRequestedCursors.add(requestedCursor);
+    pagesFetched++;
+
+    try {
+      const res = await admin.graphql(buildPageQuery(), {
+        variables: { id: ownerGid, cursor: requestedCursor }
+      });
+      const json = await res.json();
+      if (json.errors?.length) {
+        throw new Error(json.errors.map((e) => e.message).join("; "));
+      }
+
+      const conn = extractConnection(json);
+      if (!conn || !Array.isArray(conn.edges) || typeof conn.pageInfo?.hasNextPage !== "boolean") {
+        throw new Error(`Malformed paginated ${connectionLabel} response on page ${pagesFetched}.`);
+      }
+
+      edges.push(...conn.edges);
+
+      const nextPageInfo = conn.pageInfo;
+      const returnedCursor =
+        typeof nextPageInfo.endCursor === "string" ? nextPageInfo.endCursor.trim() : "";
+
+      if (nextPageInfo.hasNextPage) {
+        if (!returnedCursor) {
+          return {
+            edges,
+            pageInfo: { hasNextPage: true, endCursor: nextPageInfo.endCursor ?? null },
+            isComplete: false,
+            error: `${connectionLabel} pagination stopped on page ${pagesFetched}: hasNextPage is true with a missing endCursor.`
+          };
+        }
+
+        if (
+          returnedCursor === requestedCursor ||
+          seenReturnedCursors.has(returnedCursor) ||
+          seenRequestedCursors.has(returnedCursor)
+        ) {
+          return {
+            edges,
+            pageInfo: { hasNextPage: true, endCursor: returnedCursor },
+            isComplete: false,
+            error: `${connectionLabel} pagination stopped on page ${pagesFetched}: repeated cursor "${returnedCursor}" while hasNextPage:true.`
+          };
+        }
+
+        if (conn.edges.length === 0) {
+          return {
+            edges,
+            pageInfo: { hasNextPage: true, endCursor: returnedCursor },
+            isComplete: false,
+            error: `${connectionLabel} pagination stopped on page ${pagesFetched}: returned 0 edges while hasNextPage:true.`
+          };
+        }
+
+        seenReturnedCursors.add(returnedCursor);
+      }
+
+      pageInfo = {
+        hasNextPage: nextPageInfo.hasNextPage,
+        endCursor: nextPageInfo.endCursor ?? null
+      };
+    } catch (err) {
+      return {
+        edges,
+        pageInfo: { hasNextPage: true, endCursor: requestedCursor },
+        isComplete: false,
+        error: `${connectionLabel} pagination failed on page ${pagesFetched}: ${err.message}`
+      };
+    }
+  }
+
+  if (pageInfo.hasNextPage) {
+    return {
+      edges,
+      pageInfo,
+      isComplete: false,
+      error: `${connectionLabel} pagination reached bounded limit (${maxPages} pages; endCursor: ${pageInfo.endCursor || "none"}).`
+    };
+  }
+
+  return {
+    edges,
+    pageInfo,
+    isComplete: true,
+    error: null
+  };
+}
+
+/**
+ * Fetches and paginates metafields for a single verified ProductVariant GID
+ * bound to expectedProductGid (never nesting 250 metafields under variants).
+ */
+async function fetchSingleVariantMetafieldsForWriter(admin, expectedProductGid, variantGid) {
+  if (!admin || typeof admin.graphql !== "function") {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: "Authenticated Shopify admin GraphQL client is required."
+    };
+  }
+
+  if (!EXACT_PRODUCT_VARIANT_GID_REGEX.test(String(variantGid || ""))) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `Invalid ProductVariant GID "${String(variantGid ?? "")}".`
+    };
+  }
+
+  let initialJson = null;
+  try {
+    const res = await admin.graphql(
+      `
+      query getSingleVariantMetafieldsForWriter($id: ID!) {
+        productVariant(id: $id) {
+          id
+          product {
+            id
+          }
+          metafields(first: 250) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            edges {
+              node {
+                id
+                namespace
+                key
+                value
+                type
+              }
+            }
+          }
+        }
+      }
+    `,
+      { variables: { id: variantGid } }
+    );
+    initialJson = await res.json();
+    if (initialJson.errors?.length) {
+      throw new Error(initialJson.errors.map((e) => e.message).join("; "));
+    }
+  } catch (err) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `Failed to query variant metafields for ${variantGid}: ${err.message}`
+    };
+  }
+
+  const variantNode = initialJson?.data?.productVariant;
+  if (!variantNode || variantNode.id !== variantGid) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `ProductVariant ${variantGid} not found or ID mismatch.`
+    };
+  }
+
+  if (!variantNode.product?.id || variantNode.product.id !== expectedProductGid) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `ProductVariant ${variantGid} owner mismatch (expected ${expectedProductGid}, got ${String(variantNode.product?.id ?? "none")}).`
+    };
+  }
+
+  const paginated = await paginateOwnerMetafieldsConnection({
+    admin,
+    ownerGid: variantGid,
+    connectionLabel: "Variant metafields",
+    initialEdges: variantNode.metafields?.edges,
+    initialPageInfo: variantNode.metafields?.pageInfo,
+    maxPages: 10,
+    buildPageQuery: () => `
+      query getMoreSingleVariantMetafieldsForWriter($id: ID!, $cursor: String!) {
+        productVariant(id: $id) {
+          id
+          metafields(first: 250, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id
+                namespace
+                key
+                value
+                type
+              }
+            }
+          }
+        }
+      }
+    `,
+    extractConnection: (json) => json?.data?.productVariant?.metafields
+  });
+
+  const metafields = {};
+  const metafieldTypes = {};
+  const metafieldIds = {};
+
+  for (const edge of paginated.edges) {
+    const node = edge?.node;
+    if (!node || typeof node.namespace !== "string" || typeof node.key !== "string") continue;
+    const fullKey = `${node.namespace}.${node.key}`;
+    metafields[fullKey] = node.value;
+    metafieldTypes[fullKey] = typeof node.type === "string" ? node.type : null;
+    metafieldIds[fullKey] = node.id || null;
+  }
+
+  return {
+    metafields,
+    metafieldTypes,
+    metafieldIds,
+    isComplete: paginated.isComplete === true,
+    error: paginated.error || null
+  };
+}
+
+/**
+ * Evaluates explicit live definition validations on a plain-text proposal
+ * (such as choices, max, min, regex) when present on the live definition.
+ */
+function validateAgainstLiveTextDefinitionValidations(liveDef, exactValue, destinationKey) {
+  if (!liveDef || !Array.isArray(liveDef.validations) || liveDef.validations.length === 0) {
+    return { valid: true, reason: null };
+  }
+  for (const v of liveDef.validations) {
+    if (!v || typeof v.name !== "string") continue;
+    const vName = v.name.trim().toLowerCase();
+    const vRaw = v.value !== undefined && v.value !== null ? String(v.value) : "";
+
+    if (vName === "choices" && vRaw.trim() !== "") {
+      try {
+        const parsedChoices = JSON.parse(vRaw);
+        if (Array.isArray(parsedChoices) && parsedChoices.length > 0) {
+          const strChoices = parsedChoices.map((c) => String(c));
+          if (!strChoices.includes(exactValue)) {
+            return {
+              valid: false,
+              reason: `Value "${exactValue}" is not in allowed definition choices [${strChoices.join(", ")}] for ${destinationKey}.`
+            };
+          }
+        }
+      } catch {
+        // Ignore non-JSON choice representation
+      }
+    } else if (vName === "max" && vRaw.trim() !== "") {
+      const maxLen = Number.parseInt(vRaw.trim(), 10);
+      if (Number.isInteger(maxLen) && maxLen > 0 && exactValue.length > maxLen) {
+        return {
+          valid: false,
+          reason: `Value for ${destinationKey} (${exactValue.length} chars) exceeds live definition max length (${maxLen}).`
+        };
+      }
+    } else if (vName === "min" && vRaw.trim() !== "") {
+      const minLen = Number.parseInt(vRaw.trim(), 10);
+      if (Number.isInteger(minLen) && minLen > 0 && exactValue.length < minLen) {
+        return {
+          valid: false,
+          reason: `Value for ${destinationKey} (${exactValue.length} chars) is shorter than live definition min length (${minLen}).`
+        };
+      }
+    } else if (vName === "regex" && vRaw !== "") {
+      try {
+        const re = new RegExp(vRaw);
+        if (!re.test(exactValue)) {
+          return {
+            valid: false,
+            reason: `Value for ${destinationKey} does not match live definition regex validation.`
+          };
+        }
+      } catch {
+        // Ignore invalid regex syntax
+      }
+    }
+  }
+  return { valid: true, reason: null };
 }
 
 function evaluateStandardizedCategoryEligibility({
@@ -927,6 +1360,7 @@ function attachChunkDestinationToUserErrors(userErrors, chunkItems, rootFieldNam
       return {
         ...err,
         destination,
+        ownerId: targetItem.ownerId || null,
         namespace: targetItem.namespace,
         key: targetItem.key
       };
@@ -1841,6 +2275,11 @@ export const action = async ({ request }) => {
       const rawLegacy = body.get("legacyKeysToRemove");
       const rawNativeChanges = body.get("nativeChanges");
       const isBenchV2OptIn = body.get(BENCH_V2_WRITER_OPT_IN_FIELD) === BENCH_V2_WRITER_OPT_IN_VALUE;
+      const rawCallerVariantTargetId = body.get("variantTargetId");
+      const callerVariantTargetId =
+        typeof rawCallerVariantTargetId === "string" && rawCallerVariantTargetId.trim() !== ""
+          ? rawCallerVariantTargetId.trim()
+          : null;
       
       if (!pieceId || !rawPlan) {
         return Response.json({ intent: "executeRepairPlan", success: false, status: "REPAIR_FAILED", message: "Missing pieceId or repairPlan payload." });
@@ -1858,6 +2297,7 @@ export const action = async ({ request }) => {
         const lookupResponse = await admin.graphql(`
           query getProductAndMetafields($id: ID!) {
             product(id: $id) { 
+              id
               title 
               descriptionHtml 
               seo { title description }
@@ -1873,12 +2313,19 @@ export const action = async ({ request }) => {
                   }
                 }
               }
-              metafields(first: 250) { edges { node { namespace key value type id } } } 
+              metafields(first: 250) {
+                pageInfo { hasNextPage endCursor }
+                edges { node { namespace key value type id } }
+              } 
             }
           }
         `, { variables: { id: productGid } });
         lookupData = await lookupResponse.json();
-        if (!lookupData?.errors?.length && lookupData?.data?.product) {
+        if (
+          !lookupData?.errors?.length &&
+          lookupData?.data?.product &&
+          lookupData.data.product.id === productGid
+        ) {
           productLookupComplete = true;
         }
       } catch (lookupErr) {
@@ -1906,28 +2353,141 @@ export const action = async ({ request }) => {
         hasNativeSeoObject &&
         Object.prototype.hasOwnProperty.call(productNode.seo, "description") &&
         (typeof productNode.seo.description === "string" || productNode.seo.description === null);
-      const hasMetafieldsBaseline =
-        productLookupComplete &&
-        Array.isArray(productNode?.metafields?.edges);
+
+      let currentMetaList = [];
+      let hasMetafieldsBaseline = false;
+      if (productLookupComplete && Array.isArray(productNode?.metafields?.edges)) {
+        const mfPageInfo = productNode.metafields?.pageInfo;
+        if (mfPageInfo && mfPageInfo.hasNextPage === true) {
+          const mfPaginated = await paginateOwnerMetafieldsConnection({
+            admin,
+            ownerGid: productGid,
+            connectionLabel: "Product metafields",
+            initialEdges: productNode.metafields.edges,
+            initialPageInfo: mfPageInfo,
+            maxPages: 10,
+            buildPageQuery: () => `
+              query getMoreProductMetafieldsForWriter($id: ID!, $cursor: String!) {
+                product(id: $id) {
+                  metafields(first: 250, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    edges { node { namespace key value type id } }
+                  }
+                }
+              }
+            `,
+            extractConnection: (json) => json?.data?.product?.metafields
+          });
+          currentMetaList = mfPaginated.edges;
+          hasMetafieldsBaseline = mfPaginated.isComplete === true;
+        } else if (!mfPageInfo || mfPageInfo.hasNextPage === false) {
+          currentMetaList = productNode.metafields.edges;
+          hasMetafieldsBaseline = true;
+        }
+      }
 
       const currentNativeTitle = hasNativeTitleBaseline ? productNode.title : undefined;
       const currentNativeBodyHtml = hasNativeBodyBaseline ? productNode.descriptionHtml : undefined;
       const currentNativeSeoTitle = hasNativeSeoTitleBaseline ? (productNode.seo.title ?? "") : undefined;
       const currentNativeSeoDescription = hasNativeSeoDescriptionBaseline ? (productNode.seo.description ?? "") : undefined;
-      const currentMetaList = hasMetafieldsBaseline ? productNode.metafields.edges : [];
       
       const currentMetafields = {};
       const currentMetafieldsTypes = {};
       currentMetaList.forEach(e => { 
+        if (!e?.node?.namespace || !e?.node?.key) return;
         const fullKey = `${e.node.namespace}.${e.node.key}`;
         currentMetafields[fullKey] = e.node.value;
         currentMetafieldsTypes[fullKey] = e.node.type; 
       });
 
-      // Fetch dynamic definitions + paginated constraints for true types and live category eligibility
+      // Evaluate single-variant enumeration state from product lookup
+      const variantsConn = productNode?.variants;
+      const variantsEnumerationComplete = Boolean(
+        productLookupComplete &&
+        variantsConn &&
+        Array.isArray(variantsConn.edges) &&
+        typeof variantsConn.pageInfo?.hasNextPage === "boolean" &&
+        variantsConn.pageInfo.hasNextPage === false
+      );
+      const variantCount =
+        productLookupComplete && Array.isArray(variantsConn?.edges)
+          ? variantsConn.edges.length
+          : null;
+      const candidateSingleVariantGid =
+        variantsEnumerationComplete && variantsConn.edges.length === 1
+          ? String(variantsConn.edges[0]?.node?.id || "").trim()
+          : null;
+      const hasVerifiedSingleVariantGid = Boolean(
+        candidateSingleVariantGid && EXACT_PRODUCT_VARIANT_GID_REGEX.test(candidateSingleVariantGid)
+      );
+      const verifiedSingleVariantGid = hasVerifiedSingleVariantGid
+        ? candidateSingleVariantGid
+        : null;
+
+      let variantTargetStatus = "unknown";
+      if (!productLookupComplete || !variantsConn || typeof variantsConn.pageInfo?.hasNextPage !== "boolean") {
+        variantTargetStatus = "variants_read_incomplete";
+      } else if (variantsConn.pageInfo.hasNextPage === true || (variantCount !== null && variantCount > 1)) {
+        variantTargetStatus = "multiple_variants_ambiguous";
+      } else if (variantCount === 0) {
+        variantTargetStatus = "zero_variants";
+      } else if (hasVerifiedSingleVariantGid) {
+        variantTargetStatus = "single_variant_verified";
+      } else {
+        variantTargetStatus = "invalid_or_missing_variant_gid";
+      }
+
+      // Fetch dynamic PRODUCT definitions + paginated constraints for true types and live category eligibility
       const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
       const defs = defReadResult.defs;
       const defsReadComplete = defReadResult.defsReadComplete;
+
+      // Determine whether repairPlan contains any allowlisted Bench V2 variant destination
+      const hasBenchV2VariantEntryInPlan = Boolean(
+        isBenchV2OptIn &&
+        repairPlan &&
+        typeof repairPlan === "object" &&
+        Object.keys(repairPlan).some((rawK) => {
+          const normalizedK = rawK.includes(".") ? rawK : `custom.${rawK}`;
+          return BENCH_V2_OPT_IN_VARIANT_DESTINATIONS.has(normalizedK);
+        })
+      );
+
+      // Only fetch variant metafields & PRODUCTVARIANT definitions when an allowlisted
+      // variant destination is present in the opted-in repairPlan.
+      let currentVariantMetafields = null;
+      let currentVariantMetafieldTypes = null;
+      let currentVariantMetafieldIds = null;
+      let variantMetafieldsReadComplete = false;
+      let variantMetafieldsReadError = null;
+      let variantDefs = {};
+      let variantDefsReadComplete = false;
+      let variantDefReadErrors = [];
+
+      if (hasBenchV2VariantEntryInPlan) {
+        const varDefResult = await fetchVariantMetafieldDefinitionsWithConstraints(admin);
+        variantDefs = varDefResult.defs || {};
+        variantDefsReadComplete = varDefResult.defsReadComplete === true;
+        variantDefReadErrors = Array.isArray(varDefResult.errors) ? varDefResult.errors : [];
+
+        if (
+          variantTargetStatus === "single_variant_verified" &&
+          verifiedSingleVariantGid &&
+          callerVariantTargetId &&
+          callerVariantTargetId === verifiedSingleVariantGid
+        ) {
+          const varMfResult = await fetchSingleVariantMetafieldsForWriter(
+            admin,
+            productGid,
+            verifiedSingleVariantGid
+          );
+          currentVariantMetafields = varMfResult.metafields;
+          currentVariantMetafieldTypes = varMfResult.metafieldTypes;
+          currentVariantMetafieldIds = varMfResult.metafieldIds;
+          variantMetafieldsReadComplete = varMfResult.isComplete === true;
+          variantMetafieldsReadError = varMfResult.error || null;
+        }
+      }
 
       const proposedChanges = {};
       const setToShopify = [];
@@ -1947,6 +2507,7 @@ export const action = async ({ request }) => {
       let priceVariantGid = null;
       let newPriceString = null;
       let priceReadBackVerified = false;
+      let attemptedVariantMetafieldWrite = false;
       
       // Native Changes Integration (Decoupled from custom.* metafields)
       let nativeTitleUpdated = false;
@@ -2221,7 +2782,6 @@ export const action = async ({ request }) => {
                continue;
            }
 
-           const variantsConn = lookupData?.data?.product?.variants;
            if (!variantsConn || !variantsConn.edges || typeof variantsConn.pageInfo?.hasNextPage !== "boolean") {
                blockedFields["price"] = "Missing variant or pagination data from Shopify.";
                continue;
@@ -2275,6 +2835,161 @@ export const action = async ({ request }) => {
         }
 
         const canonicalDestinationKey = `${ns}.${key}`;
+
+        // ====================================================================
+        // SCOPED BENCH V2 OPT-IN VARIANT-OWNED DESTINATION PATH
+        // Handles ONLY the 3 allowlisted PRODUCTVARIANT destinations:
+        // - mm-google-shopping.age_group
+        // - mm-google-shopping.condition
+        // - mm-google-shopping.gender
+        // Never routes to productGid, never unlocks other variant keys,
+        // and requires caller variantTargetId matching verified single variant.
+        // ====================================================================
+        if (BENCH_V2_OPT_IN_VARIANT_DESTINATIONS.has(canonicalDestinationKey)) {
+          if (!isBenchV2OptIn || fullKey !== canonicalDestinationKey) {
+            unsupportedKeys.push(fullKey);
+            continue;
+          }
+
+          if (!callerVariantTargetId || !EXACT_PRODUCT_VARIANT_GID_REGEX.test(callerVariantTargetId)) {
+            blockedFields[fullKey] = `Missing or invalid caller variantTargetId for variant-owned destination ${canonicalDestinationKey}; exact Shopify ProductVariant GID is required.`;
+            continue;
+          }
+
+          if (!productLookupComplete) {
+            blockedFields[fullKey] = `Product lookup did not complete for ${productGid}; cannot verify single-variant membership for ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          if (variantTargetStatus === "multiple_variants_ambiguous") {
+            blockedFields[fullKey] = `Ambiguous variant destination on ${canonicalDestinationKey}: product has multiple variants; single-variant target is required.`;
+            continue;
+          }
+
+          if (variantTargetStatus === "zero_variants") {
+            blockedFields[fullKey] = `Invalid variant destination on ${canonicalDestinationKey}: product has zero variants.`;
+            continue;
+          }
+
+          if (variantTargetStatus !== "single_variant_verified" || !verifiedSingleVariantGid) {
+            blockedFields[fullKey] = `Single-variant enumeration could not be verified on ${canonicalDestinationKey} (status: ${variantTargetStatus}).`;
+            continue;
+          }
+
+          if (callerVariantTargetId !== verifiedSingleVariantGid) {
+            blockedFields[fullKey] = `Caller variantTargetId (${callerVariantTargetId}) does not match the product's verified single variant (${verifiedSingleVariantGid}) for ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          if (!variantMetafieldsReadComplete || !currentVariantMetafields) {
+            blockedFields[fullKey] = variantMetafieldsReadError
+              ? `Variant metafields baseline read failed on ${verifiedSingleVariantGid}: ${variantMetafieldsReadError}`
+              : `Variant metafields baseline read did not complete on ${verifiedSingleVariantGid} for ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          if (!variantDefsReadComplete) {
+            blockedFields[fullKey] = variantDefReadErrors.length > 0
+              ? `Live PRODUCTVARIANT metafield definition read did not complete for ${canonicalDestinationKey}: ${variantDefReadErrors.join("; ")}`
+              : `Live PRODUCTVARIANT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`;
+            continue;
+          }
+
+          const varDef = variantDefs[canonicalDestinationKey] || null;
+          const varStoredType = currentVariantMetafieldTypes?.[canonicalDestinationKey] || null;
+
+          if (varDef?.constraints && (varDef.constraints.hasConstraints || varDef.constraints.isComplete !== true || varDef.constraints.error)) {
+            if (varDef.constraints.isComplete !== true || varDef.constraints.error) {
+              blockedFields[fullKey] = varDef.constraints.error || `Incomplete constraint enumeration on PRODUCTVARIANT definition ${canonicalDestinationKey}.`;
+              continue;
+            }
+          }
+
+          if (!varDef?.type && !varStoredType) {
+            blockedFields[fullKey] = `Neither live PRODUCTVARIANT metafield definition nor stored variant metafield type is available for ${canonicalDestinationKey}; guessing a type is forbidden.`;
+            continue;
+          }
+
+          if (varDef?.type && varStoredType && varDef.type !== varStoredType) {
+            blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: live PRODUCTVARIANT definition is ${varDef.type} but stored variant metafield is ${varStoredType}.`;
+            continue;
+          }
+
+          const resolvedVarType = varDef?.type || varStoredType;
+          if (resolvedVarType !== "single_line_text_field") {
+            blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed PRODUCTVARIANT type is ${resolvedVarType}, expected single_line_text_field.`;
+            continue;
+          }
+
+          if (typeof val !== "string") {
+            blockedFields[fullKey] = `Rejected non-string proposal for ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          const rawUntrimmedVal = val;
+          const valStr = rawUntrimmedVal.trim();
+          if (valStr === "") {
+            blockedFields[fullKey] = `Blank or whitespace-only proposals are forbidden for ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          const normalizedVarVal = normalizeMetafieldValue(key, valStr);
+          if (normalizedVarVal !== rawUntrimmedVal) {
+            blockedFields[fullKey] = `Proposal for ${canonicalDestinationKey} contains leading/trailing whitespace or warning prefixes that would alter the exact approved value.`;
+            continue;
+          }
+
+          if (isPlainTextProposalRejectedForContract(rawUntrimmedVal, normalizedVarVal)) {
+            blockedFields[fullKey] = `Rejected non-text or reference-shaped proposal for plain-text variant destination ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          if (normalizedVarVal.length > 255) {
+            blockedFields[fullKey] = `Value exceeds 255 characters limit for ${canonicalDestinationKey}.`;
+            continue;
+          }
+
+          const liveValidationCheck = validateAgainstLiveTextDefinitionValidations(
+            varDef,
+            normalizedVarVal,
+            canonicalDestinationKey
+          );
+          if (!liveValidationCheck.valid) {
+            blockedFields[fullKey] = liveValidationCheck.reason;
+            continue;
+          }
+
+          const hasCurrentVarProp = Object.prototype.hasOwnProperty.call(
+            currentVariantMetafields,
+            canonicalDestinationKey
+          );
+          const currentVarVal = hasCurrentVarProp
+            ? currentVariantMetafields[canonicalDestinationKey]
+            : null;
+
+          if (hasCurrentVarProp && typeof currentVarVal === "string" && currentVarVal === normalizedVarVal) {
+            unchanged.push(canonicalDestinationKey);
+          } else {
+            setToShopify.push({
+              ownerId: verifiedSingleVariantGid,
+              ownerType: "PRODUCTVARIANT",
+              namespace: ns,
+              key: key,
+              type: resolvedVarType,
+              value: normalizedVarVal
+            });
+            proposedChanges[canonicalDestinationKey] = {
+              owner: "PRODUCTVARIANT",
+              variantId: verifiedSingleVariantGid,
+              from: currentVarVal,
+              to: normalizedVarVal
+            };
+            attemptedDestinations.push(canonicalDestinationKey);
+            attemptedVariantMetafieldWrite = true;
+          }
+          continue;
+        }
+
         const isBenchV2UnheldCustomTarget =
           isBenchV2OptIn &&
           ns === "custom" &&
@@ -2339,14 +3054,14 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        if (isBenchV2UnheldCustomTarget && !defsReadComplete) {
+        if (isBenchV2OptIn && !defsReadComplete) {
             blockedFields[fullKey] = `Live PRODUCT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`;
             continue;
         }
 
         const currentVal = currentMetafields[fullKey] !== undefined
           ? currentMetafields[fullKey]
-          : (currentMetafields[canonicalDestinationKey] || null);
+          : (currentMetafields[canonicalDestinationKey] ?? null);
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
 
         // Preserve six-field standardized write gate: non-verified shopify.* attributes remain read-only
@@ -2369,6 +3084,8 @@ export const action = async ({ request }) => {
         }
 
         // Resolve exact type from definition, stored type, or reviewed exact destination contract
+        // For Bench V2 opt-in requests, require actual live definition or stored type evidence
+        // (never using reviewedContractType as a fallback when both liveDef and storedType are missing).
         const def = defs[fullKey] || defs[canonicalDestinationKey];
         const storedType = currentMetafieldsTypes[fullKey] || currentMetafieldsTypes[canonicalDestinationKey];
         const reviewedContractType = Object.prototype.hasOwnProperty.call(
@@ -2393,7 +3110,9 @@ export const action = async ({ request }) => {
             }
         }
 
-        let resolvedType = def?.type ? def.type : (storedType || reviewedContractType || null);
+        let resolvedType = def?.type
+          ? def.type
+          : (storedType || (!isBenchV2OptIn ? reviewedContractType : null) || null);
 
         if (!resolvedType) {
             blockedFields[fullKey] = "No exact live definition or stored type available; fallback mappings are strictly forbidden.";
@@ -2527,42 +3246,42 @@ export const action = async ({ request }) => {
           let allValid = true;
           for (const moId of idsToVerify) {
               if (moValidationCache.has(moId)) {
-                 const cachedDefId = moValidationCache.get(moId);
-                 if (cachedDefId !== requiredDefId) {
-                     blockedFields[fullKey] = `Reference ${moId} belongs to def ${cachedDefId}, but field requires ${requiredDefId}`;
-                     allValid = false;
-                     break;
-                 }
+                  const cachedDefId = moValidationCache.get(moId);
+                  if (cachedDefId !== requiredDefId) {
+                      blockedFields[fullKey] = `Reference ${moId} belongs to def ${cachedDefId}, but field requires ${requiredDefId}`;
+                      allValid = false;
+                      break;
+                  }
               } else {
-                 try {
-                     const moRes = await admin.graphql(`
-                        query getMetaobject($id: ID!) {
-                           metaobject(id: $id) {
-                              definition { id }
-                           }
-                        }
-                     `, { variables: { id: moId } });
-                     const moJson = await moRes.json();
-                     const actualDefId = moJson?.data?.metaobject?.definition?.id;
-                     
-                     if (!actualDefId) {
-                         blockedFields[fullKey] = `Metaobject ${moId} not found or missing definition.`;
-                         allValid = false;
-                         break;
-                     }
-                     
-                     moValidationCache.set(moId, actualDefId);
-                     
-                     if (actualDefId !== requiredDefId) {
-                         blockedFields[fullKey] = `Reference ${moId} belongs to def ${actualDefId}, but field requires ${requiredDefId}`;
-                         allValid = false;
-                         break;
-                     }
-                 } catch (e) {
-                     blockedFields[fullKey] = `Validation lookup failed for ${moId}: ${e.message}`;
-                     allValid = false;
-                     break;
-                 }
+                  try {
+                      const moRes = await admin.graphql(`
+                         query getMetaobject($id: ID!) {
+                            metaobject(id: $id) {
+                               definition { id }
+                            }
+                         }
+                      `, { variables: { id: moId } });
+                      const moJson = await moRes.json();
+                      const actualDefId = moJson?.data?.metaobject?.definition?.id;
+                      
+                      if (!actualDefId) {
+                          blockedFields[fullKey] = `Metaobject ${moId} not found or missing definition.`;
+                          allValid = false;
+                          break;
+                      }
+                      
+                      moValidationCache.set(moId, actualDefId);
+                      
+                      if (actualDefId !== requiredDefId) {
+                          blockedFields[fullKey] = `Reference ${moId} belongs to def ${actualDefId}, but field requires ${requiredDefId}`;
+                          allValid = false;
+                          break;
+                      }
+                  } catch (e) {
+                      blockedFields[fullKey] = `Validation lookup failed for ${moId}: ${e.message}`;
+                      allValid = false;
+                      break;
+                  }
               }
           }
           
@@ -2589,8 +3308,8 @@ export const action = async ({ request }) => {
         }
 
         if (currentVal !== resolvedValue) {
-            setToShopify.push({ ownerId: productGid, namespace: ns, key: key, type: resolvedType, value: resolvedValue });
-            proposedChanges[fullKey] = { from: currentVal, to: resolvedValue };
+            setToShopify.push({ ownerId: productGid, ownerType: "PRODUCT", namespace: ns, key: key, type: resolvedType, value: resolvedValue });
+            proposedChanges[fullKey] = { owner: "PRODUCT", from: currentVal, to: resolvedValue };
             attemptedDestinations.push(fullKey);
         } else {
             unchanged.push(fullKey);
@@ -2640,6 +3359,11 @@ export const action = async ({ request }) => {
         }
       });
 
+      const resolvedVariantTargetForResponse =
+        attemptedVariantMetafieldWrite && verifiedSingleVariantGid
+          ? verifiedSingleVariantGid
+          : priceVariantGid || verifiedSingleVariantGid || null;
+
       if (attemptedDestinations.length === 0) {
           const hasIntendedThatFailed = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
           if (hasIntendedThatFailed) {
@@ -2647,15 +3371,37 @@ export const action = async ({ request }) => {
                   intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_BLOCKED",
                   message: "No changes executed. Some requested changes were blocked or unsupported.",
                   fieldsUpdated: 0, legacyKeysRemoved: 0,
-                  currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: true,
-                  variantTarget: priceVariantGid || null
+                  currentMetafields,
+                  currentMetafieldTypes: currentMetafieldsTypes,
+                  metafieldsReadComplete: hasMetafieldsBaseline,
+                  primaryVariantId: verifiedSingleVariantGid,
+                  variantCount,
+                  variantTargetStatus,
+                  currentVariantMetafields,
+                  currentVariantMetafieldTypes,
+                  currentVariantMetafieldIds,
+                  variantMetafieldsReadComplete,
+                  variantMetafieldsReadError,
+                  repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: true,
+                  variantTarget: resolvedVariantTargetForResponse
               });
           }
           return Response.json({
               intent: "executeRepairPlan", pieceId, success: true, status: "NO_CHANGES_REQUIRED",
               fieldsUpdated: 0, legacyKeysRemoved: 0, message: "No intended changes required.",
-              currentMetafields, repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: true,
-              variantTarget: priceVariantGid || null
+              currentMetafields,
+              currentMetafieldTypes: currentMetafieldsTypes,
+              metafieldsReadComplete: hasMetafieldsBaseline,
+              primaryVariantId: verifiedSingleVariantGid,
+              variantCount,
+              variantTargetStatus,
+              currentVariantMetafields,
+              currentVariantMetafieldTypes,
+              currentVariantMetafieldIds,
+              variantMetafieldsReadComplete,
+              variantMetafieldsReadError,
+              repairPlan, proposedChanges, conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: true,
+              variantTarget: resolvedVariantTargetForResponse
           });
       }
 
@@ -2663,7 +3409,7 @@ export const action = async ({ request }) => {
 
       if (deleteFromShopify.length > 0) {
         const uniqueDel = new Map();
-        deleteFromShopify.forEach(m => uniqueDel.set(`${m.namespace}:${m.key}`, m));
+        deleteFromShopify.forEach(m => uniqueDel.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
         const chunks = chunkArray(Array.from(uniqueDel.values()), 250);
         for (let i = 0; i < chunks.length; i++) {
           try {
@@ -2684,16 +3430,24 @@ export const action = async ({ request }) => {
 
       if (setToShopify.length > 0) {
         const uniqueSet = new Map();
-        setToShopify.forEach(m => uniqueSet.set(`${m.namespace}:${m.key}`, m));
-        const chunks = chunkArray(Array.from(uniqueSet.values()), 25);
+        setToShopify.forEach(m => uniqueSet.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
+        const dedupedItems = Array.from(uniqueSet.values());
+        const chunks = chunkArray(dedupedItems, 25);
         for (let i = 0; i < chunks.length; i++) {
+          const gqlChunkInput = chunks[i].map(({ ownerId, namespace, key, type, value }) => ({
+            ownerId,
+            namespace,
+            key,
+            type,
+            value
+          }));
           try {
             const setResponse = await admin.graphql(
               `#graphql
               mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
                 metafieldsSet(metafields: $metafields) { userErrors { field message } }
               }`,
-              { variables: { metafields: chunks[i] } }
+              { variables: { metafields: gqlChunkInput } }
             );
             const setJson = await setResponse.json();
             if (setJson?.data?.metafieldsSet?.userErrors?.length) {
@@ -2822,9 +3576,21 @@ export const action = async ({ request }) => {
          });
          return Response.json({ 
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-             errors: allErrors, currentMetafields, repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
+             errors: allErrors,
+             currentMetafields,
+             currentMetafieldTypes: currentMetafieldsTypes,
+             metafieldsReadComplete: hasMetafieldsBaseline,
+             primaryVariantId: verifiedSingleVariantGid,
+             variantCount,
+             variantTargetStatus,
+             currentVariantMetafields,
+             currentVariantMetafieldTypes,
+             currentVariantMetafieldIds,
+             variantMetafieldsReadComplete,
+             variantMetafieldsReadError,
+             repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
              conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced unhandled errors.",
-             variantTarget: priceVariantGid || null
+             variantTarget: resolvedVariantTargetForResponse
          });
       }
 
@@ -2833,16 +3599,21 @@ export const action = async ({ request }) => {
       let readBackVariantId = null;
       if (doPriceUpdate) readBackVariantId = priceVariantGid;
       if (doShippingWeightUpdate && nativeChanges.shippingWeight?.variantId) readBackVariantId = nativeChanges.shippingWeight.variantId;
+      if (attemptedVariantMetafieldWrite && verifiedSingleVariantGid) readBackVariantId = verifiedSingleVariantGid;
       
       const readBackQuery = `
         query getProductAndVariant($id: ID!${readBackVariantId ? ', $variantId: ID!' : ''}) {
           product(id: $id) { 
+            id
             title 
             descriptionHtml 
             seo { title description }
             category { id fullName }
             media(first: 50) { edges { node { ... on MediaImage { id alt } } } }
-            metafields(first: 250) { edges { node { namespace key value } } } 
+            metafields(first: 250) {
+              pageInfo { hasNextPage endCursor }
+              edges { node { id namespace key value type } }
+            } 
           }
           ${readBackVariantId ? `
           node(id: $variantId) {
@@ -2851,6 +3622,10 @@ export const action = async ({ request }) => {
                price 
                product { id } 
                inventoryItem { measurement { weight { value unit } } }
+               metafields(first: 250) {
+                 pageInfo { hasNextPage endCursor }
+                 edges { node { id namespace key value type } }
+               }
             }
           }
           ` : ''}
@@ -2872,7 +3647,11 @@ export const action = async ({ request }) => {
       }
 
       const readBackProductNode = readBackData?.data?.product || null;
-      const hasProductReadBack = Boolean(readBackProductNode && !readBackError);
+      const hasProductReadBack = Boolean(
+        readBackProductNode &&
+        readBackProductNode.id === productGid &&
+        !readBackError
+      );
 
       const hasTitleReadBack = hasProductReadBack && typeof readBackProductNode.title === "string";
       const hasBodyReadBack = hasProductReadBack && typeof readBackProductNode.descriptionHtml === "string";
@@ -2885,7 +3664,38 @@ export const action = async ({ request }) => {
         Object.prototype.hasOwnProperty.call(readBackProductNode.seo, "title") &&
         Object.prototype.hasOwnProperty.call(readBackProductNode.seo, "description");
       const hasMediaReadBack = hasProductReadBack && Array.isArray(readBackProductNode.media?.edges);
-      const hasMetafieldsReadBack = hasProductReadBack && Array.isArray(readBackProductNode.metafields?.edges);
+
+      let newMetaList = [];
+      let hasMetafieldsReadBack = false;
+      if (hasProductReadBack && Array.isArray(readBackProductNode.metafields?.edges)) {
+        const rbMfPageInfo = readBackProductNode.metafields.pageInfo;
+        if (rbMfPageInfo && rbMfPageInfo.hasNextPage === true) {
+          const rbMfPaginated = await paginateOwnerMetafieldsConnection({
+            admin,
+            ownerGid: productGid,
+            connectionLabel: "Product metafields read-back",
+            initialEdges: readBackProductNode.metafields.edges,
+            initialPageInfo: rbMfPageInfo,
+            maxPages: 10,
+            buildPageQuery: () => `
+              query getMoreProductMetafieldsReadBack($id: ID!, $cursor: String!) {
+                product(id: $id) {
+                  metafields(first: 250, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    edges { node { id namespace key value type } }
+                  }
+                }
+              }
+            `,
+            extractConnection: (json) => json?.data?.product?.metafields
+          });
+          newMetaList = rbMfPaginated.edges;
+          hasMetafieldsReadBack = rbMfPaginated.isComplete === true;
+        } else if (!rbMfPageInfo || rbMfPageInfo.hasNextPage === false) {
+          newMetaList = readBackProductNode.metafields.edges;
+          hasMetafieldsReadBack = true;
+        }
+      }
 
       const actualTitle = hasTitleReadBack ? readBackProductNode.title : undefined;
       const actualBodyHtml = hasBodyReadBack ? readBackProductNode.descriptionHtml : undefined;
@@ -2899,13 +3709,82 @@ export const action = async ({ request }) => {
         ? readBackProductNode.media.edges.filter(e => e && e.node && e.node.id)
         : [];
 
-      const newMetaList = hasMetafieldsReadBack ? readBackProductNode.metafields.edges : [];
       const newMetafields = {};
+      const newMetafieldTypes = {};
       newMetaList.forEach(e => {
         if (e?.node?.namespace && e?.node?.key) {
-          newMetafields[`${e.node.namespace}.${e.node.key}`] = e.node.value;
+          const dotKey = `${e.node.namespace}.${e.node.key}`;
+          newMetafields[dotKey] = e.node.value;
+          newMetafieldTypes[dotKey] = typeof e.node.type === "string" ? e.node.type : null;
         }
       });
+
+      // Variant metafield read-back (with pagination completeness and exact owner verification)
+      const readBackVariantNode = readBackVariantId ? readBackData?.data?.node : null;
+      const hasValidVariantNodeReadBack = Boolean(
+        readBackVariantId &&
+        readBackVariantNode &&
+        readBackVariantNode.id === readBackVariantId &&
+        readBackVariantNode.product?.id === productGid &&
+        !readBackError
+      );
+
+      let hasVariantMetafieldsReadBack = false;
+      let newVariantMetafields = currentVariantMetafields;
+      let newVariantMetafieldTypes = currentVariantMetafieldTypes;
+      let newVariantMetafieldIds = currentVariantMetafieldIds;
+      let readBackVariantMetafieldsError = null;
+
+      if (attemptedVariantMetafieldWrite) {
+        if (!hasValidVariantNodeReadBack || !Array.isArray(readBackVariantNode?.metafields?.edges)) {
+          hasVariantMetafieldsReadBack = false;
+          readBackVariantMetafieldsError = readBackError || `Variant node ${String(readBackVariantId)} missing or owner mismatch on read-back.`;
+        } else {
+          const rbVarPageInfo = readBackVariantNode.metafields.pageInfo;
+          let rbVarEdges = readBackVariantNode.metafields.edges;
+          if (rbVarPageInfo && rbVarPageInfo.hasNextPage === true) {
+            const rbVarPaginated = await paginateOwnerMetafieldsConnection({
+              admin,
+              ownerGid: readBackVariantId,
+              connectionLabel: "Variant metafields read-back",
+              initialEdges: readBackVariantNode.metafields.edges,
+              initialPageInfo: rbVarPageInfo,
+              maxPages: 10,
+              buildPageQuery: () => `
+                query getMoreVariantMetafieldsReadBack($id: ID!, $cursor: String!) {
+                  productVariant(id: $id) {
+                    id
+                    metafields(first: 250, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      edges { node { id namespace key value type } }
+                    }
+                  }
+                }
+              `,
+              extractConnection: (json) => json?.data?.productVariant?.metafields
+            });
+            rbVarEdges = rbVarPaginated.edges;
+            hasVariantMetafieldsReadBack = rbVarPaginated.isComplete === true;
+            readBackVariantMetafieldsError = rbVarPaginated.error || null;
+          } else if (!rbVarPageInfo || rbVarPageInfo.hasNextPage === false) {
+            hasVariantMetafieldsReadBack = true;
+          }
+
+          if (hasVariantMetafieldsReadBack) {
+            newVariantMetafields = {};
+            newVariantMetafieldTypes = {};
+            newVariantMetafieldIds = {};
+            for (const edge of rbVarEdges) {
+              const node = edge?.node;
+              if (!node || typeof node.namespace !== "string" || typeof node.key !== "string") continue;
+              const dotKey = `${node.namespace}.${node.key}`;
+              newVariantMetafields[dotKey] = node.value;
+              newVariantMetafieldTypes[dotKey] = typeof node.type === "string" ? node.type : null;
+              newVariantMetafieldIds[dotKey] = node.id || null;
+            }
+          }
+        }
+      }
 
       const unverifiedNativeFields = [];
       if (!hasTitleReadBack) unverifiedNativeFields.push("productTitle");
@@ -2945,7 +3824,11 @@ export const action = async ({ request }) => {
         unverifiedFields: unverifiedNativeFields
       };
 
-      let readBackVerified = Boolean(hasProductReadBack && hasMetafieldsReadBack);
+      let readBackVerified = Boolean(
+        hasProductReadBack &&
+        hasMetafieldsReadBack &&
+        (!attemptedVariantMetafieldWrite || hasVariantMetafieldsReadBack)
+      );
       const conflicts = {};
 
       if (doPriceUpdate) {
@@ -3088,6 +3971,72 @@ export const action = async ({ request }) => {
 
       setToShopify.forEach(m => {
          const dotKey = `${m.namespace}.${m.key}`;
+         const isVariantItem = m.ownerType === "PRODUCTVARIANT" || m.ownerId !== productGid;
+
+         if (isVariantItem) {
+             if (!hasValidVariantNodeReadBack || !hasVariantMetafieldsReadBack || !newVariantMetafields) {
+                 readBackVerified = false;
+                 const reasonMsg = readBackVariantMetafieldsError || "Unverified variant metafield read-back";
+                 unresolvedChanges[dotKey] = {
+                     owner: "PRODUCTVARIANT",
+                     variantId: m.ownerId,
+                     reason: reasonMsg,
+                     expected: String(m.value),
+                     actual: "Unverified"
+                 };
+                 conflicts[dotKey] = {
+                     owner: "PRODUCTVARIANT",
+                     variantId: m.ownerId,
+                     expected: String(m.value),
+                     actual: `Unverified (${reasonMsg})`
+                 };
+                 return;
+             }
+
+             const actualVarVal = newVariantMetafields[dotKey];
+             const actualVarType = newVariantMetafieldTypes?.[dotKey] || null;
+             const expVarStr = String(m.value);
+             const actVarStr = actualVarVal !== undefined && actualVarVal !== null ? String(actualVarVal) : null;
+
+             if (actualVarType !== m.type) {
+                 readBackVerified = false;
+                 unresolvedChanges[dotKey] = {
+                     owner: "PRODUCTVARIANT",
+                     variantId: m.ownerId,
+                     reason: `Read-back type mismatch (expected ${m.type}, got ${actualVarType || "none"})`,
+                     expected: expVarStr,
+                     actual: actVarStr ?? "Missing"
+                 };
+                 conflicts[dotKey] = {
+                     owner: "PRODUCTVARIANT",
+                     variantId: m.ownerId,
+                     expected: expVarStr,
+                     actual: actVarStr ?? "Missing"
+                 };
+                 return;
+             }
+
+             if (actVarStr === null || expVarStr !== actVarStr) {
+                 readBackVerified = false;
+                 unresolvedChanges[dotKey] = {
+                     owner: "PRODUCTVARIANT",
+                     variantId: m.ownerId,
+                     reason: "Read-back value mismatch",
+                     expected: expVarStr,
+                     actual: actVarStr ?? "Missing"
+                 };
+                 conflicts[dotKey] = {
+                     owner: "PRODUCTVARIANT",
+                     variantId: m.ownerId,
+                     expected: expVarStr,
+                     actual: actVarStr ?? "Missing"
+                 };
+             } else {
+                 verifiedDestinations.push(dotKey);
+             }
+             return;
+         }
+
          if (!hasMetafieldsReadBack) {
              readBackVerified = false;
              unresolvedChanges[dotKey] = { reason: "Unverified metafield read-back", expected: String(m.value).trim(), actual: "Unverified" };
@@ -3169,10 +4118,30 @@ export const action = async ({ request }) => {
         fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
         message: diagnosticMsg,
         currentMetafields: hasMetafieldsReadBack ? newMetafields : currentMetafields,
+        currentMetafieldTypes: hasMetafieldsReadBack ? newMetafieldTypes : currentMetafieldsTypes,
+        metafieldsReadComplete: hasMetafieldsReadBack,
+        primaryVariantId: verifiedSingleVariantGid,
+        variantCount,
+        variantTargetStatus,
+        currentVariantMetafields: attemptedVariantMetafieldWrite
+          ? (hasVariantMetafieldsReadBack ? newVariantMetafields : null)
+          : currentVariantMetafields,
+        currentVariantMetafieldTypes: attemptedVariantMetafieldWrite
+          ? (hasVariantMetafieldsReadBack ? newVariantMetafieldTypes : null)
+          : currentVariantMetafieldTypes,
+        currentVariantMetafieldIds: attemptedVariantMetafieldWrite
+          ? (hasVariantMetafieldsReadBack ? newVariantMetafieldIds : null)
+          : currentVariantMetafieldIds,
+        variantMetafieldsReadComplete: attemptedVariantMetafieldWrite
+          ? hasVariantMetafieldsReadBack
+          : variantMetafieldsReadComplete,
+        variantMetafieldsReadError: attemptedVariantMetafieldWrite
+          ? readBackVariantMetafieldsError
+          : variantMetafieldsReadError,
         nativeTargets: readBackNativeTargets,
         productCategory: readBackNativeTargets.category || productCategory,
         repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified,
-        variantTarget: priceVariantGid || null
+        variantTarget: resolvedVariantTargetForResponse
       });
     }
 

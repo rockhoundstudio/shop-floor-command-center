@@ -3,10 +3,10 @@
 // File: app/utils/bench-v2.baseline.server.jsx
 //
 // Verified Existing Sources Confirmed in Context:
-// 1. app/routes/app.meta-injector-api.jsx (138,970 chars — read-only query
+// 1. app/routes/app.meta-injector-api.jsx (145,763 chars — read-only query
 //    shapes and definition/constraint readers organized locally below)
-// 2. app/utils/bench-v2.contract.jsx (Saved SHA256:
-//    F31EF4BC321AFC20A3696E53686EAD076D8583B8962D24EA667AC6D7DF144DBA)
+// 2. app/utils/bench-v2.contract.jsx (Current saved contract with Drawer 8
+//    single-variant PRODUCTVARIANT support and isExactProductVariantGid)
 //
 // Source Dependency Note:
 // - In app/routes/app.meta-injector-api.jsx, the read-only helpers
@@ -28,6 +28,19 @@
 // - Reads ONLY that single product (never loads whole-store product inventory).
 // - Completes pagination for product metafields, variants, media, and live
 //   PRODUCT metafieldDefinitions + constraint values with cursor/loop/budget guards.
+// - Only AFTER variant pagination is complete and exactly ONE distinct variant
+//   exists with a valid gid://shopify/ProductVariant/<digits> ID:
+//   * Binds primaryVariantId to the loaded product.
+//   * Fetches and paginates that single variant's metafields using a separate
+//     read-only query (never nesting 250 metafields under 250 variants).
+// - Reads live PRODUCTVARIANT metafieldDefinitions + constraint values into a
+//   separate map (liveVariantDefinitions) with bounded pagination and error reporting.
+// - CRITICAL FAILURE ISOLATION: Variant metafield/definition read failures or
+//   zero/multiple variant states are caught and reported in variant-specific
+//   fields (variantMetafieldsReadComplete, variantMetafieldsReadError,
+//   variantDefsReadComplete, variantDefReadErrors, variantConstraintErrorsByDestination)
+//   and NEVER turn an otherwise complete PRODUCT baseline into a failed load or
+//   disable PRODUCT drawers.
 // - Preserves raw stored strings and types verbatim (zero trimming or coercion).
 // - Never seeds baseline values into a repairPlan or proposal map.
 // - Missing/failed/truncated reads report explicit false/incomplete flags and
@@ -35,7 +48,7 @@
 // - Zero GraphQL mutations, zero AI calls, zero database/service writes.
 // ==========================================================================
 
-import { isExactProductGid } from "./bench-v2.contract.jsx";
+import { isExactProductGid, isExactProductVariantGid } from "./bench-v2.contract.jsx";
 
 const MAX_METAFIELD_PAGES = 10;
 const MAX_VARIANT_PAGES = 10;
@@ -204,11 +217,14 @@ export function evaluateStandardizedCategoryEligibility({
 }
 
 /**
- * Reads live PRODUCT metafieldDefinitions and paginates their constraint values
+ * Shared read-only helper that enumerates live metafieldDefinitions for a specified
+ * ownerType ("PRODUCT" or "PRODUCTVARIANT") and paginates their constraint values
  * with cursor/loop/budget guards.
- * Organized from app/routes/app.meta-injector-api.jsx (fetchProductMetafieldDefinitionsWithConstraints).
  */
-export async function readProductMetafieldDefinitionsWithConstraints(admin) {
+async function readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, ownerType = "PRODUCT") {
+  const normalizedOwnerType =
+    ownerType === "PRODUCTVARIANT" ? "PRODUCTVARIANT" : "PRODUCT";
+
   if (!admin || typeof admin.graphql !== "function") {
     return {
       defs: {},
@@ -238,14 +254,14 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
         if (!requestedDefCursor) {
           defsReadComplete = false;
           errors.push(
-            `Metafield definitions pagination stopped after page ${defPagesFetched}: hasNextPage is true but endCursor is missing.`
+            `${normalizedOwnerType} metafield definitions pagination stopped after page ${defPagesFetched}: hasNextPage is true but endCursor is missing.`
           );
           break;
         }
         if (seenDefRequestedCursors.has(requestedDefCursor)) {
           defsReadComplete = false;
           errors.push(
-            `Metafield definitions pagination stopped at page ${defPagesFetched}: repeated cursor "${requestedDefCursor}".`
+            `${normalizedOwnerType} metafield definitions pagination stopped at page ${defPagesFetched}: repeated cursor "${requestedDefCursor}".`
           );
           break;
         }
@@ -256,8 +272,8 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
 
       const defRes = await admin.graphql(
         `
-        query getProductMetafieldDefsWithConstraints($cursor: String) {
-          metafieldDefinitions(first: 250, ownerType: PRODUCT, after: $cursor) {
+        query getMetafieldDefsByOwnerWithConstraints($ownerType: MetafieldOwnerType!, $cursor: String) {
+          metafieldDefinitions(first: 250, ownerType: $ownerType, after: $cursor) {
             nodes {
               id
               name
@@ -277,7 +293,7 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
           }
         }
       `,
-        { variables: { cursor: requestedDefCursor } }
+        { variables: { ownerType: normalizedOwnerType, cursor: requestedDefCursor } }
       );
 
       const defJson = await defRes.json();
@@ -291,7 +307,7 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
         !Array.isArray(defConn.nodes) ||
         typeof defConn.pageInfo?.hasNextPage !== "boolean"
       ) {
-        throw new Error("Malformed metafieldDefinitions connection response.");
+        throw new Error(`Malformed ${normalizedOwnerType} metafieldDefinitions connection response.`);
       }
 
       for (const node of defConn.nodes) {
@@ -526,6 +542,7 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
           name: node.name || null,
           namespace: node.namespace,
           key: node.key,
+          ownerType: normalizedOwnerType,
           type: typeName || null,
           requiredDefinitionId: validation?.value || null,
           restrictedMetaobjectDefinitionId: validation?.value || null,
@@ -549,7 +566,7 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
         if (!returnedDefCursor) {
           defsReadComplete = false;
           errors.push(
-            `Metafield definitions pagination stopped on page ${defPagesFetched}: hasNextPage is true with a missing endCursor.`
+            `${normalizedOwnerType} metafield definitions pagination stopped on page ${defPagesFetched}: hasNextPage is true with a missing endCursor.`
           );
           break;
         }
@@ -560,7 +577,7 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
         ) {
           defsReadComplete = false;
           errors.push(
-            `Metafield definitions pagination stopped on page ${defPagesFetched}: repeated cursor "${returnedDefCursor}" while hasNextPage:true.`
+            `${normalizedOwnerType} metafield definitions pagination stopped on page ${defPagesFetched}: repeated cursor "${returnedDefCursor}" while hasNextPage:true.`
           );
           break;
         }
@@ -573,12 +590,12 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
     if (defPageInfo.hasNextPage && defsReadComplete) {
       defsReadComplete = false;
       errors.push(
-        `Metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`
+        `${normalizedOwnerType} metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`
       );
     }
   } catch (err) {
     defsReadComplete = false;
-    errors.push(`Failed reading live PRODUCT metafield definitions: ${err.message}`);
+    errors.push(`Failed reading live ${normalizedOwnerType} metafield definitions: ${err.message}`);
   }
 
   return {
@@ -590,8 +607,26 @@ export async function readProductMetafieldDefinitionsWithConstraints(admin) {
 }
 
 /**
- * Paginates remaining connection edges (metafields, variants, or media) on a single
- * product with strict cursor-loop and page-budget guards.
+ * Reads live PRODUCT metafieldDefinitions and paginates their constraint values
+ * with cursor/loop/budget guards.
+ * Organized from app/routes/app.meta-injector-api.jsx (fetchProductMetafieldDefinitionsWithConstraints).
+ */
+export async function readProductMetafieldDefinitionsWithConstraints(admin) {
+  return readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, "PRODUCT");
+}
+
+/**
+ * Reads live PRODUCTVARIANT metafieldDefinitions and paginates their constraint values
+ * with cursor/loop/budget guards into a separate map.
+ */
+export async function readVariantMetafieldDefinitionsWithConstraints(admin) {
+  return readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, "PRODUCTVARIANT");
+}
+
+/**
+ * Paginates remaining connection edges (product metafields, variants, media, or
+ * single-variant metafields) on a single owner GID with strict cursor-loop and
+ * page-budget guards.
  */
 async function paginateProductConnection({
   admin,
@@ -744,16 +779,167 @@ async function paginateProductConnection({
 }
 
 /**
- * Reads the complete single-product baseline and live PRODUCT metafield definitions
- * required by app/utils/bench-v2.contract.jsx.
+ * Fetches and paginates metafields for a single verified ProductVariant GID
+ * bound to the loaded productId.
+ * - Never nests 250 metafields under 250 variants.
+ * - Verifies that the returned ProductVariant node matches variantId and
+ *   belongs to expectedProductId.
+ * - Preserves raw values, types, and IDs verbatim.
+ */
+async function readSingleVariantMetafields(admin, expectedProductId, variantId) {
+  if (!admin || typeof admin.graphql !== "function") {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: "Authenticated Shopify admin GraphQL client is required."
+    };
+  }
+
+  if (!isExactProductGid(expectedProductId) || !isExactProductVariantGid(variantId)) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `Invalid productId ("${String(expectedProductId ?? "")}") or variantId ("${String(variantId ?? "")}") for single-variant metafield read.`
+    };
+  }
+
+  let initialVariantJson;
+  try {
+    const res = await admin.graphql(
+      `
+      query getSingleVariantMetafields($id: ID!) {
+        productVariant(id: $id) {
+          id
+          product {
+            id
+          }
+          metafields(first: 250) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            edges {
+              node {
+                id
+                namespace
+                key
+                value
+                type
+              }
+            }
+          }
+        }
+      }
+    `,
+      { variables: { id: variantId } }
+    );
+    initialVariantJson = await res.json();
+    if (initialVariantJson.errors?.length) {
+      throw new Error(initialVariantJson.errors.map((e) => e.message).join("; "));
+    }
+  } catch (err) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `Failed to query variant metafields for ${variantId}: ${err.message}`
+    };
+  }
+
+  const variantNode = initialVariantJson?.data?.productVariant;
+  if (!variantNode || variantNode.id !== variantId) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `ProductVariant not found or ID mismatch for ${variantId}.`
+    };
+  }
+
+  if (!variantNode.product?.id || variantNode.product.id !== expectedProductId) {
+    return {
+      metafields: null,
+      metafieldTypes: null,
+      metafieldIds: null,
+      isComplete: false,
+      error: `ProductVariant ${variantId} product owner mismatch (expected ${expectedProductId}, got ${String(variantNode.product?.id ?? "none")}).`
+    };
+  }
+
+  const varMfPaginated = await paginateProductConnection({
+    admin,
+    productGid: variantId,
+    connectionName: "Variant metafields",
+    initialEdges: variantNode.metafields?.edges,
+    initialPageInfo: variantNode.metafields?.pageInfo,
+    maxPages: MAX_METAFIELD_PAGES,
+    buildPageQuery: () => `
+      query getMoreSingleVariantMetafields($id: ID!, $cursor: String!) {
+        productVariant(id: $id) {
+          id
+          metafields(first: 250, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id
+                namespace
+                key
+                value
+                type
+              }
+            }
+          }
+        }
+      }
+    `,
+    extractConnection: (json) => json?.data?.productVariant?.metafields
+  });
+
+  const currentVariantMetafields = {};
+  const currentVariantMetafieldTypes = {};
+  const currentVariantMetafieldIds = {};
+
+  for (const edge of varMfPaginated.edges) {
+    const node = edge?.node;
+    if (!node || typeof node.namespace !== "string" || typeof node.key !== "string") {
+      continue;
+    }
+    const fullKey = `${node.namespace}.${node.key}`;
+    currentVariantMetafields[fullKey] = node.value;
+    currentVariantMetafieldTypes[fullKey] = typeof node.type === "string" ? node.type : null;
+    currentVariantMetafieldIds[fullKey] = node.id || null;
+  }
+
+  return {
+    metafields: currentVariantMetafields,
+    metafieldTypes: currentVariantMetafieldTypes,
+    metafieldIds: currentVariantMetafieldIds,
+    isComplete: varMfPaginated.isComplete === true,
+    error: varMfPaginated.error || null
+  };
+}
+
+/**
+ * Reads the complete single-product baseline and live PRODUCT + PRODUCTVARIANT
+ * metafield definitions required by app/utils/bench-v2.contract.jsx.
  *
  * - Requires an authenticated admin client and one exact Product GID
  *   ("gid://shopify/Product/<digits>").
  * - Never seeds a repairPlan or proposal map.
  * - Preserves raw values and types verbatim without trimming or normalization.
  * - Reports explicit completeness flags (metafieldsReadComplete, defsReadComplete,
- *   variantsReadComplete, mediaReadComplete, productCategoryReadComplete) and
- *   per-destination constraint errors (constraintErrorsByDestination).
+ *   variantsReadComplete, mediaReadComplete, productCategoryReadComplete,
+ *   variantMetafieldsReadComplete, variantDefsReadComplete) and per-destination
+ *   constraint errors (constraintErrorsByDestination, variantConstraintErrorsByDestination).
+ * - Failure isolation: variant metafield/definition read failures hold ONLY
+ *   variant-owned destinations and never fail the product baseline load or
+ *   disable product-owned drawers.
  */
 export async function loadSingleProductBaselineSnapshot(admin, productId) {
   if (!admin || typeof admin.graphql !== "function") {
@@ -914,7 +1100,7 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
     currentMetafieldIds[fullKey] = node.id || null;
   }
 
-  // 2. Paginate product variants
+  // 2. Paginate product variants (without nesting metafields inside the 250-variant query)
   const variantsPaginated = await paginateProductConnection({
     admin,
     productGid: productId,
@@ -1030,11 +1216,33 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
   const nativeIsComplete =
     unverifiedNativeFields.length === 0 && nativeLoadErrors.length === 0;
 
-  // Expose single-variant price and shipping weight on nativeTargets only when
-  // variant pagination completed unambiguously with exactly 1 variant.
-  const hasUnambiguousSingleVariant =
-    variantsPaginated.isComplete && uniqueVariants.length === 1;
-  const primaryVariantNode = hasUnambiguousSingleVariant ? uniqueVariants[0].node : null;
+  // Establish single-variant identity ONLY when variant pagination is complete
+  // and exactly 1 distinct variant exists with a valid ProductVariant GID.
+  const variantCount = variantsPaginated.isComplete ? uniqueVariants.length : null;
+  const candidateSingleVariantId =
+    variantsPaginated.isComplete && uniqueVariants.length === 1
+      ? String(uniqueVariants[0]?.node?.id || "").trim()
+      : null;
+  const hasVerifiedSingleVariant =
+    variantsPaginated.isComplete &&
+    uniqueVariants.length === 1 &&
+    isExactProductVariantGid(candidateSingleVariantId);
+
+  let variantTargetStatus = "unknown";
+  if (!variantsPaginated.isComplete) {
+    variantTargetStatus = "variants_read_incomplete";
+  } else if (uniqueVariants.length === 0) {
+    variantTargetStatus = "zero_variants";
+  } else if (uniqueVariants.length > 1) {
+    variantTargetStatus = "multiple_variants_ambiguous";
+  } else if (hasVerifiedSingleVariant) {
+    variantTargetStatus = "single_variant_verified";
+  } else {
+    variantTargetStatus = "invalid_or_missing_variant_gid";
+  }
+
+  const primaryVariantId = hasVerifiedSingleVariant ? candidateSingleVariantId : null;
+  const primaryVariantNode = hasVerifiedSingleVariant ? uniqueVariants[0].node : null;
   const primaryVariantPrice =
     primaryVariantNode && typeof primaryVariantNode.price === "string"
       ? primaryVariantNode.price
@@ -1111,14 +1319,77 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
     }
   }
 
+  // 5. Read single-variant metafields (ONLY when single-variant identity is verified)
+  // and live PRODUCTVARIANT metafieldDefinitions in isolated try/catch blocks so
+  // variant-stage errors NEVER fail the product baseline load or disable product drawers.
+  let currentVariantMetafields = null;
+  let currentVariantMetafieldTypes = null;
+  let currentVariantMetafieldIds = null;
+  let variantMetafieldsReadComplete = false;
+  let variantMetafieldsReadError = null;
+
+  if (hasVerifiedSingleVariant && primaryVariantId) {
+    try {
+      const varMfResult = await readSingleVariantMetafields(
+        admin,
+        product.id,
+        primaryVariantId
+      );
+      currentVariantMetafields = varMfResult.metafields;
+      currentVariantMetafieldTypes = varMfResult.metafieldTypes;
+      currentVariantMetafieldIds = varMfResult.metafieldIds;
+      variantMetafieldsReadComplete = varMfResult.isComplete === true;
+      variantMetafieldsReadError = varMfResult.error || null;
+    } catch (varErr) {
+      currentVariantMetafields = null;
+      currentVariantMetafieldTypes = null;
+      currentVariantMetafieldIds = null;
+      variantMetafieldsReadComplete = false;
+      variantMetafieldsReadError = `Unexpected error reading variant metafields for ${primaryVariantId}: ${varErr.message}`;
+    }
+  } else if (variantTargetStatus === "zero_variants") {
+    variantMetafieldsReadError = "Product has zero variants; variant metafields cannot be loaded.";
+  } else if (variantTargetStatus === "multiple_variants_ambiguous") {
+    variantMetafieldsReadError = `Product has ${uniqueVariants.length} variants; single-variant metafields are held read-only to prevent ambiguous variant targeting.`;
+  } else if (variantTargetStatus === "variants_read_incomplete") {
+    variantMetafieldsReadError =
+      variantsPaginated.error || "Product variant enumeration did not complete.";
+  } else {
+    variantMetafieldsReadError = "Single-variant ProductVariant GID could not be verified.";
+  }
+
+  let liveVariantDefinitions = {};
+  let variantDefsReadComplete = false;
+  let variantDefReadErrors = [];
+  let variantConstraintErrorsByDestination = {};
+
+  try {
+    const varDefReadResult = await readVariantMetafieldDefinitionsWithConstraints(admin);
+    liveVariantDefinitions = varDefReadResult.defs || {};
+    variantDefsReadComplete = varDefReadResult.defsReadComplete === true;
+    variantDefReadErrors = Array.isArray(varDefReadResult.errors)
+      ? varDefReadResult.errors
+      : [];
+    variantConstraintErrorsByDestination = {
+      ...(varDefReadResult.constraintErrorsByDestination || {})
+    };
+  } catch (varDefErr) {
+    liveVariantDefinitions = {};
+    variantDefsReadComplete = false;
+    variantDefReadErrors = [
+      `Unexpected error reading live PRODUCTVARIANT metafield definitions: ${varDefErr.message}`
+    ];
+    variantConstraintErrorsByDestination = {};
+  }
+
+  // Product-level errors list remains strictly scoped to product baseline & PRODUCT definitions
+  // so a variant-only read failure never invalidates product drawers.
   const allErrors = [
     mfPaginated.error,
     ...nativeLoadErrors,
     ...(defReadResult.errors || [])
   ].filter(Boolean);
 
-  // Variant-level metafields are not queried by the product-level query;
-  // variantMetafieldsReadComplete is explicitly false (never fabricated as complete).
   const baselineSnapshot = {
     productId: product.id,
     productTitle: hasNativeTitle ? product.title : "",
@@ -1132,14 +1403,23 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
     metafieldsReadError: mfPaginated.error || null,
     variantsReadComplete: variantsPaginated.isComplete === true,
     mediaReadComplete: mediaPaginated.isComplete === true,
-    currentVariantMetafields: null,
-    currentVariantMetafieldTypes: null,
-    variantMetafieldsReadComplete: false,
+    primaryVariantId,
+    variantCount,
+    variantTargetStatus,
+    currentVariantMetafields,
+    currentVariantMetafieldTypes,
+    currentVariantMetafieldIds,
+    variantMetafieldsReadComplete,
+    variantMetafieldsReadError,
     liveDefinitions: defReadResult.defs,
     defsReadComplete: defReadResult.defsReadComplete === true,
     defReadErrors: defReadResult.errors || [],
     constraintErrorsByDestination,
     categoryEligibilityByDestination,
+    liveVariantDefinitions,
+    variantDefsReadComplete,
+    variantDefReadErrors,
+    variantConstraintErrorsByDestination,
     errors: allErrors,
     loadedAt: new Date().toISOString()
   };

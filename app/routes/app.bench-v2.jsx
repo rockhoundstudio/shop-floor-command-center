@@ -1,29 +1,46 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE + GEOLOGY + SIDEKICK SNAPSHOT SYNC)
+// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE + GEOLOGY + CHANNEL ATTRIBUTES + SIDEKICK SNAPSHOT SYNC)
 // File: app/routes/app.bench-v2.jsx
 //
 // Verified Current Sources Confirmed in Context:
-// 1. app/utils/bench-v2.contract.jsx (Current saved contract with Drawer 7 Geology 12 connected + 1 read-only compatibility custom.geological_era)
-// 2. app/utils/bench-v2.baseline.server.jsx (43,102 chars, SHA256: 81590D25E0923983958813D4EC9E323EFD1B6C247711642770A1A378C5894CCA)
-// 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75 — action intent="executeRepairPlan" with benchV2OptIn="true")
+// 1. app/utils/bench-v2.contract.jsx (Current saved contract with Drawer 8 connected
+//    custom.google_product_category on PRODUCT + replacement-bench-local single-variant
+//    PRODUCTVARIANT destinations mm-google-shopping.age_group, mm-google-shopping.condition,
+//    mm-google-shopping.gender, plus isExactProductVariantGid and BENCH_V2_CONNECTED_VARIANT_DESTINATIONS)
+// 2. app/utils/bench-v2.baseline.server.jsx (Current saved baseline loader with
+//    primaryVariantId, variantCount, variantTargetStatus, currentVariantMetafields,
+//    currentVariantMetafieldTypes, currentVariantMetafieldIds, variantMetafieldsReadComplete,
+//    variantMetafieldsReadError, liveVariantDefinitions, variantDefsReadComplete,
+//    variantDefReadErrors, and variantConstraintErrorsByDestination)
+// 3. app/routes/app.meta-injector-api.jsx (Current saved writer API with benchV2OptIn="true"
+//    and caller variantTargetId verification for the 3 allowlisted PRODUCTVARIANT destinations)
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars, SHA256: FC207DA09F4DD0F6942CC9C4B4B83B6694B9749BB86748355227ADDA494CE5C5 — action delegates to executeAutofill)
-// 5. app/utils/meta-injector.autofill.server.jsx (Current saved producer with Section 8 Drawer 7 Geology proposals & 54-key ALLOWED_PROVENANCE_FIELD_KEYS)
-// 6. app/routes/app.bench-v2.jsx (Current Route, SHA256: 21B6250FEEFF67C1CC3BD394014D1F0A5E468860B9A9166061EB2A19F0748667)
-// 7. app/routes/api.meta-injector-telemetry.jsx (31,525 chars, SHA256: 9E7654DF52CAE0A13638B9A8BF48A2D619ADEC4CA92E68D952259556A609B947)
-// 8. app/utils/meta-injector.sidekick-report-cache.server.js (Current saved cache with MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024)
+// 5. app/utils/meta-injector.autofill.server.jsx (Current saved producer with Section 9
+//    custom.google_product_category proposal emission under benchV2OptIn="true")
+// 6. app/routes/app.bench-v2.jsx (Saved baseline SHA256: 7306C45DBA6F2426723DE4A45BD31C6AEA00741543CF14005443E931D82D1960)
+// 7. app/utils/meta-injector.constants.jsx (Unchanged shared constants, SHA256: 4E399E09C5926B13012503252963CC4B9627E8A4F8FDB59545C406D1B9B8AF9B)
 //
-// Authorized Geology Route Connection Update:
-// - Adds the 12 active geology bare keys (mohs_hardness, specific_gravity, crystal_system,
-//   luster, cleavage, fracture_pattern, diaphaneity, tenacity, mineral_class,
-//   rock_composition, rock_formation, geological_age) to ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
-//   keeping legacy custom.geological_era excluded from active provenance/proposals and read-only.
-// - Updates getDrawerConnectionSubtitle and header/Save empty-state notes to describe
-//   Drawers 1 to 7 (including Drawer 7 Geology: 12 connected destinations + 1 read-only
-//   legacy ERA compatibility slot).
-// - Preserves Sidekick Live Snapshot Sync (TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024),
-//   Product Search & Picker, 11 Tab 3 FILTER_OPTIONS, fixed 120px by 120px thumbnails,
-//   initially collapsed drawers, per-product drafts, exact approvals, Keep Original,
-//   and explicit Save/AI Scan interfaces verbatim.
+// Authorized Channel & Logical Sub-Harness Route Connection Update:
+// - Connects route handling for Drawer 8 (custom.google_product_category on PRODUCT +
+//   manual/preset single-variant PRODUCTVARIANT destinations mm-google-shopping.age_group,
+//   mm-google-shopping.condition, mm-google-shopping.gender), while keeping
+//   mm-google-shopping.custom_product held (UNVERIFIED_CONTRACT_HOLD) and legacy
+//   google.* variant slots + custom.target_gender read-only.
+// - Adds the 3 manual/preset variant destinations to MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS
+//   so AI Scan never stages proposals into them.
+// - Binds exact single-variant identity (variantTargetId) on Save when any approved
+//   entry targets PRODUCTVARIANT, verifying approval-bound product/owner/variant/destination/baseline.
+// - Reconciles verified PRODUCT and PRODUCTVARIANT destinations separately on read-back
+//   without cross-owner map corruption or optimistic completion flags.
+// - Exposes observation variantId and variantTargetStatus in per-field technical Details
+//   and existing Sidekick live snapshot metadata.
+// - Updates subtitles and header/empty-save notes with honest logical sub-harness status
+//   (distinguishing connected detailed custom.* paths from pending standardized shopify.*
+//   reference companions such as shopify.geological-era, shopify.crystal-system,
+//   shopify.mineral-class, shopify.rock-composition, shopify.rock-formation,
+//   shopify.material, and shopify.color-pattern, and noting that within Drawer 7
+//   12 detailed fields had scan-delivery evidence on Canyon Red while only AGE
+//   custom.geological_age has independently verified actual Save/readback).
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -35,8 +52,10 @@ import {
   BENCH_V2_DRAWER_GROUPS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
+  BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   isExactProductGid,
+  isExactProductVariantGid,
   getFieldContractByDestination,
   buildBaselineObservation,
   evaluateDestinationTypeAndCompleteness,
@@ -134,17 +153,22 @@ const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
 ]);
 
 // Explicit guard set for all manual-measurement and manual-only destinations
-// (including held measurement keepers) so AI Scan never stages proposals into them.
+// (including held measurement keepers and the 3 manual/preset single-variant
+// channel destinations) so AI Scan never stages proposals into them.
 const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
   new Set([
     ...(BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS || []),
+    ...(BENCH_V2_CONNECTED_VARIANT_DESTINATIONS || []),
     "custom.dimensions_mm",
     "custom.weight_grams",
     "custom.whole_product_weight_grams",
     "custom.chain_cord_length_in",
     "custom.accessory_dimensions_mm",
     "custom.fitting_opening_mm",
-    "custom.collection_date"
+    "custom.collection_date",
+    "mm-google-shopping.age_group",
+    "mm-google-shopping.condition",
+    "mm-google-shopping.gender"
   ])
 );
 
@@ -427,8 +451,12 @@ async function loadLightweightProductPage(admin, cursor = null, rawSearch = "") 
 // The five previously held Batch 1 custom destinations (custom.is_ooak,
 // custom.stone_family, custom.cut_and_shape, custom.stone_shape, custom.color)
 // plus custom.dimensions_mm, custom.weight_grams, the 8 Drawer 6 Setting & Hardware
-// destinations, and the 12 active Drawer 7 Geology destinations are supported by saved
-// app/routes/app.meta-injector-api.jsx when executeRepairPlan is submitted with benchV2OptIn="true".
+// destinations, the 12 active Drawer 7 Geology destinations, and the 4 connected
+// Drawer 8 Channel destinations (custom.google_product_category on PRODUCT +
+// single-variant PRODUCTVARIANT mm-google-shopping.age_group, mm-google-shopping.condition,
+// mm-google-shopping.gender) are supported by saved app/routes/app.meta-injector-api.jsx
+// when executeRepairPlan is submitted with benchV2OptIn="true" (and exact variantTargetId
+// for variant destinations).
 // Approval and save readiness still require all live definition, stored type,
 // completeness, baseline, string-fidelity, and exact-value approval checks.
 export const EXISTING_WRITER_CONNECTION_HOLDS = Object.freeze({});
@@ -445,9 +473,9 @@ export function getExistingWriterHoldReason(destinationKey) {
   return EXISTING_WRITER_CONNECTION_HOLDS[destinationKey];
 }
 
-// Existing executeRepairPlan in app/routes/app.meta-injector-api.jsx (line 822 & 935)
+// Existing executeRepairPlan in app/routes/app.meta-injector-api.jsx
 // applies String(val).trim() when comparing/writing values and strips leading "⚠️"
-// via normalizeMetafieldValue (line 262). Since exact-value approval in Bench V2
+// via normalizeMetafieldValue. Since exact-value approval in Bench V2
 // forbids silent value rewriting between approvedValue and what the writer stores,
 // preflight blocks any proposal that would be altered by the existing writer's
 // trim or warning-prefix strip.
@@ -538,10 +566,16 @@ function formatRawBaselineValueForInspection(baselineObs) {
     if (baselineObs.presence === "unknown_incomplete_read") {
       return "[UNKNOWN — INCOMPLETE READ (Cannot Infer Absence)]";
     }
+    if (baselineObs.presence === "multiple_variants_hold") {
+      return "[HELD — MULTIPLE VARIANTS (Single-Variant Target Required)]";
+    }
+    if (baselineObs.presence === "zero_variants_hold") {
+      return "[HELD — ZERO VARIANTS]";
+    }
     return `[UNAVAILABLE — ${baselineObs.presence}]`;
   }
   if (baselineObs.presence === "absent") {
-    return "[ABSENT — Verified Not Set on Product]";
+    return "[ABSENT — Verified Not Set on Owner]";
   }
   if (baselineObs.presence === "null") {
     return "[NULL]";
@@ -561,6 +595,12 @@ function formatReadableSavedValue(baselineObs, usesMeaningDisplay, baselineDispl
   if (!baselineObs.evidenceAvailable) {
     if (baselineObs.presence === "unknown_incomplete_read") {
       return "Read incomplete (cannot confirm if empty)";
+    }
+    if (baselineObs.presence === "multiple_variants_hold") {
+      return "Held (multiple variants on product)";
+    }
+    if (baselineObs.presence === "zero_variants_hold") {
+      return "Held (zero variants on product)";
     }
     return "Not available";
   }
@@ -598,7 +638,9 @@ function cleanFieldHeading(rawLabel) {
   if (typeof rawLabel !== "string") return "";
   return rawLabel
     .replace(/\s*\(custom\.[^)]+\)/gi, "")
+    .replace(/\s*\(mm-google-shopping\.[^)]+\)/gi, "")
     .replace(/\s*\(Saved Compatibility\s*—\s*Read-Only\)/gi, "")
+    .replace(/\s*\(Legacy Variant Compatibility\s*—\s*Read-Only\)/gi, "")
     .replace(/\s*\(Read-Only in Batch 1\)/gi, "")
     .replace(/\s*\(Unverified Hold\)/gi, "")
     .replace(/\s*\(Variant-Owned Hold\)/gi, "")
@@ -627,12 +669,30 @@ function getShortPlainNotice(row) {
     if (obs.presence === "unknown_incomplete_read") {
       return {
         tone: "error",
-        text: "Read incomplete — reload before editing."
+        text:
+          contract.owner === "PRODUCTVARIANT"
+            ? "Variant read incomplete — reload before editing."
+            : "Read incomplete — reload before editing."
+      };
+    }
+    if (obs.presence === "multiple_variants_hold") {
+      return {
+        tone: "warning",
+        text: "Held read-only: product has multiple variants (single-variant target required)."
+      };
+    }
+    if (obs.presence === "zero_variants_hold") {
+      return {
+        tone: "error",
+        text: "Held read-only: product has zero variants."
       };
     }
     return {
       tone: "error",
-      text: "Baseline not loaded."
+      text:
+        contract.owner === "PRODUCTVARIANT"
+          ? "Variant baseline not loaded."
+          : "Baseline not loaded."
     };
   }
 
@@ -855,7 +915,13 @@ export function matchesBenchV2Filter(row, activeFilter) {
 function getDrawerConnectionSubtitle(drawer) {
   if (!drawer) return "Read-only in Batch 1";
   if (drawer.drawerId === "parked_excluded_protected") {
-    return "Read-only parked and protected fields";
+    return "Read-only parked and protected fields (includes excluded custom & standardized authenticity/rarity)";
+  }
+  if (drawer.drawerId === "identity") {
+    return "Detailed custom.* identity fields connected (standardized companion shopify.material in Drawer 10 remains locked pending reference wiring)";
+  }
+  if (drawer.drawerId === "appearance_and_character") {
+    return "Detailed custom.* appearance fields connected (standardized companion shopify.color-pattern in Drawer 10 remains locked pending reference wiring)";
   }
   if (drawer.drawerId === "manual_measurements") {
     const writableCount = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1).length;
@@ -866,9 +932,30 @@ function getDrawerConnectionSubtitle(drawer) {
     return "Connected for manual entry, AI Scan hardware suggestions & exact approval";
   }
   if (drawer.drawerId === "geology") {
-    const writableCount = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1).length;
-    const readOnlyCount = drawer.evaluatedRows.length - writableCount;
-    return `Connected in Batch 1 (${writableCount} connected geology destinations, ${readOnlyCount} read-only legacy ERA compatibility slot)`;
+    const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
+    const readyCount = writableRows.filter(
+      (r) =>
+        r.baselineObservation.evidenceAvailable &&
+        r.baselineObservation.metafieldsCompleteState === "complete" &&
+        r.baselineObservation.defsCompleteState === "complete" &&
+        Boolean(r.baselineObservation.liveDefType || r.baselineObservation.storedType)
+    ).length;
+    return `Detailed custom.* geology paths connected (${readyCount}/${writableRows.length} ready on product; 12 had scan-delivery evidence on Canyon, only AGE custom.geological_age has independently verified Save/readback; legacy custom.geological_era is read-only; authoritative ERA dropdown shopify.geological-era + 4 standardized geology reference companions in Drawer 10 remain locked)`;
+  }
+  if (drawer.drawerId === "other_channel") {
+    const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
+    const readyCount = writableRows.filter(
+      (r) =>
+        r.baselineObservation.evidenceAvailable &&
+        r.baselineObservation.metafieldsCompleteState === "complete" &&
+        r.baselineObservation.defsCompleteState === "complete" &&
+        Boolean(r.baselineObservation.liveDefType || r.baselineObservation.storedType) &&
+        !r. baselineObservation.destinationDefError
+    ).length;
+    return `4 channel destinations wired (${readyCount}/${writableRows.length} ready on current product: PRODUCT custom.google_product_category + manual/preset single-variant PRODUCTVARIANT mm-google-shopping.age_group, condition, gender; mm-google-shopping.custom_product held; legacy google.* variant slots & custom.target_gender read-only)`;
+  }
+  if (drawer.drawerId === "standardized_attributes") {
+    return "Locked in this batch (all 18 non-excluded shopify.* reference attributes — including authoritative ERA dropdown shopify.geological-era, 4 standardized geology companions, shopify.material, and shopify.color-pattern — remain read-only pending reference wiring)";
   }
   if (drawer.isImplementedInBatch1) {
     return "Connected in Batch 1";
@@ -1648,7 +1735,8 @@ export default function BenchV2Route() {
   // - Validates exact requestId and pieceId before accepting any result.
   // - Consumes ONLY rawResponse.producerProposals (never tab3Data fallbacks).
   // - Explicitly ignores/blocks any proposal for manual-measurement or manual-only
-  //   destinations (including held measurement keepers) and reports a clear reason.
+  //   destinations (including held measurement keepers and manual/preset single-variant
+  //   channel destinations) and reports a clear reason.
   // - Carries actual producerProposals[destKey].source metadata into both
   //   breakdown lines and per-destination scan metadata (using "Source not reported"
   //   when absent, never inferring provenance from baseline equality or field name).
@@ -1819,13 +1907,15 @@ export default function BenchV2Route() {
       // Explicit Manual Measurement / Manual-Only AI Exclusion Gate:
       // Never stage AI suggestions into any manual measurement or manual-only destination
       // (including custom.dimensions_mm, custom.weight_grams, custom.collection_date,
-      // and the 4 held measurement keepers). Report a clear reason in the scan breakdown.
+      // the 4 held measurement keepers, and the 3 manual/preset variant channel destinations).
       if (isManualOnlyNoAiDestination(destKey, contract)) {
         ignoredManualOnlyCount++;
         const manualReason =
           contract?.drawerId === "manual_measurements"
             ? "Manual measurement field — excluded from AI staging; enter physical measurement manually."
-            : "Manual-only field — excluded from AI staging.";
+            : contract?.owner === "PRODUCTVARIANT"
+              ? "Manual/preset variant channel field — excluded from AI staging."
+              : "Manual-only field — excluded from AI staging.";
         proposalsByDestination[destKey] = {
           value: rawValue,
           source: reportedSource,
@@ -1989,7 +2079,7 @@ export default function BenchV2Route() {
 
     const manualIgnoredNote =
       ignoredManualOnlyCount > 0
-        ? `, ${ignoredManualOnlyCount} manual-only measurement suggestion${
+        ? `, ${ignoredManualOnlyCount} manual-only suggestion${
             ignoredManualOnlyCount === 1 ? "" : "s"
           } ignored`
         : "";
@@ -2078,8 +2168,9 @@ export default function BenchV2Route() {
   };
 
   // Handle writerFetcher completion: match exact productId & submissionId,
-  // interpret only actual returned writer outcomes, preserve unrelated drafts,
-  // and trigger a fresh baseline revalidation so types/definitions/signatures stay true.
+  // interpret only actual returned writer outcomes, reconcile verified PRODUCT
+  // and PRODUCTVARIANT destinations separately without cross-owner map corruption,
+  // preserve unrelated drafts, and trigger a fresh baseline revalidation.
   useEffect(() => {
     if (writerFetcher.state !== "idle") return;
     const pendingSub = activeSaveSubmissionRef.current;
@@ -2095,6 +2186,7 @@ export default function BenchV2Route() {
     processedSubmissionIdRef.current = pendingSub.submissionId;
 
     const submittedProductId = pendingSub.productId;
+    const submittedVariantTargetId = pendingSub.variantTargetId || null;
     const submittedDestinations = pendingSub.submittedDestinations || [];
     const submittedValuesByDest = pendingSub.submittedValuesByDestination || {};
 
@@ -2102,6 +2194,7 @@ export default function BenchV2Route() {
       setLastSaveReport({
         submissionId: pendingSub.submissionId,
         productId: submittedProductId,
+        variantTargetId: submittedVariantTargetId,
         completedAt: new Date().toISOString(),
         overallOutcome: "UNCONFIRMED_NETWORK_OR_SERVER_FAILURE",
         writerStatus: "NO_RESPONSE_PAYLOAD",
@@ -2129,6 +2222,7 @@ export default function BenchV2Route() {
       setLastSaveReport({
         submissionId: pendingSub.submissionId,
         productId: submittedProductId,
+        variantTargetId: submittedVariantTargetId,
         completedAt: new Date().toISOString(),
         overallOutcome: "MISMATCHED_PRODUCT_RESPONSE_IGNORED",
         writerStatus: String(rawResponse.status || "MISMATCH"),
@@ -2177,6 +2271,8 @@ export default function BenchV2Route() {
         ? [{ message: String(rawResponse.error) }]
         : [];
     const readBackVerified = rawResponse.readBackVerified === true;
+    const responseVariantTarget =
+      rawResponse.primaryVariantId || rawResponse.variantTarget || null;
 
     // Identify any submitted destination that was neither verified, blocked, skipped,
     // unsupported, nor unchanged (e.g. if a mutation failed mid-batch or read-back was incomplete).
@@ -2189,26 +2285,86 @@ export default function BenchV2Route() {
         !unchangedList.includes(dest)
     );
 
-    // Reconcile baseline currentMetafields for positively verified destinations
-    // ONLY on submittedProductId, while preserving existing types/definitions
-    // and triggering a full loader revalidation for complete fresh evidence.
-    if (
+    // Reconcile baseline currentMetafields (for verified PRODUCT destinations) and
+    // currentVariantMetafields (for verified PRODUCTVARIANT destinations when the
+    // returned variant identity matches submittedVariantTargetId) ONLY on submittedProductId,
+    // without overwriting product maps with variant maps or marking incomplete reads complete.
+    const hasReturnedProductMetafields = Boolean(
       rawResponse.currentMetafields &&
       typeof rawResponse.currentMetafields === "object" &&
       !Array.isArray(rawResponse.currentMetafields)
-    ) {
+    );
+    const hasReturnedVariantMetafields = Boolean(
+      rawResponse.currentVariantMetafields &&
+      typeof rawResponse.currentVariantMetafields === "object" &&
+      !Array.isArray(rawResponse.currentVariantMetafields) &&
+      rawResponse.variantMetafieldsReadComplete === true &&
+      submittedVariantTargetId &&
+      responseVariantTarget === submittedVariantTargetId
+    );
+
+    if (hasReturnedProductMetafields || hasReturnedVariantMetafields) {
       setBaselineByProduct((prev) => {
         const existingSnap = prev[submittedProductId];
         if (!existingSnap || existingSnap.productId !== submittedProductId) return prev;
+
         const updatedMetafields = { ...(existingSnap.currentMetafields || {}) };
         const updatedTypes = { ...(existingSnap.currentMetafieldTypes || {}) };
 
+        let updatedVariantMetafields = existingSnap.currentVariantMetafields
+          ? { ...existingSnap.currentVariantMetafields }
+          : null;
+        let updatedVariantTypes = existingSnap.currentVariantMetafieldTypes
+          ? { ...existingSnap.currentVariantMetafieldTypes }
+          : null;
+        let updatedVariantIds = existingSnap.currentVariantMetafieldIds
+          ? { ...existingSnap.currentVariantMetafieldIds }
+          : null;
+        let nextVariantReadComplete = existingSnap.variantMetafieldsReadComplete === true;
+
         for (const vDest of verifiedList) {
-          if (Object.prototype.hasOwnProperty.call(rawResponse.currentMetafields, vDest)) {
+          const contract = getFieldContractByDestination(vDest);
+          const isVariantDest =
+            contract?.owner === "PRODUCTVARIANT" ||
+            BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
+
+          if (isVariantDest) {
+            if (
+              hasReturnedVariantMetafields &&
+              existingSnap.primaryVariantId === submittedVariantTargetId &&
+              Object.prototype.hasOwnProperty.call(rawResponse.currentVariantMetafields, vDest)
+            ) {
+              if (!updatedVariantMetafields) updatedVariantMetafields = {};
+              if (!updatedVariantTypes) updatedVariantTypes = {};
+              updatedVariantMetafields[vDest] = rawResponse.currentVariantMetafields[vDest];
+              const returnedVarType =
+                rawResponse.currentVariantMetafieldTypes?.[vDest] ||
+                existingSnap.liveVariantDefinitions?.[vDest]?.type ||
+                null;
+              if (returnedVarType) {
+                updatedVariantTypes[vDest] = returnedVarType;
+              }
+              if (
+                rawResponse.currentVariantMetafieldIds &&
+                typeof rawResponse.currentVariantMetafieldIds === "object" &&
+                rawResponse.currentVariantMetafieldIds[vDest]
+              ) {
+                if (!updatedVariantIds) updatedVariantIds = {};
+                updatedVariantIds[vDest] = rawResponse.currentVariantMetafieldIds[vDest];
+              }
+              nextVariantReadComplete = rawResponse.variantMetafieldsReadComplete === true;
+            }
+          } else if (
+            hasReturnedProductMetafields &&
+            Object.prototype.hasOwnProperty.call(rawResponse.currentMetafields, vDest)
+          ) {
             updatedMetafields[vDest] = rawResponse.currentMetafields[vDest];
-            const liveType = existingSnap.liveDefinitions?.[vDest]?.type || null;
-            if (!updatedTypes[vDest] && liveType) {
-              updatedTypes[vDest] = liveType;
+            const returnedProdType =
+              rawResponse.currentMetafieldTypes?.[vDest] ||
+              existingSnap.liveDefinitions?.[vDest]?.type ||
+              null;
+            if (!updatedTypes[vDest] && returnedProdType) {
+              updatedTypes[vDest] = returnedProdType;
             }
           }
         }
@@ -2219,6 +2375,10 @@ export default function BenchV2Route() {
             ...existingSnap,
             currentMetafields: updatedMetafields,
             currentMetafieldTypes: updatedTypes,
+            currentVariantMetafields: updatedVariantMetafields,
+            currentVariantMetafieldTypes: updatedVariantTypes,
+            currentVariantMetafieldIds: updatedVariantIds,
+            variantMetafieldsReadComplete: nextVariantReadComplete,
             loadedAt: new Date().toISOString()
           }
         };
@@ -2227,11 +2387,28 @@ export default function BenchV2Route() {
 
     // Clear proposals and approvals ONLY on submittedProductId for destinations
     // that were positively verified on read-back AND whose current draft still
-    // matches the exact value that was submitted.
+    // matches the exact value that was submitted (and whose variant target matched
+    // for PRODUCTVARIANT destinations).
     if (verifiedSet.size > 0) {
+      const canClearVerifiedDest = (vDest) => {
+        const contract = getFieldContractByDestination(vDest);
+        const isVariantDest =
+          contract?.owner === "PRODUCTVARIANT" ||
+          BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
+        if (isVariantDest) {
+          return Boolean(
+            submittedVariantTargetId &&
+            responseVariantTarget === submittedVariantTargetId &&
+            rawResponse.variantMetafieldsReadComplete === true
+          );
+        }
+        return true;
+      };
+
       setProposedByProduct((prev) => {
         const prodMap = { ...(prev[submittedProductId] || {}) };
         for (const vDest of verifiedSet) {
+          if (!canClearVerifiedDest(vDest)) continue;
           const currentEntry = prodMap[vDest];
           const currentVal =
             currentEntry && typeof currentEntry === "object"
@@ -2247,6 +2424,7 @@ export default function BenchV2Route() {
       setApprovalsByProduct((prev) => {
         const prodApprovals = { ...(prev[submittedProductId] || {}) };
         for (const vDest of verifiedSet) {
+          if (!canClearVerifiedDest(vDest)) continue;
           const rec = prodApprovals[vDest];
           if (rec && rec.approvedValue === submittedValuesByDest[vDest]) {
             delete prodApprovals[vDest];
@@ -2259,6 +2437,8 @@ export default function BenchV2Route() {
     setLastSaveReport({
       submissionId: pendingSub.submissionId,
       productId: submittedProductId,
+      variantTargetId: submittedVariantTargetId,
+      responseVariantTarget,
       completedAt: new Date().toISOString(),
       overallOutcome:
         rawResponse.success === true &&
@@ -2290,7 +2470,7 @@ export default function BenchV2Route() {
 
     setActiveSaveSubmission(null);
     // Trigger full single-product baseline revalidation so metafieldsReadComplete,
-    // currentMetafieldTypes, and liveDefinitions are refreshed from Shopify.
+    // variantMetafieldsReadComplete, currentMetafieldTypes, and liveDefinitions are refreshed.
     revalidator.revalidate();
   }, [writerFetcher.state, writerFetcher.data, revalidator]);
 
@@ -2631,6 +2811,7 @@ export default function BenchV2Route() {
   // - Expands loaded per-image MediaImage alt rows (native_image_alts_<MediaImageGid>)
   //   alongside native_image_alt capability descriptor in Drawer 9 so per-photo
   //   alt baselines are inspectable via view="drawer" and view="field".
+  // - Surfaces exact variantId and variantTargetStatus for PRODUCTVARIANT fields.
   // - Eliminates redundant multi-copy string duplication (`rawStoredBaseline.signature`
   //   and duplicate `evaluatedBaseline.value` when identical to `rawStoredBaseline.value`)
   //   and omits inactive `false`/`null` defaults where the existing cache reader
@@ -2982,10 +3163,16 @@ export default function BenchV2Route() {
 
         let mappedFieldStatus = "Unchanged";
         if (!obs.evidenceAvailable) {
-          mappedFieldStatus =
-            obs.presence === "unknown_incomplete_read"
-              ? "Incomplete Read"
-              : "Baseline Not Loaded";
+          if (obs.presence === "unknown_incomplete_read") {
+            mappedFieldStatus = "Incomplete Read";
+          } else if (
+            obs.presence === "multiple_variants_hold" ||
+            obs.presence === "zero_variants_hold"
+          ) {
+            mappedFieldStatus = "Held (Variant Target)";
+          } else {
+            mappedFieldStatus = "Baseline Not Loaded";
+          }
         } else if (hasSaveErrorOrConflict) {
           const isBlockedInSave = Boolean(
             activeSaveReportForCurrentProduct?.blockedFields &&
@@ -3088,6 +3275,10 @@ export default function BenchV2Route() {
           exists: rawBaselineExists,
           presence: obs.presence,
           value: rawValueToStore,
+          ...(obs.variantId ? { variantId: obs.variantId } : {}),
+          ...(obs.variantTargetStatus
+            ? { variantTargetStatus: obs.variantTargetStatus }
+            : {}),
           ...(obs.storedType ? { storedType: obs.storedType } : {}),
           ...(obs.liveDefType ? { liveDefType: obs.liveDefType } : {}),
           ...(obs.metafieldsCompleteState !== "complete"
@@ -3153,8 +3344,11 @@ export default function BenchV2Route() {
           ...(scanProposalMeta ? { lastAiScanOutcome: scanProposalMeta } : {})
         };
 
-        const isVariantHold =
+        const isVariantOwner =
           contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+        const isVariantHold =
+          isVariantOwner &&
+          (!contract.isWritableInBatch1 || !obs.evidenceAvailable);
         const isExplicitStorageHold =
           contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD";
         const isChannelFlagHold =
@@ -3220,6 +3414,7 @@ export default function BenchV2Route() {
           drawerId: contract.drawerId,
           label: cleanFieldHeading(contract.label) || contract.label,
           registryOwner: regMeta.registryOwner,
+          ...(obs.variantId ? { variantId: obs.variantId } : {}),
           ...(regMeta.registryIdentity !== destKey
             ? { registryIdentity: regMeta.registryIdentity }
             : {}),
@@ -3352,6 +3547,7 @@ export default function BenchV2Route() {
     const saveVerificationEvidence = {
       hasRepairAttemptInSession: Boolean(activeSaveReportForCurrentProduct),
       lastRepairSubmissionId: activeSaveReportForCurrentProduct?.submissionId || null,
+      lastRepairVariantTargetId: activeSaveReportForCurrentProduct?.variantTargetId || null,
       lastRepairCompletedAt: activeSaveReportForCurrentProduct?.completedAt || null,
       lastRepairOverallOutcome: activeSaveReportForCurrentProduct?.overallOutcome || null,
       lastRepairStatus: activeSaveReportForCurrentProduct?.writerStatus || null,
@@ -3436,11 +3632,23 @@ export default function BenchV2Route() {
         hasBaselineErrors,
         metafieldsReadComplete: currentBaseline?.metafieldsReadComplete ?? null,
         defsReadComplete: currentBaseline?.defsReadComplete ?? null,
+        variantsReadComplete: currentBaseline?.variantsReadComplete ?? null,
+        primaryVariantId: currentBaseline?.primaryVariantId ?? null,
+        variantCount: currentBaseline?.variantCount ?? null,
+        variantTargetStatus: currentBaseline?.variantTargetStatus ?? null,
+        variantMetafieldsReadComplete:
+          currentBaseline?.variantMetafieldsReadComplete ?? null,
+        variantDefsReadComplete: currentBaseline?.variantDefsReadComplete ?? null,
         nativeTargetsComplete: currentBaseline?.nativeTargets?.isComplete ?? null,
         selectionError: loaderData?.selectionError || null,
         loadError: loaderData?.loadError || null,
         baselineErrors: Array.isArray(currentBaseline?.errors)
           ? currentBaseline.errors
+          : [],
+        variantMetafieldsReadError:
+          currentBaseline?.variantMetafieldsReadError || null,
+        variantDefReadErrors: Array.isArray(currentBaseline?.variantDefReadErrors)
+          ? currentBaseline.variantDefReadErrors
           : [],
         clientPrevalidationBanner: clientPrevalidationBanner || null
       },
@@ -3480,7 +3688,7 @@ export default function BenchV2Route() {
       standardizedReferenceState: {
         readinessState: "locked_in_batch_1",
         readinessReason:
-          "Standardized shopify.* taxonomy reference attributes are read-only in Batch 1; no candidate matching is active in this batch.",
+          "Standardized shopify.* taxonomy reference attributes (including authoritative ERA dropdown shopify.geological-era, 4 standardized geology reference companions, shopify.material, and shopify.color-pattern) are read-only in this batch; no candidate matching or reference write is active yet.",
         stagedCandidateCount: 0,
         stagedCandidates: {},
         eligibleDestinationKeys: [],
@@ -3532,6 +3740,9 @@ export default function BenchV2Route() {
   // - Prevalidates every entry in currentApprovalsMap for activeProductId; if ANY
   //   approved entry is invalid, stale, writer-held, or fails writer string-fidelity,
   //   stops the entire submission rather than silently filtering it out.
+  // - For any approved PRODUCTVARIANT entry, verifies complete single-variant baseline
+  //   readiness, exact ProductVariant GID, and approval-bound variantId equality,
+  //   then appends variantTargetId to the executeRepairPlan FormData.
   const handleExplicitSaveApprovedChanges = () => {
     setClientPrevalidationBanner(null);
 
@@ -3563,7 +3774,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 7 and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 8 (where ready on this product) and check Approve before clicking Save."
         ]
       });
       return;
@@ -3571,6 +3782,7 @@ export default function BenchV2Route() {
 
     const prevalidationErrors = [];
     const safePlanToSubmit = {};
+    let requiredVariantTargetId = null;
 
     for (const [destKey, approvalRec] of approvalEntries) {
       const contract = getFieldContractByDestination(destKey);
@@ -3657,6 +3869,36 @@ export default function BenchV2Route() {
         continue;
       }
 
+      if (contract.owner === "PRODUCTVARIANT") {
+        const obsVariantId = validation.baselineObservation?.variantId || null;
+        const baselinePrimaryVariantId = currentBaseline?.primaryVariantId || null;
+
+        if (
+          currentBaseline?.variantsReadComplete !== true ||
+          currentBaseline?.variantTargetStatus !== "single_variant_verified" ||
+          currentBaseline?.variantMetafieldsReadComplete !== true ||
+          currentBaseline?.variantDefsReadComplete !== true ||
+          !isExactProductVariantGid(baselinePrimaryVariantId) ||
+          !isExactProductVariantGid(obsVariantId) ||
+          obsVariantId !== baselinePrimaryVariantId ||
+          approvalRec?.owner !== "PRODUCTVARIANT" ||
+          approvalRec?.variantId !== baselinePrimaryVariantId
+        ) {
+          prevalidationErrors.push(
+            `[${destKey}] Variant target identity or completeness is not verified for this approval. Reload product data and re-approve.`
+          );
+          continue;
+        }
+
+        if (requiredVariantTargetId && requiredVariantTargetId !== baselinePrimaryVariantId) {
+          prevalidationErrors.push(
+            `[${destKey}] Conflicting variantTargetId detected across approved variant fields (${requiredVariantTargetId} vs. ${baselinePrimaryVariantId}).`
+          );
+          continue;
+        }
+        requiredVariantTargetId = baselinePrimaryVariantId;
+      }
+
       safePlanToSubmit[destKey] = validation.normalizedValue;
     }
 
@@ -3687,6 +3929,7 @@ export default function BenchV2Route() {
     const submissionMeta = {
       submissionId,
       productId: activeProductId,
+      variantTargetId: requiredVariantTargetId,
       submittedDestinations,
       submittedValuesByDestination: { ...safePlanToSubmit },
       startedAt: new Date().toISOString()
@@ -3698,6 +3941,9 @@ export default function BenchV2Route() {
     formData.append("intent", "executeRepairPlan");
     formData.append("benchV2OptIn", "true");
     formData.append("pieceId", activeProductId);
+    if (requiredVariantTargetId) {
+      formData.append("variantTargetId", requiredVariantTargetId);
+    }
     formData.append("repairPlan", JSON.stringify(safePlanToSubmit));
     formData.append("nativeChanges", JSON.stringify({}));
     formData.append("legacyKeysToRemove", JSON.stringify([]));
@@ -4448,15 +4694,23 @@ export default function BenchV2Route() {
               color: "#334155"
             }}
           >
-            Drawers 1 to 7 are connected for manual edits and exact-value approval where
-            Shopify type/completeness evidence is verified. In Drawer 5 (Manual Measurements),{" "}
-            <strong>Dimensions (mm)</strong> and <strong>Weight (grams)</strong> are manual-only
-            (excluded from AI Scan staging), while the 4 unverified measurement keepers remain on
-            read-only hold. Drawer 6 (Setting and Hardware) is connected for manual edits and
-            AI Scan hardware suggestions. Drawer 7 (Geology) connects 12 deterministic geology
-            destinations while keeping legacy <strong>Geological Era</strong> (
-            <code>custom.geological_era</code>) on read-only compatibility hold. Filtering is
-            view-only and never clears drafts or decisions.
+            Connected fields in Drawers 1 to 8 unlock for manual edit and exact-value approval
+            only when live Shopify owner/type/completeness evidence is verified. In Drawer 5
+            (Manual Measurements), <strong>Dimensions (mm)</strong> and{" "}
+            <strong>Weight (grams)</strong> are manual-only, while 4 unverified measurement
+            keepers stay on hold. In Drawer 7 (Geology), 12 detailed <code>custom.*</code>{" "}
+            paths are connected (12 had scan-delivery evidence on Canyon Red; only AGE{" "}
+            <code>custom.geological_age</code> has independently verified actual Save/readback),
+            legacy <code>custom.geological_era</code> is read-only, and authoritative ERA
+            dropdown <code>shopify.geological-era</code> plus its 4 standardized geology
+            reference companions in Drawer 10 (as well as <code>shopify.material</code> and{" "}
+            <code>shopify.color-pattern</code>) remain locked pending reference wiring. In
+            Drawer 8 (Channel Attributes), <code>custom.google_product_category</code> (PRODUCT)
+            and manual/preset single-variant <code>mm-google-shopping.age_group</code>,{" "}
+            <code>condition</code>, and <code>gender</code> (PRODUCTVARIANT) are wired when
+            single-variant readiness passes, while <code>mm-google-shopping.custom_product</code>{" "}
+            remains held and legacy <code>google.*</code> variant slots +{" "}
+            <code>custom.target_gender</code> remain read-only.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
@@ -4488,9 +4742,25 @@ export default function BenchV2Route() {
                   : "None / Unassigned"}
               </div>
               <div>
-                <strong>Read Completeness:</strong> Metafields={" "}
-                {String(currentBaseline?.metafieldsReadComplete)} | Definitions={" "}
-                {String(currentBaseline?.defsReadComplete)} | Native={" "}
+                <strong>Single-Variant Target:</strong>{" "}
+                {currentBaseline?.primaryVariantId ? (
+                  <code>{currentBaseline.primaryVariantId}</code>
+                ) : (
+                  <span>None ({currentBaseline?.variantTargetStatus || "unknown"})</span>
+                )}{" "}
+                | <strong>Variant Count:</strong>{" "}
+                {currentBaseline?.variantCount !== null &&
+                currentBaseline?.variantCount !== undefined
+                  ? String(currentBaseline.variantCount)
+                  : "Unknown"}
+              </div>
+              <div>
+                <strong>Read Completeness:</strong> Product Metafields={" "}
+                {String(currentBaseline?.metafieldsReadComplete)} | Product Definitions={" "}
+                {String(currentBaseline?.defsReadComplete)} | Variants={" "}
+                {String(currentBaseline?.variantsReadComplete)} | Variant Metafields={" "}
+                {String(currentBaseline?.variantMetafieldsReadComplete)} | Variant Definitions={" "}
+                {String(currentBaseline?.variantDefsReadComplete)} | Native={" "}
                 {String(currentBaseline?.nativeTargets?.isComplete)}
               </div>
               <div>
@@ -4796,8 +5066,15 @@ export default function BenchV2Route() {
               </summary>
               <div style={{ marginTop: "6px", color: "#334155" }}>
                 <div>
-                  <strong>Product GID:</strong> <code>{lastSaveReport.productId}</code> |{" "}
-                  <strong>Submission ID:</strong> {lastSaveReport.submissionId} |{" "}
+                  <strong>Product GID:</strong> <code>{lastSaveReport.productId}</code>
+                  {lastSaveReport.variantTargetId && (
+                    <>
+                      {" "}
+                      | <strong>Submitted Variant GID:</strong>{" "}
+                      <code>{lastSaveReport.variantTargetId}</code>
+                    </>
+                  )}{" "}
+                  | <strong>Submission ID:</strong> {lastSaveReport.submissionId} |{" "}
                   <strong>Writer Status:</strong> {lastSaveReport.writerStatus} |{" "}
                   <strong>Read-Back Verified:</strong> {String(lastSaveReport.readBackVerified)}
                 </div>
@@ -5101,7 +5378,10 @@ export default function BenchV2Route() {
 
                           let inputPlaceholder = "Type proposed value...";
                           if (!canEditDraftInBatch1) {
-                            inputPlaceholder = "Editing locked until baseline loads";
+                            inputPlaceholder =
+                              contract.owner === "PRODUCTVARIANT"
+                                ? "Editing locked until single-variant baseline loads"
+                                : "Editing locked until baseline loads";
                           } else if (contract.destinationKey === "custom.dimensions_mm") {
                             inputPlaceholder = "Enter manual measurement (e.g. 38 x 24 x 6 mm)...";
                           } else if (contract.destinationKey === "custom.weight_grams") {
@@ -5170,18 +5450,33 @@ export default function BenchV2Route() {
                                       (Primary OOAK field — custom.is_one_of_a_kind)
                                     </span>
                                   )}
-                                  {isManualOnlyField && contract.isWritableInBatch1 && (
-                                    <span
-                                      style={{
-                                        fontSize: "13px",
-                                        fontWeight: 600,
-                                        color: "#334155",
-                                        marginLeft: "8px"
-                                      }}
-                                    >
-                                      (Manual entry only — no AI scan)
-                                    </span>
-                                  )}
+                                  {contract.owner === "PRODUCTVARIANT" &&
+                                    contract.isWritableInBatch1 && (
+                                      <span
+                                        style={{
+                                          fontSize: "13px",
+                                          fontWeight: 600,
+                                          color: "#1e3a8a",
+                                          marginLeft: "8px"
+                                        }}
+                                      >
+                                        (Single-Variant {contract.destinationKey} — manual/preset)
+                                      </span>
+                                    )}
+                                  {isManualOnlyField &&
+                                    contract.isWritableInBatch1 &&
+                                    contract.owner !== "PRODUCTVARIANT" && (
+                                      <span
+                                        style={{
+                                          fontSize: "13px",
+                                          fontWeight: 600,
+                                          color: "#334155",
+                                          marginLeft: "8px"
+                                        }}
+                                      >
+                                        (Manual entry only — no AI scan)
+                                      </span>
+                                    )}
                                 </div>
 
                                 <div style={{ fontSize: "15px", fontWeight: 600, color: "#334155" }}>
@@ -5618,6 +5913,16 @@ export default function BenchV2Route() {
                                   <div>
                                     <strong>Destination Key:</strong>{" "}
                                     <code>{contract.destinationKey}</code> ({contract.owner})
+                                    {contract.owner === "PRODUCTVARIANT" && (
+                                      <>
+                                        {" "}
+                                        | <strong>Observed Variant GID:</strong>{" "}
+                                        <code>{obs.variantId || "none"}</code>
+                                        {obs.variantTargetStatus
+                                          ? ` (${obs.variantTargetStatus})`
+                                          : ""}
+                                      </>
+                                    )}
                                   </div>
                                   <div>
                                     <strong>Connection Status:</strong> {effectiveConnectionStatus}

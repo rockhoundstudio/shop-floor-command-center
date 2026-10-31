@@ -797,7 +797,8 @@ const CLASSIFICATION_OVERRIDE_KEYS = new Set([
   "primary_use",
   "jewelry_type",
   "product_format",
-  "necklace_design"
+  "necklace_design",
+  "google_product_category"
 ]);
 
 const PASSIVE_CONSTRUCTION_REVIEW_KEYS = new Set([
@@ -2611,12 +2612,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         // ====================================================================
         // OPT-IN BENCH V2 PRODUCER PROPOSALS SEPARATION (tab3FullRescan ONLY)
-        // Emits ONLY genuine nonblank Batch 1 + Drawer 6 + Drawer 7 producer outputs
-        // captured BEFORE passive stored fallback substitution, OOAK collapsing/deletion,
-        // or baseline merges. Never substitutes stored values for absent model/lookup outputs.
+        // Emits ONLY genuine nonblank Batch 1 + Drawer 6 + Drawer 7 + Drawer 8
+        // (custom.google_product_category) producer outputs captured BEFORE
+        // passive stored fallback substitution, OOAK collapsing/deletion, or
+        // baseline merges. Never substitutes stored values for absent model/lookup outputs.
         // Never emits cancelled overall_solid_length_in, manual-only
         // measurements (dimensions_mm, weight_grams), AI dates, legacy geological_era,
-        // or later-batch/parked/protected fields.
+        // variant channel fields, held custom_product flag, or later-batch/parked/protected fields.
         // ====================================================================
         let producerProposals = undefined;
         let producerDiagnostics = undefined;
@@ -3123,6 +3125,22 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
                 resolveGeologySourceLabel(geoKey)
               );
             }
+          }
+
+          // 9. Drawer 8 Product-Owned Google Product Category (custom.google_product_category):
+          // Emits ONLY genuine nonblank Vision output captured in rawVisionSnapshot.google_product_category
+          // before protectedKeys fallback substitution. Never substitutes a default or passive stored value.
+          // Manual variant destinations (mm-google-shopping.age_group, mm-google-shopping.condition,
+          // mm-google-shopping.gender) and held mm-google-shopping.custom_product are never emitted here.
+          const rawVisGoogleCat = cleanNonBlankVisionStr(
+            rawVisionSnapshot.google_product_category
+          );
+          if (rawVisGoogleCat) {
+            addProposal(
+              "custom.google_product_category",
+              rawVisGoogleCat,
+              "Gemini Vision (google_product_category)"
+            );
           }
         }
         

@@ -7,27 +7,34 @@
 // 2. app/utils/meta-injector.loader.jsx
 // 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75)
 // 4. app/routes/app.meta-injector.matrix.jsx
-// 5. app/utils/meta-injector.constants.jsx (DROPDOWN_OPTIONS reused below)
+// 5. app/utils/meta-injector.constants.jsx (DROPDOWN_OPTIONS reused below — unchanged)
 // 6. app/utils/meta-injector.execution-hook.jsx
 // 7. app/utils/meta-injector.matrix-domain.jsx
 // 8. app/routes/app.jsx
 // 9. app/routes.js (@react-router/fs-routes flatRoutes, v7.16.0)
 // 10. app/routes/app.meta-injector-autofill.jsx
-// 11. app/utils/meta-injector.autofill.server.jsx (168,616 chars)
-// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: AF1820B2565627F83DFEA26BE343B447B6949EB1A20AE9615995379092CABEEB)
+// 11. app/utils/meta-injector.autofill.server.jsx (180,240 chars)
+// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: 43AFF33B79E1430DC59FAC2638CA759D6FF61DBA1DB6039AD4DB9D62C41DFB85)
 //
 // Pure contract module only:
 // - Zero React hooks/effects, zero storage access, zero GraphQL/network calls.
 // - Does NOT import legacy evaluators, execution hooks, or writers.
-// - Separates connected contracts (Drawers 1 to 7: Identity, Origin and collection,
+// - Separates connected contracts (Drawers 1 to 8: Identity, Origin and collection,
 //   Treatment, Appearance and character, Manual measurements [dimensions_mm, weight_grams],
-//   Conditional setting/accessory facts, and Geology [12 active destinations + 1 read-only
-//   compatibility inspection slot custom.geological_era]) from future-batch descriptors and
+//   Conditional setting/accessory facts, Geology [12 active destinations + 1 read-only
+//   compatibility inspection slot custom.geological_era], and Other & Channel Attributes
+//   [custom.google_product_category on PRODUCT + replacement-bench-local single-variant
+//   PRODUCTVARIANT destinations mm-google-shopping.age_group, mm-google-shopping.condition,
+//   mm-google-shopping.gender, while keeping mm-google-shopping.custom_product on
+//   UNVERIFIED_CONTRACT_HOLD and legacy google.* variant slots + custom.target_gender
+//   as read-only compatibility inspection]) from future-batch descriptors and
 //   read-only compatibility/parked/protected inventory.
+// - Leaves app/utils/meta-injector.constants.jsx completely unchanged.
 // - Never advertises unwired future-batch or unverified-hold fields as writable.
 // - Enforces strict baseline vs. proposed separation, zero automatic
-//   preapproval, exact-value approval binding, baseline-bound Keep Original,
-//   and explicit live-definition / stored-evidence & completeness requirements.
+//   preapproval, exact-value approval binding (including owner + variantId binding),
+//   baseline-bound Keep Original, and explicit live-definition / stored-evidence
+//   & completeness requirements.
 // - Cancelled custom.overall_solid_length_in is permanently omitted/inert.
 // ==========================================================================
 
@@ -94,6 +101,17 @@ export const CANCELLED_INERT_DESTINATIONS = Object.freeze(
 // Task-level operational restrictions (price/shipping writes and deletions outside this task).
 export const TASK_RESTRICTED_READ_ONLY_DESTINATIONS = Object.freeze(
   new Set(["native_price", "price", "custom.price", "native_shipping_weight", "custom.shipping_weight_oz"])
+);
+
+// Explicit replacement-bench-local allowlist of verified PRODUCTVARIANT destinations.
+// Only these 3 variant destinations may be writable in Bench V2 when single-variant
+// identity, variant metafield pagination, and live PRODUCTVARIANT definitions are complete.
+export const BENCH_V2_CONNECTED_VARIANT_DESTINATIONS = Object.freeze(
+  new Set([
+    "mm-google-shopping.age_group",
+    "mm-google-shopping.condition",
+    "mm-google-shopping.gender"
+  ])
 );
 
 export const BENCH_V2_DRAWERS = Object.freeze([
@@ -165,9 +183,9 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     drawerNumber: 8,
     heading: "8. Other & Channel Attributes",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    isImplementedInBatch1: false,
-    description: "Future Batch 2 descriptor: Google product category plus read-only channel and variant-owned holds."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Connected channel attributes: product Google product category (custom.google_product_category) and single-variant Google channel attributes (mm-google-shopping.age_group, mm-google-shopping.condition, mm-google-shopping.gender), plus read-only holds (mm-google-shopping.custom_product) and compatibility inspection rows (google.* variant slots and custom.target_gender)."
   }),
   Object.freeze({
     drawerId: "native_seo_description_media",
@@ -255,6 +273,33 @@ const BAIL_INCLUDED_OPTIONS = Object.freeze([
   Object.freeze({ label: "Silver Plated Pinch Bail", value: "Silver Plated Pinch Bail" })
 ]);
 
+const GOOGLE_PRODUCT_CATEGORY_OPTIONS = Object.freeze([
+  Object.freeze({
+    label: "Apparel & Accessories > Jewelry",
+    value: "Apparel & Accessories > Jewelry"
+  })
+]);
+
+const GOOGLE_AGE_GROUP_OPTIONS = Object.freeze([
+  Object.freeze({ label: "adult", value: "adult" }),
+  Object.freeze({ label: "kids", value: "kids" }),
+  Object.freeze({ label: "toddler", value: "toddler" }),
+  Object.freeze({ label: "infant", value: "infant" }),
+  Object.freeze({ label: "newborn", value: "newborn" })
+]);
+
+const GOOGLE_CONDITION_OPTIONS = Object.freeze([
+  Object.freeze({ label: "new", value: "new" }),
+  Object.freeze({ label: "used", value: "used" }),
+  Object.freeze({ label: "refurbished", value: "refurbished" })
+]);
+
+const GOOGLE_GENDER_OPTIONS = Object.freeze([
+  Object.freeze({ label: "unisex", value: "unisex" }),
+  Object.freeze({ label: "female", value: "female" }),
+  Object.freeze({ label: "male", value: "male" })
+]);
+
 export const BENCH_V2_OPTIONS_BY_KEY = Object.freeze({
   stone_family: Object.freeze([...(DROPDOWN_OPTIONS.stone_family || [])]),
   surface_finish: Object.freeze([...(DROPDOWN_OPTIONS.surface_finish || [])]),
@@ -267,7 +312,11 @@ export const BENCH_V2_OPTIONS_BY_KEY = Object.freeze({
   setting_ready: SETTING_READY_OPTIONS,
   bail_included: BAIL_INCLUDED_OPTIONS,
   chain_material: Object.freeze([...(DROPDOWN_OPTIONS.chain_material || [])]),
-  collection_name: COLLECTION_NAME_OPTIONS
+  collection_name: COLLECTION_NAME_OPTIONS,
+  google_product_category: GOOGLE_PRODUCT_CATEGORY_OPTIONS,
+  google_age_group: GOOGLE_AGE_GROUP_OPTIONS,
+  google_condition: GOOGLE_CONDITION_OPTIONS,
+  google_gender: GOOGLE_GENDER_OPTIONS
 });
 
 const STANDARDIZED_SHOPIFY_KEYS = Object.freeze([
@@ -317,11 +366,15 @@ function defineFieldContract(spec) {
     throw new Error(`BENCH_V2_CONTRACT_ERROR: Cancelled destination "${spec.destinationKey}" cannot be registered.`);
   }
 
+  const isEligibleOwnerAndDestination =
+    (spec.owner === "PRODUCT" && spec.namespace === "custom") ||
+    (spec.owner === "PRODUCTVARIANT" &&
+      BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(spec.destinationKey));
+
   const isBatch1Writable =
     spec.batchStage === BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED &&
     spec.writeCapability === BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL &&
-    spec.owner === "PRODUCT" &&
-    spec.namespace === "custom";
+    isEligibleOwnerAndDestination;
 
   const allowedTypes = Array.isArray(spec.allowedTypes) && spec.allowedTypes.length > 0
     ? Object.freeze([...spec.allowedTypes])
@@ -1135,9 +1188,18 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
   }),
 
   // ------------------------------------------------------------------------
-  // DRAWER 8: OTHER & CHANNEL ATTRIBUTES (SUB_HARNESS_3 — FUTURE BATCH 2)
-  // Variant-owned fields remain locked by owner hold and cannot be unlocked
-  // by descriptors alone.
+  // DRAWER 8: OTHER & CHANNEL ATTRIBUTES (SUB_HARNESS_3 — CONNECTED IN BENCH V2)
+  // - custom.google_product_category (PRODUCT) connected under existing
+  //   exact-value approval, completeness, and live/stored type guards.
+  // - Replacement-bench-local PRODUCTVARIANT destinations:
+  //   mm-google-shopping.age_group, mm-google-shopping.condition,
+  //   mm-google-shopping.gender (single_line_text_field, max 255), bound to
+  //   verified single-variant GID, complete variant metafields, and live
+  //   PRODUCTVARIANT definitions.
+  // - mm-google-shopping.custom_product remains on UNVERIFIED_CONTRACT_HOLD.
+  // - Legacy PRODUCTVARIANT google.age_group, google.condition,
+  //   google.target_gender and PRODUCT custom.target_gender remain visible
+  //   as read-only compatibility inspection rows.
   // ------------------------------------------------------------------------
   defineFieldContract({
     destinationKey: "custom.google_product_category",
@@ -1147,10 +1209,12 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "other_channel",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    optionsKey: "google_product_category",
+    purposeNote: "Product-level Google product category text (custom.google_product_category). Requires live definition or stored type verification and exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "mm-google-shopping.custom_product",
@@ -1163,46 +1227,97 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
     expectedType: "boolean",
-    purposeNote: "Read-only pending verified boolean rules."
+    purposeNote: "Held read-only: no live PRODUCT or PRODUCTVARIANT definition or stored boolean exists on the store, and legacy custom.custom_product text ('true') does not verify channel boolean polarity."
+  }),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.age_group",
+    namespace: "mm-google-shopping",
+    key: "age_group",
+    label: "Google: Age Group (mm-google-shopping.age_group)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "other_channel",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "single_line_text_field",
+    maxLength: 255,
+    optionsKey: "google_age_group",
+    purposeNote: "Variant-owned Google age group (PRODUCTVARIANT mm-google-shopping.age_group, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
+  }),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.condition",
+    namespace: "mm-google-shopping",
+    key: "condition",
+    label: "Google: Condition (mm-google-shopping.condition)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "other_channel",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "single_line_text_field",
+    maxLength: 255,
+    optionsKey: "google_condition",
+    purposeNote: "Variant-owned Google condition (PRODUCTVARIANT mm-google-shopping.condition, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
+  }),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.gender",
+    namespace: "mm-google-shopping",
+    key: "gender",
+    label: "Google: Gender (mm-google-shopping.gender)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "other_channel",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "single_line_text_field",
+    maxLength: 255,
+    optionsKey: "google_gender",
+    purposeNote: "Variant-owned Google gender (PRODUCTVARIANT mm-google-shopping.gender, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "google.age_group",
     namespace: "google",
     key: "age_group",
-    label: "Google Age Group (Variant-Owned Hold)",
+    label: "Google Age Group (Legacy Variant Compatibility — Read-Only)",
     owner: "PRODUCTVARIANT",
     drawerId: "other_channel",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.VARIANT_OWNER_HOLD,
+    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.COMPATIBILITY_INSPECTION_ONLY,
     expectedType: "single_line_text_field",
-    purposeNote: "Variant-owned (PRODUCTVARIANT); product-level writer not applicable."
+    canonicalTarget: "mm-google-shopping.age_group",
+    purposeNote: "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.age_group definition; active variant definition is mm-google-shopping.age_group)."
   }),
   defineFieldContract({
     destinationKey: "google.condition",
     namespace: "google",
     key: "condition",
-    label: "Google Condition (Variant-Owned Hold)",
+    label: "Google Condition (Legacy Variant Compatibility — Read-Only)",
     owner: "PRODUCTVARIANT",
     drawerId: "other_channel",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.VARIANT_OWNER_HOLD,
+    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.COMPATIBILITY_INSPECTION_ONLY,
     expectedType: "single_line_text_field",
-    purposeNote: "Variant-owned (PRODUCTVARIANT); product-level writer not applicable."
+    canonicalTarget: "mm-google-shopping.condition",
+    purposeNote: "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.condition definition; active variant definition is mm-google-shopping.condition)."
   }),
   defineFieldContract({
     destinationKey: "google.target_gender",
     namespace: "google",
     key: "target_gender",
-    label: "Google Target Gender (Variant-Owned Hold)",
+    label: "Google Target Gender (Legacy Variant Compatibility — Read-Only)",
     owner: "PRODUCTVARIANT",
     drawerId: "other_channel",
     subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.VARIANT_OWNER_HOLD,
+    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.COMPATIBILITY_INSPECTION_ONLY,
     expectedType: "single_line_text_field",
-    purposeNote: "Variant-owned (PRODUCTVARIANT); product-level writer not applicable."
+    canonicalTarget: "mm-google-shopping.gender",
+    purposeNote: "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.target_gender definition; active variant definition is mm-google-shopping.gender)."
   }),
   defineFieldContract({
     destinationKey: "custom.target_gender",
@@ -1215,7 +1330,8 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.COMPATIBILITY_INSPECTION_ONLY,
     expectedType: "single_line_text_field",
-    canonicalTarget: "google.target_gender"
+    canonicalTarget: "google.target_gender",
+    purposeNote: "Inspectable product-level custom.target_gender compatibility value; never auto-migrated or copied."
   }),
 
   // ------------------------------------------------------------------------
@@ -1887,6 +2003,7 @@ export const BENCH_V2_DRAWER_GROUPS = Object.freeze(
 // ==========================================================================
 
 const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
+const EXACT_PRODUCT_VARIANT_GID_REGEX = /^gid:\/\/shopify\/ProductVariant\/\d+$/;
 const COLLECTION_DATE_PLACEHOLDER_REGEX = /^(n\/a|none|unknown)$/i;
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
@@ -1895,6 +2012,10 @@ const isBlankOrWhitespaceOnly = (str) =>
 
 export function isExactProductGid(value) {
   return typeof value === "string" && EXACT_PRODUCT_GID_REGEX.test(value);
+}
+
+export function isExactProductVariantGid(value) {
+  return typeof value === "string" && EXACT_PRODUCT_VARIANT_GID_REGEX.test(value);
 }
 
 export function getFieldContractByDestination(destinationKey) {
@@ -2081,19 +2202,131 @@ function inspectSnapshotCompleteness(baselineSnapshot, destinationKey) {
 }
 
 /**
+ * Inspects single-variant identity, variant metafield read completeness,
+ * and PRODUCTVARIANT definition read completeness on baselineSnapshot.
+ * Never infers absence from unavailable, incomplete, zero-variant, or multi-variant states.
+ */
+function inspectVariantSnapshotCompleteness(baselineSnapshot, destinationKey) {
+  if (!baselineSnapshot || typeof baselineSnapshot !== "object") {
+    return {
+      variantsCompleteState: "unknown",
+      variantTargetStatus: "unknown",
+      variantId: null,
+      variantCount: null,
+      metafieldsCompleteState: "unknown",
+      defsCompleteState: "unknown",
+      destinationDefError: null
+    };
+  }
+
+  const variantsFlag = baselineSnapshot.variantsReadComplete;
+  const variantsCompleteState =
+    variantsFlag === true ? "complete" : variantsFlag === false ? "incomplete" : "unknown";
+
+  const variantEdges = Array.isArray(baselineSnapshot.nativeTargets?.variants?.edges)
+    ? baselineSnapshot.nativeTargets.variants.edges
+    : null;
+  const rawVariantCount =
+    typeof baselineSnapshot.variantCount === "number" && Number.isFinite(baselineSnapshot.variantCount)
+      ? baselineSnapshot.variantCount
+      : variantEdges
+        ? variantEdges.length
+        : null;
+
+  const candidateVariantId =
+    typeof baselineSnapshot.primaryVariantId === "string" && baselineSnapshot.primaryVariantId.trim() !== ""
+      ? baselineSnapshot.primaryVariantId.trim()
+      : variantsCompleteState === "complete" && rawVariantCount === 1 && variantEdges?.[0]?.node?.id
+        ? String(variantEdges[0].node.id).trim()
+        : null;
+
+  const hasValidSingleVariantId = isExactProductVariantGid(candidateVariantId);
+
+  let variantTargetStatus = "unknown";
+  if (variantsCompleteState !== "complete") {
+    variantTargetStatus = "variants_read_incomplete";
+  } else if (rawVariantCount === 0) {
+    variantTargetStatus = "zero_variants";
+  } else if (rawVariantCount !== null && rawVariantCount > 1) {
+    variantTargetStatus = "multiple_variants_ambiguous";
+  } else if (rawVariantCount === 1 && hasValidSingleVariantId) {
+    variantTargetStatus = "single_variant_verified";
+  } else {
+    variantTargetStatus = "invalid_or_missing_variant_gid";
+  }
+
+  const varMfFlag = baselineSnapshot.variantMetafieldsReadComplete;
+  const metafieldsCompleteState =
+    varMfFlag === true ? "complete" : varMfFlag === false ? "incomplete" : "unknown";
+
+  const varDefsFlag = baselineSnapshot.variantDefsReadComplete;
+  const defsCompleteState =
+    varDefsFlag === true ? "complete" : varDefsFlag === false ? "incomplete" : "unknown";
+
+  const liveVarDefEntry =
+    baselineSnapshot.liveVariantDefinitions &&
+    typeof baselineSnapshot.liveVariantDefinitions === "object" &&
+    !Array.isArray(baselineSnapshot.liveVariantDefinitions)
+      ? baselineSnapshot.liveVariantDefinitions[destinationKey]
+      : null;
+
+  const destinationConstraintErr =
+    (baselineSnapshot.variantConstraintErrorsByDestination &&
+    typeof baselineSnapshot.variantConstraintErrorsByDestination === "object"
+      ? baselineSnapshot.variantConstraintErrorsByDestination[destinationKey]
+      : null) ||
+    liveVarDefEntry?.constraints?.error ||
+    liveVarDefEntry?.error ||
+    null;
+
+  const topVarDefReadErrors = Array.isArray(baselineSnapshot.variantDefReadErrors)
+    ? baselineSnapshot.variantDefReadErrors.filter((e) => typeof e === "string" && e.trim() !== "")
+    : [];
+
+  const varMfReadError =
+    typeof baselineSnapshot.variantMetafieldsReadError === "string" &&
+    baselineSnapshot.variantMetafieldsReadError.trim() !== ""
+      ? baselineSnapshot.variantMetafieldsReadError.trim()
+      : null;
+
+  const destinationDefError = destinationConstraintErr
+    ? String(destinationConstraintErr)
+    : topVarDefReadErrors.length > 0 && defsCompleteState !== "complete"
+      ? topVarDefReadErrors.join("; ")
+      : varMfReadError && metafieldsCompleteState !== "complete"
+        ? varMfReadError
+        : null;
+
+  return {
+    variantsCompleteState,
+    variantTargetStatus,
+    variantId: variantTargetStatus === "single_variant_verified" ? candidateVariantId : null,
+    variantCount: rawVariantCount,
+    metafieldsCompleteState,
+    defsCompleteState,
+    destinationDefError
+  };
+}
+
+/**
  * Computes a deterministic baseline observation and signature.
  * - Distinguishes missing/absent, null, empty string, and populated string values.
  * - Preserves positively observed raw evidence separately from completeness.
  * - Requires metafieldsReadComplete === true before inferring "absent" on a
- *   product metafield; if a metafield is not present in the map and
- *   metafieldsReadComplete !== true, presence is "unknown_incomplete_read"
- *   and evidenceAvailable is false so partial/unverified reads never manufacture absence.
+ *   product metafield, and requires complete single-variant enumeration + exact
+ *   ProductVariant GID + variantMetafieldsReadComplete === true before inferring
+ *   "absent" on a variant metafield.
+ * - Binds exact productId, owner, variantId (for PRODUCTVARIANT), destinationKey,
+ *   presence, types, completeness, and rawValue into the signature.
  */
 export function buildBaselineObservation(baselineSnapshot, destinationKey) {
   const contract = getFieldContractByDestination(destinationKey);
   if (!contract) {
     return Object.freeze({
       destinationKey: String(destinationKey || ""),
+      owner: null,
+      variantId: null,
+      variantTargetStatus: null,
       evidenceAvailable: false,
       positiveEvidenceObserved: false,
       presence: "unknown_contract",
@@ -2110,6 +2343,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
   if (!baselineSnapshot || typeof baselineSnapshot !== "object") {
     return Object.freeze({
       destinationKey: contract.destinationKey,
+      owner: contract.owner,
+      variantId: null,
+      variantTargetStatus: null,
       evidenceAvailable: false,
       positiveEvidenceObserved: false,
       presence: "baseline_not_loaded",
@@ -2119,7 +2355,7 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
       metafieldsCompleteState: "unknown",
       defsCompleteState: "unknown",
       destinationDefError: null,
-      signature: `unavailable:not_loaded:${contract.destinationKey}`
+      signature: `unavailable:not_loaded:${contract.owner}::${contract.destinationKey}`
     });
   }
 
@@ -2127,6 +2363,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
   if (!isExactProductGid(productGid)) {
     return Object.freeze({
       destinationKey: contract.destinationKey,
+      owner: contract.owner,
+      variantId: null,
+      variantTargetStatus: null,
       evidenceAvailable: false,
       positiveEvidenceObserved: false,
       presence: "invalid_product_gid",
@@ -2136,53 +2375,145 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
       metafieldsCompleteState: "unknown",
       defsCompleteState: "unknown",
       destinationDefError: null,
-      signature: `unavailable:invalid_gid:${contract.destinationKey}`
+      signature: `unavailable:invalid_gid:${contract.owner}::${contract.destinationKey}`
     });
   }
 
   const completeness = inspectSnapshotCompleteness(baselineSnapshot, contract.destinationKey);
 
-  // Variant-owned metafield baselines are not fabricated from product-level maps
+  // Variant-owned metafield baselines: require verified single-variant identity and
+  // complete variant metafield read; never fabricate from product-level maps.
   if (contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native") {
+    const varCompleteness = inspectVariantSnapshotCompleteness(
+      baselineSnapshot,
+      contract.destinationKey
+    );
+    const liveVarDefType =
+      baselineSnapshot.liveVariantDefinitions?.[contract.destinationKey]?.type || null;
+
+    if (varCompleteness.variantTargetStatus === "variants_read_incomplete") {
+      return Object.freeze({
+        destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: null,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
+        evidenceAvailable: false,
+        positiveEvidenceObserved: false,
+        presence: "unknown_incomplete_read",
+        rawValue: undefined,
+        storedType: null,
+        liveDefType: liveVarDefType,
+        metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+        defsCompleteState: varCompleteness.defsCompleteState,
+        destinationDefError: varCompleteness.destinationDefError,
+        signature: `unavailable:variants_incomplete_read:${productGid}::PRODUCTVARIANT::${contract.destinationKey}`
+      });
+    }
+
+    if (varCompleteness.variantTargetStatus === "zero_variants") {
+      return Object.freeze({
+        destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: null,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
+        evidenceAvailable: false,
+        positiveEvidenceObserved: false,
+        presence: "zero_variants_hold",
+        rawValue: undefined,
+        storedType: null,
+        liveDefType: liveVarDefType,
+        metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+        defsCompleteState: varCompleteness.defsCompleteState,
+        destinationDefError: varCompleteness.destinationDefError,
+        signature: `unavailable:zero_variants:${productGid}::PRODUCTVARIANT::${contract.destinationKey}`
+      });
+    }
+
+    if (varCompleteness.variantTargetStatus === "multiple_variants_ambiguous") {
+      return Object.freeze({
+        destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: null,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
+        evidenceAvailable: false,
+        positiveEvidenceObserved: false,
+        presence: "multiple_variants_hold",
+        rawValue: undefined,
+        storedType: null,
+        liveDefType: liveVarDefType,
+        metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+        defsCompleteState: varCompleteness.defsCompleteState,
+        destinationDefError: varCompleteness.destinationDefError,
+        signature: `unavailable:multiple_variants:${productGid}::PRODUCTVARIANT::${contract.destinationKey}`
+      });
+    }
+
+    if (
+      varCompleteness.variantTargetStatus !== "single_variant_verified" ||
+      !isExactProductVariantGid(varCompleteness.variantId)
+    ) {
+      return Object.freeze({
+        destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: null,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
+        evidenceAvailable: false,
+        positiveEvidenceObserved: false,
+        presence: "invalid_variant_gid",
+        rawValue: undefined,
+        storedType: null,
+        liveDefType: liveVarDefType,
+        metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+        defsCompleteState: varCompleteness.defsCompleteState,
+        destinationDefError: varCompleteness.destinationDefError,
+        signature: `unavailable:invalid_variant_gid:${productGid}::PRODUCTVARIANT::${contract.destinationKey}`
+      });
+    }
+
+    const verifiedVariantId = varCompleteness.variantId;
     const varMap = baselineSnapshot.currentVariantMetafields;
-    const varReadComplete = baselineSnapshot.variantMetafieldsReadComplete;
-    const varCompleteState =
-      varReadComplete === true ? "complete" : varReadComplete === false ? "incomplete" : "unknown";
 
     if (!varMap || typeof varMap !== "object" || Array.isArray(varMap)) {
       return Object.freeze({
         destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: verifiedVariantId,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
         evidenceAvailable: false,
         positiveEvidenceObserved: false,
         presence: "variant_baseline_unavailable",
         rawValue: undefined,
         storedType: null,
-        liveDefType: null,
-        metafieldsCompleteState: varCompleteState,
-        defsCompleteState: completeness.defsCompleteState,
-        destinationDefError: completeness.destinationDefError,
-        signature: `unavailable:variant:${contract.destinationKey}`
+        liveDefType: liveVarDefType,
+        metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+        defsCompleteState: varCompleteness.defsCompleteState,
+        destinationDefError: varCompleteness.destinationDefError,
+        signature: `unavailable:variant:${productGid}::PRODUCTVARIANT::${verifiedVariantId}::${contract.destinationKey}`
       });
     }
 
     const hasProp = Object.prototype.hasOwnProperty.call(varMap, contract.destinationKey);
     const rawVal = hasProp ? varMap[contract.destinationKey] : undefined;
     const positiveEvidenceObserved = hasProp && rawVal !== undefined;
-    const storedType = baselineSnapshot.currentVariantMetafieldTypes?.[contract.destinationKey] || null;
+    const storedType =
+      baselineSnapshot.currentVariantMetafieldTypes?.[contract.destinationKey] || null;
 
-    if (!positiveEvidenceObserved && varCompleteState !== "complete") {
+    if (!positiveEvidenceObserved && varCompleteness.metafieldsCompleteState !== "complete") {
       return Object.freeze({
         destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: verifiedVariantId,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
         evidenceAvailable: false,
         positiveEvidenceObserved: false,
         presence: "unknown_incomplete_read",
         rawValue: undefined,
         storedType,
-        liveDefType: null,
-        metafieldsCompleteState: varCompleteState,
-        defsCompleteState: completeness.defsCompleteState,
-        destinationDefError: completeness.destinationDefError,
-        signature: `unavailable:variant_incomplete_read:${contract.destinationKey}`
+        liveDefType: liveVarDefType,
+        metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+        defsCompleteState: varCompleteness.defsCompleteState,
+        destinationDefError: varCompleteness.destinationDefError,
+        signature: `unavailable:variant_incomplete_read:${productGid}::PRODUCTVARIANT::${verifiedVariantId}::${contract.destinationKey}`
       });
     }
 
@@ -2196,16 +2527,19 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
 
     return Object.freeze({
       destinationKey: contract.destinationKey,
+      owner: contract.owner,
+      variantId: verifiedVariantId,
+      variantTargetStatus: varCompleteness.variantTargetStatus,
       evidenceAvailable: true,
       positiveEvidenceObserved,
       presence,
       rawValue: rawVal,
       storedType,
-      liveDefType: null,
-      metafieldsCompleteState: varCompleteState,
-      defsCompleteState: completeness.defsCompleteState,
-      destinationDefError: completeness.destinationDefError,
-      signature: `${productGid}::${contract.destinationKey}::${presence}::${storedType || "no_stored_type"}::${rawVal ?? ""}`
+      liveDefType: liveVarDefType,
+      metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
+      defsCompleteState: varCompleteness.defsCompleteState,
+      destinationDefError: varCompleteness.destinationDefError,
+      signature: `${productGid}::PRODUCTVARIANT::${verifiedVariantId}::${contract.destinationKey}::${presence}::${storedType || "no_stored_type"}::${liveVarDefType || "no_def_type"}::${varCompleteness.metafieldsCompleteState}::${varCompleteness.defsCompleteState}::${rawVal ?? ""}`
     });
   }
 
@@ -2214,6 +2548,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
     if (!nt || typeof nt !== "object") {
       return Object.freeze({
         destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: null,
+        variantTargetStatus: null,
         evidenceAvailable: false,
         positiveEvidenceObserved: false,
         presence: "native_baseline_unavailable",
@@ -2254,6 +2591,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
     if (isNativeFieldUnverified || rawNative === undefined) {
       return Object.freeze({
         destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: null,
+        variantTargetStatus: null,
         evidenceAvailable: false,
         positiveEvidenceObserved: false,
         presence: isNativeFieldUnverified ? "unknown_incomplete_read" : "absent",
@@ -2275,6 +2615,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
 
     return Object.freeze({
       destinationKey: contract.destinationKey,
+      owner: contract.owner,
+      variantId: null,
+      variantTargetStatus: null,
       evidenceAvailable: true,
       positiveEvidenceObserved: true,
       presence,
@@ -2292,6 +2635,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
   if (!cm || typeof cm !== "object" || Array.isArray(cm)) {
     return Object.freeze({
       destinationKey: contract.destinationKey,
+      owner: contract.owner,
+      variantId: null,
+      variantTargetStatus: null,
       evidenceAvailable: false,
       positiveEvidenceObserved: false,
       presence: "metafields_not_loaded",
@@ -2319,6 +2665,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
   if (!positiveEvidenceObserved && completeness.metafieldsCompleteState !== "complete") {
     return Object.freeze({
       destinationKey: contract.destinationKey,
+      owner: contract.owner,
+      variantId: null,
+      variantTargetStatus: null,
       evidenceAvailable: false,
       positiveEvidenceObserved: false,
       presence: "unknown_incomplete_read",
@@ -2342,6 +2691,9 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
 
   return Object.freeze({
     destinationKey: contract.destinationKey,
+    owner: contract.owner,
+    variantId: null,
+    variantTargetStatus: null,
     evidenceAvailable: true,
     positiveEvidenceObserved,
     presence,
@@ -2351,13 +2703,14 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
     metafieldsCompleteState: completeness.metafieldsCompleteState,
     defsCompleteState: completeness.defsCompleteState,
     destinationDefError: completeness.destinationDefError,
-    signature: `${productGid}::${contract.destinationKey}::${presence}::${storedType || "no_stored_type"}::${liveDefType || "no_def_type"}::${ completeness.metafieldsCompleteState }::${ completeness.defsCompleteState }::${rawVal ?? ""}`
+    signature: `${productGid}::${contract.destinationKey}::${presence}::${storedType || "no_stored_type"}::${liveDefType || "no_def_type"}::${completeness.metafieldsCompleteState}::${completeness.defsCompleteState}::${rawVal ?? ""}`
   });
 }
 
 /**
- * Evaluates whether a Batch 1 contract destination has complete, conflict-free
- * baseline, definition, and type evidence required to unlock write eligibility.
+ * Evaluates whether a connected contract destination (PRODUCT or allowlisted
+ * single-variant PRODUCTVARIANT) has complete, conflict-free baseline,
+ * definition, and type evidence required to unlock write eligibility.
  */
 export function evaluateDestinationTypeAndCompleteness({
   contract,
@@ -2372,7 +2725,50 @@ export function evaluateDestinationTypeAndCompleteness({
     };
   }
 
+  const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+
   if (!baselineObs.evidenceAvailable) {
+    if (isVariantOwner) {
+      if (baselineObs.presence === "multiple_variants_hold") {
+        return {
+          ready: false,
+          code: "multiple_variants_hold",
+          verifiedActualType: null,
+          reason: `Product has multiple variants; "${contract.destinationKey}" is held read-only to prevent ambiguous variant targeting.`
+        };
+      }
+      if (baselineObs.presence === "zero_variants_hold") {
+        return {
+          ready: false,
+          code: "zero_variants_hold",
+          verifiedActualType: null,
+          reason: `Product has zero variants; "${contract.destinationKey}" cannot target a ProductVariant.`
+        };
+      }
+      if (baselineObs.presence === "invalid_variant_gid") {
+        return {
+          ready: false,
+          code: "invalid_variant_gid",
+          verifiedActualType: null,
+          reason: `Exact Shopify ProductVariant GID is required before authorizing writes on "${contract.destinationKey}".`
+        };
+      }
+      if (baselineObs.presence === "unknown_incomplete_read") {
+        return {
+          ready: false,
+          code: "incomplete_variant_metafield_read",
+          verifiedActualType: null,
+          reason: `Variant metafield or variant enumeration completeness is "${baselineObs.metafieldsCompleteState}" for "${contract.destinationKey}"; cannot infer absence or authorize writes until variantMetafieldsReadComplete === true.`
+        };
+      }
+      return {
+        ready: false,
+        code: "missing_variant_baseline_evidence",
+        verifiedActualType: null,
+        reason: `Loaded single-variant baseline evidence is required for "${contract.destinationKey}" (current state: ${baselineObs.presence}).`
+      };
+    }
+
     const isUnknownRead = baselineObs.presence === "unknown_incomplete_read";
     return {
       ready: false,
@@ -2384,12 +2780,28 @@ export function evaluateDestinationTypeAndCompleteness({
     };
   }
 
+  if (isVariantOwner) {
+    if (
+      baselineObs.variantTargetStatus !== "single_variant_verified" ||
+      !isExactProductVariantGid(baselineObs.variantId)
+    ) {
+      return {
+        ready: false,
+        code: "unverified_single_variant_target",
+        verifiedActualType: null,
+        reason: `Single-variant target GID is not verified for "${contract.destinationKey}" (status: ${baselineObs.variantTargetStatus || "unknown"}).`
+      };
+    }
+  }
+
   if (baselineObs.metafieldsCompleteState !== "complete") {
     return {
       ready: false,
-      code: "metafields_read_not_complete",
+      code: isVariantOwner ? "variant_metafields_read_not_complete" : "metafields_read_not_complete",
       verifiedActualType: null,
-      reason: `Product metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires metafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
+      reason: isVariantOwner
+        ? `Variant metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires variantMetafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
+        : `Product metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires metafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
     };
   }
 
@@ -2405,9 +2817,11 @@ export function evaluateDestinationTypeAndCompleteness({
   if (baselineObs.defsCompleteState !== "complete") {
     return {
       ready: false,
-      code: "definitions_read_not_complete",
+      code: isVariantOwner ? "variant_definitions_read_not_complete" : "definitions_read_not_complete",
       verifiedActualType: null,
-      reason: `Live PRODUCT metafield definition read is "${baselineObs.defsCompleteState}" (requires defsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
+      reason: isVariantOwner
+        ? `Live PRODUCTVARIANT metafield definition read is "${baselineObs.defsCompleteState}" (requires variantDefsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
+        : `Live PRODUCT metafield definition read is "${baselineObs.defsCompleteState}" (requires defsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
     };
   }
 
@@ -2419,7 +2833,7 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: "missing_type_evidence",
       verifiedActualType: null,
-      reason: `Neither live PRODUCT metafield definition nor stored metafield type is present for "${contract.destinationKey}". Guessing a type or creating a definition is forbidden.`
+      reason: `Neither live ${contract.owner} metafield definition nor stored metafield type is present for "${contract.destinationKey}". Guessing a type or creating a definition is forbidden.`
     };
   }
 
@@ -2621,9 +3035,10 @@ export function validateBatch1ProposedValue({
 
 /**
  * Creates an immutable exact-value approval record bound to the exact product,
- * destinationKey, exact untrimmed proposed string, verified actual type, and
- * current baseline signature. Any subsequent edit to the proposed value
- * (including leading/trailing whitespace) or change in baseline invalidates it.
+ * owner, variantId (when owner === "PRODUCTVARIANT"), destinationKey, exact
+ * untrimmed proposed string, verified actual type, and current baseline signature.
+ * Any subsequent edit to the proposed value (including leading/trailing whitespace)
+ * or change in baseline/variant identity invalidates it.
  */
 export function createExactValueApprovalRecord({
   productId,
@@ -2631,6 +3046,7 @@ export function createExactValueApprovalRecord({
   proposedValue,
   baselineSnapshot
 }) {
+  const contract = getFieldContractByDestination(destinationKey);
   const validation = validateBatch1ProposedValue({
     productId,
     destinationKey,
@@ -2638,8 +3054,13 @@ export function createExactValueApprovalRecord({
     baselineSnapshot
   });
 
-  if (!validation.valid) {
-    return { ok: false, error: validation.reason, code: validation.code, record: null };
+  if (!validation.valid || !contract) {
+    return {
+      ok: false,
+      error: validation.reason || "Invalid destination contract.",
+      code: validation.code || "unknown_destination",
+      record: null
+    };
   }
 
   if (validation.isUnchangedFromStored) {
@@ -2651,13 +3072,26 @@ export function createExactValueApprovalRecord({
     };
   }
 
+  const obs = validation.baselineObservation;
+  const isVariantOwner = contract.owner === "PRODUCTVARIANT";
+  if (isVariantOwner && !isExactProductVariantGid(obs.variantId)) {
+    return {
+      ok: false,
+      error: `Cannot approve "${destinationKey}": exact Shopify ProductVariant GID is not verified.`,
+      code: "invalid_variant_gid",
+      record: null
+    };
+  }
+
   const record = Object.freeze({
     kind: "exact_value_approval",
     productId,
-    destinationKey: validation.baselineObservation.destinationKey,
+    owner: contract.owner,
+    variantId: isVariantOwner ? obs.variantId : null,
+    destinationKey: obs.destinationKey,
     approvedValue: validation.normalizedValue,
     verifiedType: validation.verifiedActualType,
-    baselineSignature: validation.baselineObservation.signature,
+    baselineSignature: obs.signature,
     approvedAt: new Date().toISOString()
   });
 
@@ -2666,8 +3100,10 @@ export function createExactValueApprovalRecord({
 
 /**
  * Verifies that an existing approval record still matches the exact product,
- * destination, exact untrimmed current proposed value string, verified type,
- * and live baseline signature.
+ * owner, variantId (for PRODUCTVARIANT), destination, exact untrimmed current
+ * proposed value string, verified type, and live baseline signature.
+ * Preserves backwards compatibility for existing PRODUCT approval records that
+ * may omit `owner` / `variantId`.
  */
 export function isExactValueApprovalValid({
   approvalRecord,
@@ -2686,6 +3122,9 @@ export function isExactValueApprovalValid({
     return false;
   }
 
+  const contract = getFieldContractByDestination(destinationKey);
+  if (!contract) return false;
+
   const validation = validateBatch1ProposedValue({
     productId,
     destinationKey,
@@ -2696,13 +3135,31 @@ export function isExactValueApprovalValid({
   if (approvalRecord.verifiedType !== validation.verifiedActualType) return false;
   if (approvalRecord.baselineSignature !== validation.baselineObservation.signature) return false;
 
+  if (contract.owner === "PRODUCTVARIANT") {
+    if (approvalRecord.owner !== "PRODUCTVARIANT") return false;
+    if (
+      !isExactProductVariantGid(approvalRecord.variantId) ||
+      approvalRecord.variantId !== validation.baselineObservation.variantId
+    ) {
+      return false;
+    }
+  } else {
+    if (approvalRecord.owner !== undefined && approvalRecord.owner !== contract.owner) {
+      return false;
+    }
+    if (approvalRecord.variantId !== undefined && approvalRecord.variantId !== null) {
+      return false;
+    }
+  }
+
   return true;
 }
 
 /**
  * Creates a Keep Original decision record bound to the exact product,
- * destinationKey, exact untrimmed rejected proposal string, and observed
- * baseline signature without altering saved Shopify data.
+ * owner, variantId (when owner === "PRODUCTVARIANT"), destinationKey, exact
+ * untrimmed rejected proposal string, and observed baseline signature without
+ * altering saved Shopify data.
  */
 export function createKeepOriginalRecord({
   productId,
@@ -2723,12 +3180,29 @@ export function createKeepOriginalRecord({
 
   const baselineObs = buildBaselineObservation(baselineSnapshot, contract.destinationKey);
   if (!baselineObs.evidenceAvailable) {
+    const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+    let errText = `Baseline evidence is not loaded for "${contract.destinationKey}".`;
+    if (baselineObs.presence === "unknown_incomplete_read") {
+      errText = isVariantOwner
+        ? `Variant baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until variantMetafieldsReadComplete === true.`
+        : `Baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until metafieldsReadComplete === true.`;
+    } else if (baselineObs.presence === "multiple_variants_hold") {
+      errText = `Product has multiple variants; "${contract.destinationKey}" is held read-only.`;
+    } else if (baselineObs.presence === "zero_variants_hold") {
+      errText = `Product has zero variants; "${contract.destinationKey}" is held read-only.`;
+    }
     return {
       ok: false,
-      error:
-        baselineObs.presence === "unknown_incomplete_read"
-          ? `Baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until metafieldsReadComplete === true.`
-          : `Baseline evidence is not loaded for "${contract.destinationKey}".`,
+      error: errText,
+      record: null
+    };
+  }
+
+  const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+  if (isVariantOwner && !isExactProductVariantGid(baselineObs.variantId)) {
+    return {
+      ok: false,
+      error: `Exact Shopify ProductVariant GID is required to bind Keep Original on "${contract.destinationKey}".`,
       record: null
     };
   }
@@ -2741,6 +3215,8 @@ export function createKeepOriginalRecord({
   const record = Object.freeze({
     kind: "keep_original_decision",
     productId,
+    owner: contract.owner,
+    variantId: isVariantOwner ? baselineObs.variantId : null,
     destinationKey: contract.destinationKey,
     rejectedProposalValue: exactRejectedProposal,
     baselinePresence: baselineObs.presence,
@@ -2769,9 +3245,30 @@ export function isKeepOriginalRecordValid({
     return false;
   }
 
+  const contract = getFieldContractByDestination(destinationKey);
+  if (!contract) return false;
+
   const baselineObs = buildBaselineObservation(baselineSnapshot, contract.destinationKey);
   if (!baselineObs.evidenceAvailable) return false;
   if (keepOriginalRecord.baselineSignature !== baselineObs.signature) return false;
+
+  const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+  if (isVariantOwner) {
+    if (keepOriginalRecord.owner !== "PRODUCTVARIANT") return false;
+    if (
+      !isExactProductVariantGid(keepOriginalRecord.variantId) ||
+      keepOriginalRecord.variantId !== baselineObs.variantId
+    ) {
+      return false;
+    }
+  } else {
+    if (keepOriginalRecord.owner !== undefined && keepOriginalRecord.owner !== contract.owner) {
+      return false;
+    }
+    if (keepOriginalRecord.variantId !== undefined && keepOriginalRecord.variantId !== null) {
+      return false;
+    }
+  }
 
   return true;
 }
@@ -2859,14 +3356,33 @@ export function evaluateBenchV2FieldRow({
   let connectionStatus = "Read-Only";
   if (contract.isWritableInBatch1) {
     if (!baselineObs.evidenceAvailable) {
-      connectionStatus =
-        baselineObs.presence === "unknown_incomplete_read"
-          ? `Blocked (Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`
-          : "Blocked (Baseline Not Loaded)";
+      if (baselineObs.presence === "multiple_variants_hold") {
+        connectionStatus = "Held (Multiple Variants — Single-Variant Target Required)";
+      } else if (baselineObs.presence === "zero_variants_hold") {
+        connectionStatus = "Blocked (Product Has Zero Variants)";
+      } else if (baselineObs.presence === "invalid_variant_gid") {
+        connectionStatus = "Blocked (Missing or Invalid Variant GID)";
+      } else if (baselineObs.presence === "unknown_incomplete_read") {
+        connectionStatus =
+          contract.owner === "PRODUCTVARIANT"
+            ? `Blocked (Variant Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`
+            : `Blocked (Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`;
+      } else {
+        connectionStatus =
+          contract.owner === "PRODUCTVARIANT"
+            ? "Blocked (Variant Baseline Not Loaded)"
+            : "Blocked (Baseline Not Loaded)";
+      }
     } else if (!typeAndCompleteness?.ready) {
-      if (typeAndCompleteness?.code === "metafields_read_not_complete") {
+      if (
+        typeAndCompleteness?.code === "metafields_read_not_complete" ||
+        typeAndCompleteness?.code === "variant_metafields_read_not_complete"
+      ) {
         connectionStatus = `Blocked (Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`;
-      } else if (typeAndCompleteness?.code === "definitions_read_not_complete") {
+      } else if (
+        typeAndCompleteness?.code === "definitions_read_not_complete" ||
+        typeAndCompleteness?.code === "variant_definitions_read_not_complete"
+      ) {
         connectionStatus = `Blocked (Definitions Read Incomplete: ${baselineObs.defsCompleteState})`;
       } else if (typeAndCompleteness?.code === "destination_definition_error") {
         connectionStatus = "Blocked (Definition / Constraint Error)";
@@ -2881,7 +3397,10 @@ export function evaluateBenchV2FieldRow({
         connectionStatus = "Blocked (Eligibility Check Failed)";
       }
     } else {
-      connectionStatus = `Connected (Batch 1 Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`;
+      connectionStatus =
+        contract.owner === "PRODUCTVARIANT"
+          ? `Connected (Single-Variant Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`
+          : `Connected (Batch 1 Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`;
     }
   } else if (
     contract.batchStage === BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR ||
@@ -2906,20 +3425,31 @@ export function evaluateBenchV2FieldRow({
   let statusReason = contract.purposeNote || null;
 
   if (!baselineObs.evidenceAvailable) {
-    reviewStatus =
-      baselineObs.presence === "unknown_incomplete_read"
-        ? "Incomplete Baseline Read (Cannot Infer Absence)"
-        : "Baseline Unavailable";
-    statusReason =
-      baselineObs.presence === "unknown_incomplete_read"
-        ? `Metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`
-        : `Baseline state: ${baselineObs.presence}`;
+    if (baselineObs.presence === "unknown_incomplete_read") {
+      reviewStatus = "Incomplete Baseline Read (Cannot Infer Absence)";
+      statusReason =
+        contract.owner === "PRODUCTVARIANT"
+          ? `Variant metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`
+          : `Metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`;
+    } else if (baselineObs.presence === "multiple_variants_hold") {
+      reviewStatus = "Held (Multiple Variants)";
+      statusReason = `Product has multiple variants; "${contract.destinationKey}" is held read-only unless a single unambiguous variant is present.`;
+    } else if (baselineObs.presence === "zero_variants_hold") {
+      reviewStatus = "Held (Zero Variants)";
+      statusReason = `Product has zero variants; "${contract.destinationKey}" cannot target a variant.`;
+    } else {
+      reviewStatus = "Baseline Unavailable";
+      statusReason = `Baseline state: ${baselineObs.presence}`;
+    }
   } else if (isKeepOriginal) {
     reviewStatus = "Keep Original (Proposal Rejected)";
     statusReason = "Bound to current baseline signature; omitted from save payload.";
   } else if (isApproved) {
     reviewStatus = "Approved for Save (Exact Value Bound)";
-    statusReason = `Approved exact value (${validation.verifiedActualType}).`;
+    statusReason =
+      contract.owner === "PRODUCTVARIANT" && baselineObs.variantId
+        ? `Approved exact value (${validation.verifiedActualType}) bound to variant ${baselineObs.variantId}.`
+        : `Approved exact value (${validation.verifiedActualType}).`;
   } else if (hasNonEmptyProposal) {
     if (!validation.valid) {
       reviewStatus = "Blocked Proposal";
