@@ -5,7 +5,7 @@
 // Verified Existing Sources Confirmed in Context:
 // 1. app/routes/app.meta-injector.jsx
 // 2. app/utils/meta-injector.loader.jsx
-// 3. app/routes/app.meta-injector-api.jsx
+// 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75)
 // 4. app/routes/app.meta-injector.matrix.jsx
 // 5. app/utils/meta-injector.constants.jsx (DROPDOWN_OPTIONS reused below)
 // 6. app/utils/meta-injector.execution-hook.jsx
@@ -13,16 +13,17 @@
 // 8. app/routes/app.jsx
 // 9. app/routes.js (@react-router/fs-routes flatRoutes, v7.16.0)
 // 10. app/routes/app.meta-injector-autofill.jsx
-// 11. app/utils/meta-injector.autofill.server.jsx
-// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: F31EF4BC321AFC20A3696E53686EAD076D8583B8962D24EA667AC6D7DF144DBA)
+// 11. app/utils/meta-injector.autofill.server.jsx (168,616 chars)
+// 12. app/utils/bench-v2.contract.jsx (Saved baseline SHA256: C8BB24C2FEA3FD6E0A13C396A6C95F7F44DA4498F9F5A18B62D815FE9A56A293)
 //
 // Pure contract module only:
 // - Zero React hooks/effects, zero storage access, zero GraphQL/network calls.
 // - Does NOT import legacy evaluators, execution hooks, or writers.
-// - Separates Batch 1 implemented contracts (Identity, Origin and collection,
-//   Treatment, Appearance and character) from future-batch descriptors and
+// - Separates connected contracts (Drawers 1 to 6: Identity, Origin and collection,
+//   Treatment, Appearance and character, Manual measurements [dimensions_mm, weight_grams],
+//   and Conditional setting/accessory facts) from future-batch descriptors and
 //   read-only compatibility/parked/protected inventory.
-// - Never advertises unwired future-batch fields as writable.
+// - Never advertises unwired future-batch or unverified-hold fields as writable.
 // - Enforces strict baseline vs. proposed separation, zero automatic
 //   preapproval, exact-value approval binding, baseline-bound Keep Original,
 //   and explicit live-definition / stored-evidence & completeness requirements.
@@ -136,18 +137,18 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     drawerNumber: 5,
     heading: "5. Manual measurements",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    isImplementedInBatch1: false,
-    description: "Future Batch 2 descriptor: dimensions (mm), weight (grams), and unverified measurement holds (overall-solid-length omitted as cancelled)."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Manual bench measurements: dimensions (mm) and stone weight (grams) connected for manual entry and exact-value approval (excluded from AI scan), plus 4 unverified measurement holds (overall-solid-length omitted as cancelled)."
   }),
   Object.freeze({
     drawerId: "conditional_setting_accessory",
     drawerNumber: 6,
     heading: "6. Conditional setting/accessory facts",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    isImplementedInBatch1: false,
-    description: "Future Batch 2 descriptor: secondary medium, jewelry type, setting ready, bail included, chain/link, finding type, and wire material."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Connected setting and hardware facts: secondary medium, jewelry type, setting ready, bail included, chain material, chain link type, jewelry finding type, and wire material."
   }),
   Object.freeze({
     drawerId: "geology",
@@ -202,32 +203,68 @@ const COLLECTION_NAME_OPTIONS = Object.freeze(
     : []
 );
 
-// User-facing Yes/No conventions preserved for both OOAK destinations without confusing
+// User-facing Yes/No + actual meaning conventions preserved without confusing
 // UI display labels with actual underlying storage values ("true"/"false" for boolean,
 // or exact text strings for single_line_text_field).
 const IS_OOAK_BOOLEAN_OPTIONS = Object.freeze([
   Object.freeze({ label: "Yes — one of a kind", value: "true" }),
-  Object.freeze({ label: "No", value: "false" })
+  Object.freeze({ label: "No — not one of a kind", value: "false" })
 ]);
 
 const IS_OOAK_TEXT_OPTIONS = Object.freeze([
   Object.freeze({ label: "Yes — one of a kind", value: "Yes — one of a kind" }),
-  Object.freeze({ label: "Yes", value: "Yes" }),
-  Object.freeze({ label: "true", value: "true" }),
-  Object.freeze({ label: "No", value: "No" })
+  Object.freeze({ label: "Yes — one of a kind (Yes)", value: "Yes" }),
+  Object.freeze({ label: 'Yes — one of a kind ("true")', value: "true" }),
+  Object.freeze({ label: "No — not one of a kind", value: "No" })
+]);
+
+const IS_ONE_OF_A_KIND_OPTIONS = Object.freeze([
+  Object.freeze({ label: "Yes — one of a kind", value: "true" }),
+  Object.freeze({ label: "Yes — one of a kind (Yes)", value: "Yes" }),
+  Object.freeze({ label: "No — not one of a kind", value: "No" })
+]);
+
+const FOUND_OBJECT_OPTIONS = Object.freeze([
+  Object.freeze({ label: "Yes — found in the wild", value: "true" }),
+  Object.freeze({ label: "Yes — found in the wild (Yes)", value: "Yes" }),
+  Object.freeze({ label: "No — purchased rough", value: "No — purchased rough" }),
+  Object.freeze({ label: "No — not wild-collected (purchased)", value: "No" })
+]);
+
+const TREATED_OPTIONS = Object.freeze([
+  Object.freeze({ label: "No — untreated (Untreated — Natural)", value: "Untreated — Natural" }),
+  Object.freeze({ label: "Yes — treated (Stabilized)", value: "Stabilized" }),
+  Object.freeze({ label: "Yes — treated (Dyed)", value: "Dyed" }),
+  Object.freeze({ label: "Yes — treated (Resined)", value: "Resined" }),
+  Object.freeze({ label: "Yes — treated (Enhanced)", value: "Enhanced" }),
+  Object.freeze({ label: "Yes — treated (Yes)", value: "Yes" }),
+  Object.freeze({ label: "No — untreated (No)", value: "No" })
+]);
+
+const SETTING_READY_OPTIONS = Object.freeze([
+  Object.freeze({ label: "Yes — setting ready", value: "true" }),
+  Object.freeze({ label: "Yes — setting ready (Yes)", value: "Yes" }),
+  Object.freeze({ label: "No — not setting ready", value: "No" })
+]);
+
+const BAIL_INCLUDED_OPTIONS = Object.freeze([
+  Object.freeze({ label: "Yes — bail included", value: "true" }),
+  Object.freeze({ label: "Yes — bail included (Yes)", value: "Yes" }),
+  Object.freeze({ label: "No — no bail included", value: "No" }),
+  Object.freeze({ label: "Silver Plated Pinch Bail", value: "Silver Plated Pinch Bail" })
 ]);
 
 export const BENCH_V2_OPTIONS_BY_KEY = Object.freeze({
   stone_family: Object.freeze([...(DROPDOWN_OPTIONS.stone_family || [])]),
   surface_finish: Object.freeze([...(DROPDOWN_OPTIONS.surface_finish || [])]),
-  is_ooak: Object.freeze([...(DROPDOWN_OPTIONS.is_ooak || [])]),
+  is_ooak: IS_OOAK_TEXT_OPTIONS,
   is_ooak_boolean: IS_OOAK_BOOLEAN_OPTIONS,
   is_ooak_text: IS_OOAK_TEXT_OPTIONS,
-  is_one_of_a_kind: Object.freeze([...(DROPDOWN_OPTIONS.is_one_of_a_kind || [])]),
-  treated: Object.freeze([...(DROPDOWN_OPTIONS.treated || [])]),
-  found_object: Object.freeze([...(DROPDOWN_OPTIONS.found_object || [])]),
-  setting_ready: Object.freeze([...(DROPDOWN_OPTIONS.setting_ready || [])]),
-  bail_included: Object.freeze([...(DROPDOWN_OPTIONS.bail_included || [])]),
+  is_one_of_a_kind: IS_ONE_OF_A_KIND_OPTIONS,
+  treated: TREATED_OPTIONS,
+  found_object: FOUND_OBJECT_OPTIONS,
+  setting_ready: SETTING_READY_OPTIONS,
+  bail_included: BAIL_INCLUDED_OPTIONS,
   chain_material: Object.freeze([...(DROPDOWN_OPTIONS.chain_material || [])]),
   collection_name: COLLECTION_NAME_OPTIONS
 });
@@ -300,6 +337,8 @@ function defineFieldContract(spec) {
     batchStage: spec.batchStage,
     writeCapability: spec.writeCapability,
     isWritableInBatch1: Boolean(isBatch1Writable),
+    isManualOnlyNoAi: Boolean(spec.isManualOnlyNoAi),
+    usesYesNoMeaningDisplay: Boolean(spec.usesYesNoMeaningDisplay),
     requiresExactValueApproval: true,
     autoPreApproveAllowed: false,
     expectedType: spec.expectedType,
@@ -367,6 +406,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     allowedTypes: ["single_line_text_field"],
     maxLength: 255,
@@ -383,6 +423,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     allowedTypes: ["single_line_text_field", "boolean"],
     maxLength: 255,
@@ -491,10 +532,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
     optionsKey: "found_object",
-    purposeNote: "Wild-found vs. purchased rough provenance."
+    purposeNote: "Wild-found vs. purchased provenance."
   }),
   defineFieldContract({
     destinationKey: "custom.collection_date",
@@ -506,6 +548,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
     purposeNote: "Collection date string. Blank/absent stays absent; placeholder tokens ('N/A', 'None', 'Unknown') are rejected at source."
@@ -538,6 +581,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
     purposeNote: "Detailed treatment disclosure text."
@@ -552,10 +596,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
     optionsKey: "treated",
-    purposeNote: "Standardized studio treatment dropdown value (e.g. Untreated — Natural)."
+    purposeNote: "Standardized studio treatment value (e.g. Untreated — Natural)."
   }),
 
   // ------------------------------------------------------------------------
@@ -679,7 +724,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
   }),
 
   // ------------------------------------------------------------------------
-  // DRAWER 5: MANUAL MEASUREMENTS (SUB_HARNESS_2 — FUTURE BATCH 2 DESCRIPTOR)
+  // DRAWER 5: MANUAL MEASUREMENTS (SUB_HARNESS_2 — CONNECTED FOR MANUAL ENTRY)
+  // custom.dimensions_mm and custom.weight_grams are manual bench measurements
+  // (isManualOnlyNoAi: true — excluded from AI generation/staging).
+  // Capabilities #59–#62 remain on unverified contract hold until live Shopify
+  // definitions and writer support are verified.
   // Note: custom.overall_solid_length_in (#58) is CANCELLED and omitted.
   // ------------------------------------------------------------------------
   defineFieldContract({
@@ -690,11 +739,12 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "manual_measurements",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
-    purposeNote: "Future Batch 2 writable target (inspectable read-only in Batch 1)."
+    purposeNote: "Manual caliper measurement in millimeters (e.g. 38 x 24 x 6 mm). Excluded from AI generation/staging; requires live definition or stored type verification and exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "custom.weight_grams",
@@ -704,10 +754,12 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "manual_measurements",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "number_decimal",
-    purposeNote: "Future Batch 2 writable target (inspectable read-only in Batch 1)."
+    allowedTypes: ["number_decimal"],
+    purposeNote: "Manual scale weight in grams (number_decimal). Excluded from AI generation/staging; requires canonical finite non-negative decimal representation matching writer serialization and exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "custom.whole_product_weight_grams",
@@ -719,8 +771,9 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
+    isManualOnlyNoAi: true,
     expectedType: "number_decimal",
-    purposeNote: "Capability #59: storageVerified=false, writerVerified=false. Held read-only until Shopify definition is verified."
+    purposeNote: "Capability #59: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
   }),
   defineFieldContract({
     destinationKey: "custom.chain_cord_length_in",
@@ -732,8 +785,9 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
+    isManualOnlyNoAi: true,
     expectedType: "single_line_text_field",
-    purposeNote: "Capability #60: storageVerified=false, writerVerified=false. Held read-only until Shopify definition is verified."
+    purposeNote: "Capability #60: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
   }),
   defineFieldContract({
     destinationKey: "custom.accessory_dimensions_mm",
@@ -745,8 +799,9 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
+    isManualOnlyNoAi: true,
     expectedType: "single_line_text_field",
-    purposeNote: "Capability #61: storageVerified=false, writerVerified=false. Held read-only until Shopify definition is verified."
+    purposeNote: "Capability #61: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
   }),
   defineFieldContract({
     destinationKey: "custom.fitting_opening_mm",
@@ -758,12 +813,15 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
+    isManualOnlyNoAi: true,
     expectedType: "single_line_text_field",
-    purposeNote: "Capability #62: storageVerified=false, writerVerified=false. Held read-only until Shopify definition is verified."
+    purposeNote: "Capability #62: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
   }),
 
   // ------------------------------------------------------------------------
-  // DRAWER 6: CONDITIONAL SETTING/ACCESSORY FACTS (SUB_HARNESS_2 — FUTURE BATCH 2)
+  // DRAWER 6: CONDITIONAL SETTING/ACCESSORY FACTS (SUB_HARNESS_2 — CONNECTED)
+  // All 8 fields are product-level custom.* single_line_text_field targets
+  // supported by executeRepairPlan in app/routes/app.meta-injector-api.jsx.
   // ------------------------------------------------------------------------
   defineFieldContract({
     destinationKey: "custom.secondary_medium",
@@ -773,10 +831,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Secondary medium (setting/hardware metal or material) when applicable; never overwrites stone identity."
   }),
   defineFieldContract({
     destinationKey: "custom.jewelry_type",
@@ -786,10 +845,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Jewelry type classification (e.g. Pendant, Necklace, Artisan jewelry, N/A)."
   }),
   defineFieldContract({
     destinationKey: "custom.setting_ready",
@@ -799,11 +859,13 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
-    optionsKey: "setting_ready"
+    optionsKey: "setting_ready",
+    purposeNote: "Whether the piece is setting-ready or mounted/ready to wear (preserves exact descriptive text or boolean-like text values)."
   }),
   defineFieldContract({
     destinationKey: "custom.bail_included",
@@ -813,11 +875,13 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    usesYesNoMeaningDisplay: true,
     expectedType: "single_line_text_field",
     maxLength: 255,
-    optionsKey: "bail_included"
+    optionsKey: "bail_included",
+    purposeNote: "Whether a bail is included and/or its specific descriptive type (e.g. Silver Plated Pinch Bail)."
   }),
   defineFieldContract({
     destinationKey: "custom.chain_material",
@@ -827,11 +891,12 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
     maxLength: 255,
-    optionsKey: "chain_material"
+    optionsKey: "chain_material",
+    purposeNote: "Included necklace chain or cord material."
   }),
   defineFieldContract({
     destinationKey: "custom.chain_link_type",
@@ -841,10 +906,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Chain link or cord type (e.g. Cord, Snake Chain)."
   }),
   defineFieldContract({
     destinationKey: "custom.jewelry_finding_type",
@@ -854,10 +920,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Specific finding or mounting hardware (e.g. Silver Plated Pinch Bail, Glue-On Bail, Assorted Glue-In Setting)."
   }),
   defineFieldContract({
     destinationKey: "custom.wire_material",
@@ -867,10 +934,11 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "conditional_setting_accessory",
     subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
-    maxLength: 255
+    maxLength: 255,
+    purposeNote: "Wire material when wire-wrapped."
   }),
 
   // ------------------------------------------------------------------------
@@ -1775,6 +1843,14 @@ export const BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS = Object.freeze(
   )
 );
 
+export const BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS = Object.freeze(
+  new Set(
+    BENCH_V2_FIELD_CONTRACTS
+      .filter((c) => c.isManualOnlyNoAi === true)
+      .map((c) => c.destinationKey)
+  )
+);
+
 export const BENCH_V2_DRAWER_GROUPS = Object.freeze(
   BENCH_V2_DRAWERS.map((drawer) =>
     Object.freeze({
@@ -1792,6 +1868,7 @@ export const BENCH_V2_DRAWER_GROUPS = Object.freeze(
 
 const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 const COLLECTION_DATE_PLACEHOLDER_REGEX = /^(n\/a|none|unknown)$/i;
+const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
 const isBlankOrWhitespaceOnly = (str) =>
   typeof str !== "string" || str.trim() === "";
@@ -1807,25 +1884,108 @@ export function getFieldContractByDestination(destinationKey) {
 }
 
 /**
- * Formats a user-facing display label for OOAK values using the studio Yes/No
- * convention without altering or confusing the underlying stored/proposed string.
+ * Reusable per-destination display formatter for user-facing Yes/No + actual meaning
+ * conventions. Maps ONLY recognized boolean-like tokens ("true"/"false"/"Yes"/"No")
+ * or established field-specific tokens while preserving descriptive treatment and
+ * hardware text verbatim and leaving raw values unchanged internally and in Details.
  */
-export function formatOoakDisplayConvention(rawVal, observedType = null) {
+export function formatBenchV2ValueDisplay(destinationKey, rawVal, observedType = null) {
   if (rawVal === undefined || rawVal === null || rawVal === "") {
     return "";
   }
   const strVal = String(rawVal);
-  if (strVal === "true") {
-    return observedType === "boolean"
-      ? 'Yes (stored boolean: "true")'
-      : 'Yes (stored text: "true")';
+  const lower = strVal.trim().toLowerCase();
+
+  if (
+    destinationKey === "custom.is_ooak" ||
+    destinationKey === "custom.is_one_of_a_kind"
+  ) {
+    if (lower === "true" || lower === "yes" || lower === "yes — one of a kind") {
+      return "Yes — one of a kind";
+    }
+    if (lower === "false" || lower === "no" || lower === "no — not one of a kind") {
+      return "No — not one of a kind";
+    }
+    return strVal;
   }
-  if (strVal === "false") {
-    return observedType === "boolean"
-      ? 'No (stored boolean: "false")'
-      : 'No (stored text: "false")';
+
+  if (destinationKey === "custom.found_object") {
+    if (lower === "true" || lower === "yes" || lower === "yes — found in the wild") {
+      return "Yes — found in the wild";
+    }
+    if (lower === "no — purchased rough") {
+      return "No — purchased rough";
+    }
+    if (lower === "false" || lower === "no") {
+      return "No — not wild-collected (purchased)";
+    }
+    return strVal;
   }
+
+  if (destinationKey === "custom.treated") {
+    if (lower === "untreated — natural" || lower === "untreated - natural") {
+      return "No — untreated (Untreated — Natural)";
+    }
+    if (lower === "false" || lower === "no") {
+      return "No — untreated";
+    }
+    if (lower === "true" || lower === "yes") {
+      return "Yes — treated";
+    }
+    if (
+      lower === "stabilized" ||
+      lower === "dyed" ||
+      lower === "resined" ||
+      lower === "enhanced"
+    ) {
+      return `Yes — treated (${strVal})`;
+    }
+    return strVal;
+  }
+
+  if (destinationKey === "custom.treatment_status") {
+    if (lower === "false" || lower === "no") {
+      return "No — untreated";
+    }
+    if (lower === "true" || lower === "yes") {
+      return "Yes — treated";
+    }
+    return strVal;
+  }
+
+  if (destinationKey === "custom.setting_ready") {
+    if (lower === "true" || lower === "yes") {
+      return "Yes — setting ready";
+    }
+    if (lower === "false" || lower === "no") {
+      return "No — not setting ready";
+    }
+    return strVal;
+  }
+
+  if (destinationKey === "custom.bail_included") {
+    if (lower === "true" || lower === "yes") {
+      return "Yes — bail included";
+    }
+    if (lower === "false" || lower === "no") {
+      return "No — no bail included";
+    }
+    return strVal;
+  }
+
+  if (observedType === "boolean") {
+    if (strVal === "true") return "Yes";
+    if (strVal === "false") return "No";
+  }
+
   return strVal;
+}
+
+/**
+ * Backwards-compatible export for OOAK display convention.
+ */
+export function formatOoakDisplayConvention(rawVal, observedType = null) {
+  return formatBenchV2ValueDisplay("custom.is_ooak", rawVal, observedType);
 }
 
 /**
@@ -2344,6 +2504,9 @@ export function validateBatch1ProposedValue({
 
   // Type-specific validation using actual observed storage/definition type:
   // - Boolean custom.is_ooak accepts exact "true" or "false" only (never silently normalizing "Yes"/"No").
+  // - number_decimal (e.g. custom.weight_grams) requires a finite non-negative decimal string
+  //   that matches executeRepairPlan's String(parseFloat(val)) serialization verbatim so the
+  //   writer never silently rewrites the approved string (e.g. stripping units, spaces, or trailing zeros).
   // - Text fields preserve exact untrimmed text and enforce maxLength & plain-text shape guards.
   if (verifiedActualType === "boolean") {
     if (exactValue !== "true" && exactValue !== "false") {
@@ -2351,6 +2514,30 @@ export function validateBatch1ProposedValue({
         valid: false,
         code: "invalid_boolean_literal",
         reason: `Destination "${contract.destinationKey}" has observed Shopify type "boolean" on this product and requires exact "true" or "false" (received "${exactValue}").`
+      };
+    }
+  } else if (verifiedActualType === "number_decimal") {
+    if (!CANONICAL_DECIMAL_NUMBER_REGEX.test(exactValue)) {
+      return {
+        valid: false,
+        code: "invalid_decimal_number",
+        reason: `Destination "${contract.destinationKey}" requires a non-negative decimal number without units, spaces, or leading zeros (e.g. "14.5" or "28"; received "${exactValue}").`
+      };
+    }
+    const parsedNum = Number(exactValue);
+    const writerSerialized = String(parseFloat(exactValue));
+    if (!Number.isFinite(parsedNum) || parsedNum < 0) {
+      return {
+        valid: false,
+        code: "non_finite_or_negative_decimal",
+        reason: `Destination "${contract.destinationKey}" requires a finite non-negative decimal number (received "${exactValue}").`
+      };
+    }
+    if (writerSerialized !== exactValue) {
+      return {
+        valid: false,
+        code: "non_canonical_decimal_representation",
+        reason: `Existing writer serializes "${exactValue}" as "${writerSerialized}" on save. Enter "${writerSerialized}" so your exact approved value is stored without alteration.`
       };
     }
   } else if (verifiedActualType === "single_line_text_field") {
@@ -2592,9 +2779,7 @@ export function evaluateBenchV2FieldRow({
     : null;
 
   const observedType = baselineObs.liveDefType || baselineObs.storedType || null;
-  const isOoakDestination =
-    contract.destinationKey === "custom.is_ooak" ||
-    contract.destinationKey === "custom.is_one_of_a_kind";
+  const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
 
   const hasProposalKey = Boolean(
     proposedMapForProduct &&
@@ -2733,12 +2918,12 @@ export function evaluateBenchV2FieldRow({
     statusReason = typeAndCompleteness.reason;
   }
 
-  const baselineDisplayValue = isOoakDestination
-    ? formatOoakDisplayConvention(baselineObs.rawValue, observedType)
+  const baselineDisplayValue = usesMeaningDisplay
+    ? formatBenchV2ValueDisplay(contract.destinationKey, baselineObs.rawValue, observedType)
     : (baselineObs.rawValue ?? "");
 
-  const proposedDisplayValue = isOoakDestination && hasNonEmptyProposal
-    ? formatOoakDisplayConvention(proposedValue, observedType)
+  const proposedDisplayValue = usesMeaningDisplay && hasNonEmptyProposal
+    ? formatBenchV2ValueDisplay(contract.destinationKey, proposedValue, observedType)
     : proposedValue;
 
   return Object.freeze({

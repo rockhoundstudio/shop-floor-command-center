@@ -1,42 +1,34 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + TAB 3 GEMINI CONNECTOR)
+// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE)
 // File: app/routes/app.bench-v2.jsx
 //
 // Verified Current Sources Confirmed in Context:
-// 1. app/utils/bench-v2.contract.jsx (112,497 chars, SHA256: F31EF4BC321AFC20A3696E53686EAD076D8583B8962D24EA667AC6D7DF144DBA)
+// 1. app/utils/bench-v2.contract.jsx (120,942 chars, SHA256: AF1820B2565627F83DFEA26BE343B447B6949EB1A20AE9615995379092CABEEB)
 // 2. app/utils/bench-v2.baseline.server.jsx (43,102 chars, SHA256: 81590D25E0923983958813D4EC9E323EFD1B6C247711642770A1A378C5894CCA)
-// 3. app/routes/app.meta-injector-api.jsx (142,433 chars — action intent="executeRepairPlan" with benchV2OptIn="true")
+// 3. app/routes/app.meta-injector-api.jsx (SHA256: 929294D30480065ECA192AC1DCB7A128642FFA89879BEE5D97BAF6DA92296C75 — action intent="executeRepairPlan" with benchV2OptIn="true")
 // 4. app/routes/app.meta-injector-autofill.jsx (698 chars — action delegates to executeAutofill)
 // 5. app/utils/meta-injector.autofill.server.jsx (168,616 chars, SHA256: 039F7B2F8DED1E385A02A2640F540821B1638A8A95DAAC547AF83BC93C9E3AEF)
-// 6. app/routes/app.bench-v2.jsx (Retained Route, SHA256: 5B048B59D4E00ECACE46FB42D473F4DD05B29A7958A3B82147559252182EB6F5)
+// 6. app/routes/app.bench-v2.jsx (Retained Route, SHA256: 47413FBEC6D29F931C52F498A83A7EDE07DD1D98A4487BC8788349653B77EBF2)
 // 7. app/routes/app.meta-injector.matrix.jsx (231,797 chars — filter behavior reference only; never imported)
 // 8. app/utils/meta-injector.matrix-domain.jsx (164,101 chars — FILTER_OPTIONS & predicate reference only; never imported)
 //
-// Authorized Combined Search / Product Picker / Drawer Filter Update:
-// - Replaces the dense dropdown of long marketing titles with an accessible,
-//   dyslexia/glaucoma-friendly Product Search & Picker:
-//   * Explicit Search and Clear controls; Enter submits (never fires on every keystroke).
-//   * Searches across inventory via lightweight paginated GraphQL read
-//     (products(first: 50, after: $cursor, query: $searchQuery)) selecting
-//     id, title, and actual pieceName: metafield(namespace: "custom", key: "piece_name") { value }.
-//   * Displays actual pieceName as the large primary mixed-case label when present,
-//     with the full product title as clear secondary context (never guessing which
-//     title fragment is the piece name when custom.piece_name is absent).
-//   * Uses a dedicated pickerFetcher for searching and paging so searching/paging
-//     never switches the active product, never reloads the full product baseline
-//     unnecessarily, never triggers AI, and never clears drafts or decisions.
-//   * Selection always uses the exact returned Shopify Product GID.
-//   * Selected product remains clearly identified at the top even when absent
-//     from the current search results page.
-// - Restores the 11 Tab 3 FILTER_OPTIONS from app/utils/meta-injector.matrix-domain.jsx
-//   ("All", "Needs review", "Proposed changes", "Conflicts", "Blank", "Shopify",
-//   "Gemini", "Vision", "Geo Library", "Derived", "Manual") adapted to Bench V2's
-//   real evaluated row state, with focus-retention so actively edited fields do not
-//   vanish mid-edit, an honest empty-filter message, and a one-click "Return to All Fields"
-//   button.
-// - Preserves fixed 120px by 120px thumbnails, initially collapsed drawers,
-//   Saved/Proposed layout, source labels, exact approvals, Keep Original,
-//   and explicit Save/AI Scan interfaces verbatim.
+// Authorized Connected Manual Measurements + Setting & Hardware Route Update:
+// - Uses saved contract exports/interfaces (BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
+//   contract.isManualOnlyNoAi, contract.usesYesNoMeaningDisplay, baselineDisplayValue,
+//   proposedDisplayValue, and number_decimal validation).
+// - Enables manual controls for custom.dimensions_mm and custom.weight_grams in Drawer 5
+//   plus the 8 mapped Setting & Hardware destinations in Drawer 6, while keeping the
+//   4 unverified measurement keepers on read-only hold and custom.overall_solid_length_in
+//   permanently excluded.
+// - Explicitly blocks ALL manual-measurement / manual-only destinations (including
+//   dimensions_mm, weight_grams, collection_date, and the 4 held measurement keepers)
+//   from AI Scan staging with a clear reported reason.
+// - Renders user-facing Yes/No + actual meaning in ordinary Saved/Proposed displays and
+//   option labels via the contract formatter while keeping exact raw values/types
+//   internally for validation, exact approvals, Keep Original, save payloads, and Details.
+// - Preserves Product Search & Picker, 11 Tab 3 FILTER_OPTIONS, fixed 120px by 120px
+//   thumbnails, initially collapsed drawers, per-product drafts, exact approvals,
+//   Keep Original, and explicit Save/AI Scan interfaces verbatim.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -47,6 +39,7 @@ import {
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_DRAWER_GROUPS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
+  BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   isExactProductGid,
   getFieldContractByDestination,
@@ -127,6 +120,30 @@ const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "is_one_of_a_kind",
   "is_ooak"
 ]);
+
+// Explicit guard set for all manual-measurement and manual-only destinations
+// (including held measurement keepers) so AI Scan never stages proposals into them.
+const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
+  new Set([
+    ...(BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS || []),
+    "custom.dimensions_mm",
+    "custom.weight_grams",
+    "custom.whole_product_weight_grams",
+    "custom.chain_cord_length_in",
+    "custom.accessory_dimensions_mm",
+    "custom.fitting_opening_mm",
+    "custom.collection_date"
+  ])
+);
+
+function isManualOnlyNoAiDestination(destinationKey, contract = null) {
+  if (!destinationKey || typeof destinationKey !== "string") return false;
+  if (MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS.has(destinationKey)) return true;
+  if (contract && (contract.isManualOnlyNoAi === true || contract.drawerId === "manual_measurements")) {
+    return true;
+  }
+  return false;
+}
 
 // Lightweight single-page product list query patterned from Shopify Admin GraphQL
 // products(first: 50, after: $cursor, query: $searchQuery), fetching ONLY id, title,
@@ -229,9 +246,11 @@ async function loadLightweightProductPage(admin, cursor = null, rawSearch = "") 
 }
 
 // Explicit Writer-Connection Holds:
-// The four Batch 1 custom destinations (custom.is_ooak, custom.cut_and_shape,
-// custom.stone_shape, custom.color) are now connected in saved app/routes/app.meta-injector-api.jsx
-// when executeRepairPlan is submitted with benchV2OptIn="true".
+// The five previously held Batch 1 custom destinations (custom.is_ooak,
+// custom.stone_family, custom.cut_and_shape, custom.stone_shape, custom.color)
+// plus custom.dimensions_mm, custom.weight_grams, and the 8 Drawer 6 Setting & Hardware
+// destinations are supported by saved app/routes/app.meta-injector-api.jsx when
+// executeRepairPlan is submitted with benchV2OptIn="true".
 // Approval and save readiness still require all live definition, stored type,
 // completeness, baseline, string-fidelity, and exact-value approval checks.
 export const EXISTING_WRITER_CONNECTION_HOLDS = Object.freeze({});
@@ -359,7 +378,7 @@ function formatRawBaselineValueForInspection(baselineObs) {
   return String(raw);
 }
 
-function formatReadableSavedValue(baselineObs, isOoakRow, baselineDisplayValue) {
+function formatReadableSavedValue(baselineObs, usesMeaningDisplay, baselineDisplayValue) {
   if (!baselineObs) return "Not loaded";
   if (!baselineObs.evidenceAvailable) {
     if (baselineObs.presence === "unknown_incomplete_read") {
@@ -373,7 +392,7 @@ function formatReadableSavedValue(baselineObs, isOoakRow, baselineDisplayValue) 
   if (baselineObs.presence === "null" || baselineObs.presence === "empty_string") {
     return "Empty";
   }
-  if (isOoakRow && baselineDisplayValue) {
+  if (usesMeaningDisplay && typeof baselineDisplayValue === "string" && baselineDisplayValue !== "") {
     return baselineDisplayValue;
   }
   const raw = baselineObs.rawValue;
@@ -440,6 +459,12 @@ function getShortPlainNotice(row) {
   }
 
   if (!contract.isWritableInBatch1) {
+    if (contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD") {
+      return {
+        tone: "muted",
+        text: "Held read-only pending supported Shopify definition and writer evidence."
+      };
+    }
     return {
       tone: "muted",
       text: "Read-only in this batch."
@@ -478,6 +503,18 @@ function getShortPlainNotice(row) {
     return {
       tone: "error",
       text: "Shopify type conflict — see Details."
+    };
+  }
+
+  const verifiedActualType = obs.liveDefType || obs.storedType;
+  const allowedTypes =
+    Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
+      ? contract.allowedTypes
+      : [contract.expectedType];
+  if (verifiedActualType && !allowedTypes.includes(verifiedActualType)) {
+    return {
+      tone: "error",
+      text: `Shopify type mismatch (observed ${verifiedActualType}, expected ${allowedTypes.join(" or ")}) — see Details.`
     };
   }
 
@@ -635,6 +672,25 @@ export function matchesBenchV2Filter(row, activeFilter) {
   }
 
   return activeSourceStr === activeFilter;
+}
+
+function getDrawerConnectionSubtitle(drawer) {
+  if (!drawer) return "Read-only in Batch 1";
+  if (drawer.drawerId === "parked_excluded_protected") {
+    return "Read-only parked and protected fields";
+  }
+  if (drawer.drawerId === "manual_measurements") {
+    const writableCount = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1).length;
+    const heldCount = drawer.evaluatedRows.length - writableCount;
+    return `Manual-only (${writableCount} connected for manual entry, ${heldCount} unverified on hold — no AI scan staging)`;
+  }
+  if (drawer.drawerId === "conditional_setting_accessory") {
+    return "Connected for manual entry & exact approval (AI Scan hardware suggestions pending producer map)";
+  }
+  if (drawer.isImplementedInBatch1) {
+    return "Connected in Batch 1";
+  }
+  return "Read-only in Batch 1";
 }
 
 export default function BenchV2Route() {
@@ -1373,6 +1429,8 @@ export default function BenchV2Route() {
   // AI SCAN COMPLETION EFFECT:
   // - Validates exact requestId and pieceId before accepting any result.
   // - Consumes ONLY rawResponse.producerProposals (never tab3Data fallbacks).
+  // - Explicitly ignores/blocks any proposal for manual-measurement or manual-only
+  //   destinations (including held measurement keepers) and reports a clear reason.
   // - Carries actual producerProposals[destKey].source metadata into both
   //   breakdown lines and per-destination scan metadata (using "Source not reported"
   //   when absent, never inferring provenance from baseline equality or field name).
@@ -1407,6 +1465,7 @@ export default function BenchV2Route() {
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
+          ignoredManualOnlyCount: 0,
           diagnostics: {},
           details: [],
           proposalsByDestination: {}
@@ -1435,6 +1494,7 @@ export default function BenchV2Route() {
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
+          ignoredManualOnlyCount: 0,
           diagnostics: {},
           details: [],
           proposalsByDestination: {}
@@ -1458,6 +1518,7 @@ export default function BenchV2Route() {
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
+          ignoredManualOnlyCount: 0,
           diagnostics:
             rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
               ? rawResponse.producerDiagnostics
@@ -1490,6 +1551,7 @@ export default function BenchV2Route() {
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
+          ignoredManualOnlyCount: 0,
           diagnostics: {},
           details: [],
           proposalsByDestination: {}
@@ -1511,21 +1573,15 @@ export default function BenchV2Route() {
     let heldConflictCount = 0;
     let unchangedSkippedCount = 0;
     let rejectedInvalidCount = 0;
+    let ignoredManualOnlyCount = 0;
     const details = [];
 
     for (const [destKey, entry] of Object.entries(rawProducerProposals)) {
       if (CANCELLED_INERT_DESTINATIONS.has(destKey)) {
         continue;
       }
-      if (!BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey)) {
-        continue;
-      }
 
       const contract = getFieldContractByDestination(destKey);
-      if (!contract || !contract.isWritableInBatch1) {
-        continue;
-      }
-
       const rawValue =
         entry && typeof entry === "object" && typeof entry.value === "string"
           ? entry.value
@@ -1539,6 +1595,36 @@ export default function BenchV2Route() {
           : "Source not reported";
 
       if (rawValue.trim() === "") {
+        continue;
+      }
+
+      // Explicit Manual Measurement / Manual-Only AI Exclusion Gate:
+      // Never stage AI suggestions into any manual measurement or manual-only destination
+      // (including custom.dimensions_mm, custom.weight_grams, custom.collection_date,
+      // and the 4 held measurement keepers). Report a clear reason in the scan breakdown.
+      if (isManualOnlyNoAiDestination(destKey, contract)) {
+        ignoredManualOnlyCount++;
+        const manualReason =
+          contract?.drawerId === "manual_measurements"
+            ? "Manual measurement field — excluded from AI staging; enter physical measurement manually."
+            : "Manual-only field — excluded from AI staging.";
+        proposalsByDestination[destKey] = {
+          value: rawValue,
+          source: reportedSource,
+          disposition: "Ignored (manual-only field — not staged)",
+          reason: manualReason
+        };
+        details.push(
+          `[${destKey}] Ignored AI suggestion "${rawValue}" (Source: ${reportedSource}): ${manualReason}`
+        );
+        continue;
+      }
+
+      if (!BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey)) {
+        continue;
+      }
+
+      if (!contract || !contract.isWritableInBatch1) {
         continue;
       }
 
@@ -1683,6 +1769,13 @@ export default function BenchV2Route() {
         ? rawResponse.producerDiagnostics
         : {};
 
+    const manualIgnoredNote =
+      ignoredManualOnlyCount > 0
+        ? `, ${ignoredManualOnlyCount} manual-only measurement suggestion${
+            ignoredManualOnlyCount === 1 ? "" : "s"
+          } ignored`
+        : "";
+
     setLastAiScanReportByProduct((prev) => ({
       ...prev,
       [scannedProductId]: {
@@ -1690,14 +1783,15 @@ export default function BenchV2Route() {
         productId: scannedProductId,
         completedAt: new Date().toISOString(),
         ok: true,
-        summary: `AI Scan complete: ${receivedCount} Batch 1 suggestion${
+        summary: `AI Scan complete: ${receivedCount} eligible suggestion${
           receivedCount === 1 ? "" : "s"
-        } received (${stagedCount} staged as unapproved drafts, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline).`,
+        } received (${stagedCount} staged as unapproved drafts, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline${manualIgnoredNote}).`,
         receivedCount,
         stagedCount,
         heldConflictCount,
         unchangedSkippedCount,
         rejectedInvalidCount,
+        ignoredManualOnlyCount,
         diagnostics: diagnosticsObj,
         details,
         proposalsByDestination
@@ -1712,6 +1806,11 @@ export default function BenchV2Route() {
     setClientPrevalidationBanner(null);
     const altEntry = currentAiAlternativesMap[destinationKey];
     if (!altEntry || typeof altEntry.value !== "string") return;
+
+    const contract = getFieldContractByDestination(destinationKey);
+    if (isManualOnlyNoAiDestination(destinationKey, contract)) {
+      return;
+    }
 
     setProposedByProduct((prev) => {
       const prodMap = { ...(prev[activeProductId] || {}) };
@@ -2285,7 +2384,7 @@ export default function BenchV2Route() {
     };
   });
 
-  // Summarize selected product's Batch 1 review state across ALL rows (never reduced by view filter)
+  // Summarize selected product's review state across ALL rows (never reduced by view filter)
   const allEvaluatedRows = evaluatedDrawerGroups.flatMap((d) => d.evaluatedRows);
   const totalVisibleFilteredRowCount = evaluatedDrawerGroups.reduce(
     (acc, d) => acc + d.visibleRows.length,
@@ -2334,7 +2433,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit or review a field in Drawers 1 to 4 and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 6 and check Approve before clicking Save."
         ]
       });
       return;
@@ -2351,7 +2450,7 @@ export default function BenchV2Route() {
         !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey)
       ) {
         prevalidationErrors.push(
-          `[${destKey}] Not an eligible Batch 1 writable destination.`
+          `[${destKey}] Not an eligible writable destination.`
         );
         continue;
       }
@@ -3228,11 +3327,13 @@ export default function BenchV2Route() {
               color: "#334155"
             }}
           >
-            Drawers 1 to 4 are connected for manual edits and explicit Gemini AI Scan
-            suggestions (all AI suggestions stay unapproved until you check Approve). Is OOAK,
-            Cut and Shape, Stone Shape, and Color are no longer on writer skip hold, and still
-            require live/stored type, completeness, and exact-value approval checks before
-            saving. Filtering is view-only and never clears drafts or decisions.
+            Drawers 1 to 6 are connected for manual edits and exact-value approval where
+            Shopify type/completeness evidence is verified. In Drawer 5 (Manual Measurements),{" "}
+            <strong>Dimensions (mm)</strong> and <strong>Weight (grams)</strong> are manual-only
+            (excluded from AI Scan staging), while the 4 unverified measurement keepers remain on
+            read-only hold. Drawer 6 (Setting and Hardware) is connected for manual edits and
+            ready for AI Scan suggestions once the server producer map includes Drawer 6 keys.
+            Filtering is view-only and never clears drafts or decisions.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
@@ -3627,11 +3728,7 @@ export default function BenchV2Route() {
             ).length;
 
             const isParkedProtectedDrawer = drawer.drawerId === "parked_excluded_protected";
-            const drawerSubtitleLabel = isParkedProtectedDrawer
-              ? "Read-only parked and protected fields"
-              : drawer.isImplementedInBatch1
-                ? "Connected in Batch 1"
-                : "Read-only in Batch 1";
+            const drawerSubtitleLabel = getDrawerConnectionSubtitle(drawer);
 
             return (
               <section
@@ -3814,9 +3911,11 @@ export default function BenchV2Route() {
                             effectiveStatusReason
                           } = row;
 
-                          const isOoakRow =
-                            contract.destinationKey === "custom.is_ooak" ||
-                            contract.destinationKey === "custom.is_one_of_a_kind";
+                          const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
+                          const isManualOnlyField = isManualOnlyNoAiDestination(
+                            contract.destinationKey,
+                            contract
+                          );
 
                           const canEditDraftInBatch1 =
                             contract.isWritableInBatch1 && obs.evidenceAvailable;
@@ -3838,10 +3937,19 @@ export default function BenchV2Route() {
                           const plainLabel = cleanFieldHeading(contract.label);
                           const readableSaved = formatReadableSavedValue(
                             obs,
-                            isOoakRow,
+                            usesMeaningDisplay,
                             baselineDisplayValue
                           );
                           const shortNotice = getShortPlainNotice(row);
+
+                          let inputPlaceholder = "Type proposed value...";
+                          if (!canEditDraftInBatch1) {
+                            inputPlaceholder = "Editing locked until baseline loads";
+                          } else if (contract.destinationKey === "custom.dimensions_mm") {
+                            inputPlaceholder = "Enter manual measurement (e.g. 38 x 24 x 6 mm)...";
+                          } else if (contract.destinationKey === "custom.weight_grams") {
+                            inputPlaceholder = "Enter manual scale weight in grams (e.g. 14.5)...";
+                          }
 
                           let cardBorder = "1px solid #cbd5e1";
                           let cardBg = "#ffffff";
@@ -3903,6 +4011,18 @@ export default function BenchV2Route() {
                                       }}
                                     >
                                       (Primary OOAK field — custom.is_one_of_a_kind)
+                                    </span>
+                                  )}
+                                  {isManualOnlyField && contract.isWritableInBatch1 && (
+                                    <span
+                                      style={{
+                                        fontSize: "13px",
+                                        fontWeight: 600,
+                                        color: "#334155",
+                                        marginLeft: "8px"
+                                      }}
+                                    >
+                                      (Manual entry only — no AI scan)
                                     </span>
                                   )}
                                 </div>
@@ -4058,11 +4178,7 @@ export default function BenchV2Route() {
                                           aria-label={`Manual proposal for ${contract.destinationKey}`}
                                           value={proposedValue}
                                           disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
-                                          placeholder={
-                                            canEditDraftInBatch1
-                                              ? "Type proposed value..."
-                                              : "Editing locked until baseline loads"
-                                          }
+                                          placeholder={inputPlaceholder}
                                           onFocus={() =>
                                             handleFieldEditorFocus(contract.destinationKey)
                                           }
@@ -4107,20 +4223,23 @@ export default function BenchV2Route() {
                                         )}
                                       </div>
 
-                                      {isOoakRow && hasProposalKey && proposedValue !== "" && (
-                                        <div
-                                          style={{
-                                            fontSize: "14px",
-                                            color: "#334155",
-                                            marginTop: "6px"
-                                          }}
-                                        >
-                                          Meaning: <strong>{proposedDisplayValue}</strong>
-                                        </div>
-                                      )}
+                                      {usesMeaningDisplay &&
+                                        hasProposalKey &&
+                                        proposedValue.trim() !== "" &&
+                                        proposedDisplayValue && (
+                                          <div
+                                            style={{
+                                              fontSize: "14px",
+                                              color: "#334155",
+                                              marginTop: "6px"
+                                            }}
+                                          >
+                                            Meaning: <strong>{proposedDisplayValue}</strong>
+                                          </div>
+                                        )}
 
                                       {/* HELD AI ALTERNATIVE CHOICE BOX (WHEN AI SUGGESTION CONFLICTS WITH HUMAN DRAFT/DECISION) */}
-                                      {heldAiAlternative && (
+                                      {heldAiAlternative && !isManualOnlyField && (
                                         <div
                                           style={{
                                             marginTop: "10px",
@@ -4282,7 +4401,9 @@ export default function BenchV2Route() {
                                     </div>
                                   ) : (
                                     <div style={{ fontSize: "15px", color: "#475569" }}>
-                                      Read-only in this batch.
+                                      {contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD"
+                                        ? "Held read-only pending supported Shopify definition and writer evidence."
+                                        : "Read-only in this batch."}
                                     </div>
                                   )}
 
@@ -4352,7 +4473,9 @@ export default function BenchV2Route() {
                                       <strong>Staged Draft Source:</strong>{" "}
                                       {proposalSource && proposalSource !== "None"
                                         ? proposalSource
-                                        : "Source not reported"}
+                                        : "Source not reported"}{" "}
+                                      | <strong>Exact Staged Value:</strong>{" "}
+                                      <code>{proposedValue}</code>
                                     </div>
                                   )}
                                   {scanProposalMeta && (
