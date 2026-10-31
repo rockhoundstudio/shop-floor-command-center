@@ -2,66 +2,47 @@ import { authenticate } from "../shopify.server";
 import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
 import { action as loaderAction } from "../utils/meta-injector.loader.jsx";
 import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
+import { ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS } from "../utils/meta-injector.standardized.jsx";
+import {
+  BENCH_V2_WRITER_OPT_IN_FIELD,
+  BENCH_V2_WRITER_OPT_IN_VALUE,
+  BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
+  BENCH_V2_OPT_IN_UNHELD_BARE_KEYS,
+  BENCH_V2_CONNECTED_VARIANT_DESTINATIONS as BENCH_V2_OPT_IN_VARIANT_DESTINATIONS,
+  isExactProductGid,
+  isExactProductVariantGid
+} from "../utils/bench-v2.contract.jsx";
+import {
+  normalizeTaxonomyCategoryCode,
+  doesCategoryMatchConstraintValue,
+  evaluateStandardizedCategoryEligibility,
+  readProductMetafieldDefinitionsWithConstraints as fetchProductMetafieldDefinitionsWithConstraints,
+  readVariantMetafieldDefinitionsWithConstraints as fetchVariantMetafieldDefinitionsWithConstraints,
+  paginateOwnerMetafieldsConnection,
+  readSingleVariantMetafields as fetchSingleVariantMetafieldsForWriter
+} from "../utils/bench-v2.baseline.server.jsx";
+
+export {
+  BENCH_V2_WRITER_OPT_IN_FIELD,
+  BENCH_V2_WRITER_OPT_IN_VALUE,
+  BENCH_V2_OPT_IN_VARIANT_DESTINATIONS
+};
 
 // 🟢 Structural Engine — No Prisma Import Here
 
-// Explicit Replacement-Tab3 (app/routes/app.bench-v2.jsx) Opt-In Request Marker:
-// FormData field name: "benchV2OptIn", exact string value: "true".
-// Only executeRepairPlan requests carrying benchV2OptIn="true" may pass the five
-// Bench V2 writer-held custom destinations (custom.is_ooak, custom.stone_family,
-// custom.cut_and_shape, custom.stone_shape, custom.color) and the three explicit
-// single-variant PRODUCTVARIANT destinations (mm-google-shopping.age_group,
-// mm-google-shopping.condition, mm-google-shopping.gender) through retirement/companion-skip/allowlist gates.
-// Legacy callers without benchV2OptIn="true" retain existing skip/retirement behavior unchanged.
-export const BENCH_V2_WRITER_OPT_IN_FIELD = "benchV2OptIn";
-export const BENCH_V2_WRITER_OPT_IN_VALUE = "true";
-
-const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
-  new Set([
-    "custom.is_ooak",
-    "custom.stone_family",
-    "custom.cut_and_shape",
-    "custom.stone_shape",
-    "custom.color"
-  ])
-);
-
-const BENCH_V2_OPT_IN_UNHELD_BARE_KEYS = Object.freeze(
-  new Set([
-    "is_ooak",
-    "stone_family",
-    "cut_and_shape",
-    "stone_shape",
-    "color"
-  ])
-);
-
-// Explicit Bench V2 Opt-In Single-Variant PRODUCTVARIANT Allowlist:
-// Only these three exact namespace.key destinations are permitted on PRODUCTVARIANT
-// when benchV2OptIn="true" and caller supplies an exact verified variantTargetId.
-export const BENCH_V2_OPT_IN_VARIANT_DESTINATIONS = Object.freeze(
-  new Set([
-    "mm-google-shopping.age_group",
-    "mm-google-shopping.condition",
-    "mm-google-shopping.gender"
-  ])
-);
-
-const EXACT_PRODUCT_VARIANT_GID_REGEX = /^gid:\/\/shopify\/ProductVariant\/\d+$/;
-
 const ALLOWED_TAB3_KEYS = [
-  "shopify_title", "piece_name", "stone_family", "price", "weight_grams", 
-  "shipping_weight_oz", "is_ooak", "dimensions_mm", 
-  "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character", 
+  "shopify_title", "piece_name", "stone_family", "price", "weight_grams",
+  "shipping_weight_oz", "is_ooak", "dimensions_mm",
+  "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character",
   "jewelry_type", "wire_material",
-  "primary_medium", "secondary_medium", "setting_ready", "bail_included", 
-  "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity", 
-  "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity", 
-  "mineral_class", "geological_era", "rock_formation", "origin_location", 
-  "origin_handle", "collection_name", "collection_location", "origin_story", 
-  "seo_title", "alt_text", 
+  "primary_medium", "secondary_medium", "setting_ready", "bail_included",
+  "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity",
+  "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity",
+  "mineral_class", "geological_era", "rock_formation", "origin_location",
+  "origin_handle", "collection_name", "collection_location", "origin_story",
+  "seo_title", "alt_text",
   "google_product_category", "authenticity", "rarity", "generated_description",
-  
+
   // EXACT CUSTOM DESTINATIONS
   "is_one_of_a_kind", "origin_page_handle", "rescued_by", "character_marks",
   "treatment_status", "treated", "necklace_design", "chain_link_type",
@@ -78,10 +59,10 @@ const ALLOWED_TAB3_KEYS = [
   "native_seo_title", "native_description",
 
   // STANDARDIZED TAXONOMY LIST
-  "age-group", "chain-link-type", "color-pattern", "condition", "construction", "crystal-system", 
-  "geological-era", "jewelry-finding-type", "jewelry-material", "jewelry-type", 
-  "material", "material-origin", "mineral-class", "necklace-design", 
-  "product-classification", "product-use", "rock-composition", "rock-formation", 
+  "age-group", "chain-link-type", "color-pattern", "condition", "construction", "crystal-system",
+  "geological-era", "jewelry-finding-type", "jewelry-material", "jewelry-type",
+  "material", "material-origin", "mineral-class", "necklace-design",
+  "product-classification", "product-use", "rock-composition", "rock-formation",
   "target-gender"
 ];
 
@@ -123,61 +104,6 @@ const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.jewelry_finding_type": "single_line_text_field",
   "custom.google_product_category": "single_line_text_field"
 });
-
-const MASTER_TYPE_MAP = {
-  rescued_by: "single_line_text_field", origin_location: "single_line_text_field", geological_age: "single_line_text_field",
-  mohs_hardness: "single_line_text_field", official_name: "single_line_text_field", luster: "single_line_text_field",
-  specific_gravity: "single_line_text_field", fracture_pattern: "single_line_text_field", cleavage: "single_line_text_field",
-  tenacity: "single_line_text_field", primary_color: "single_line_text_field", diaphaneity: "single_line_text_field",
-  character_marks: "single_line_text_field", dimensions_mm: "single_line_text_field", cut_type: "single_line_text_field",
-  surface_finish: "single_line_text_field", treatment_status: "single_line_text_field", secondary_colors: "single_line_text_field",
-  base_stone_type: "single_line_text_field", hardness: "single_line_text_field", primary_medium: "single_line_text_field",
-  piece_name: "single_line_text_field", stone_family: "single_line_text_field", collection_name: "single_line_text_field",
-  collection_location: "single_line_text_field", origin_handle: "single_line_text_field", origin_page_handle: "single_line_text_field",
-  alt_text: "single_line_text_field", is_ooak: "single_line_text_field", is_one_of_a_kind: "single_line_text_field",
-  found_object: "single_line_text_field", collection_date: "single_line_text_field", wire_material: "single_line_text_field",
-  custom_product: "single_line_text_field", setting_ready: "single_line_text_field", bail_included: "single_line_text_field",
-  chain_material: "single_line_text_field", seo_title: "single_line_text_field", secondary_medium: "single_line_text_field",
-  treated: "single_line_text_field", weight_grams: "number_decimal", shipping_weight_oz: "number_decimal", price: "number_decimal",
-  origin_story: "multi_line_text_field", honest_flaws: "single_line_text_field", honest_flaws_and_character: "multi_line_text_field",
-  generated_description: "multi_line_text_field", color_pattern: "single_line_text_field", "color-pattern": "list.metaobject_reference",
-  material: "metaobject_reference", jewelry_material: "metaobject_reference", "jewelry-material": "metaobject_reference",
-  age_group: "metaobject_reference", "age-group": "metaobject_reference", jewelry_type: "single_line_text_field",
-  "jewelry-type": "metaobject_reference", target_gender: "metaobject_reference", "target-gender": "metaobject_reference",
-  necklace_design: "metaobject_reference", "necklace-design": "metaobject_reference", authenticity: "metaobject_reference",
-  rarity: "metaobject_reference", condition: "metaobject_reference", crystal_system: "metaobject_reference",
-  "crystal-system": "metaobject_reference", mineral_class: "metaobject_reference", "mineral-class": "metaobject_reference",
-  geological_era: "metaobject_reference", "geological-era": "metaobject_reference", rock_composition: "metaobject_reference",
-  "rock-composition": "metaobject_reference", rock_formation: "metaobject_reference", "rock-formation": "metaobject_reference",
-  chain_link_type: "metaobject_reference", "chain-link-type": "metaobject_reference", jewelry_finding_type: "metaobject_reference",
-  "jewelry-finding-type": "metaobject_reference", google_product_category: "single_line_text_field",
-  
-  // Standardized taxonomy explicit mappings to avoid fallback to single_line_text_field
-  "construction": "metaobject_reference",
-  "material-origin": "metaobject_reference",
-  "product-classification": "metaobject_reference",
-  "product-use": "metaobject_reference"
-};
-
-const EXPLICIT_METAOBJECT_KEYS = [
-  "material", "color-pattern", "jewelry-material", "jewelry_material",
-  "target-gender", "age-group", "age_group", "condition", "rarity", 
-  "authenticity", "jewelry-type", "necklace-design", "necklace_design", 
-  "crystal-system", "geological-era", "geological_era", 
-  "mineral-class", "mineral_class", "rock-composition", "rock_composition", 
-  "rock-formation", "rock_formation", "chain-link-type", "chain_link_type",
-  "jewelry-finding-type", "jewelry_finding_type", "construction", "material-origin",
-  "product-classification", "product-use"
-];
-
-const ALLOWED_STANDARDIZED_CANDIDATE_KEYS = [
-  "chain-link-type",
-  "construction",
-  "jewelry-finding-type",
-  "material-origin",
-  "product-classification",
-  "product-use"
-];
 
 const ALL_STANDARDIZED_META_KEYS = Array.from(
   new Set(
@@ -461,678 +387,6 @@ function areDescriptionHtmlEquivalentOnReadBack(expectedHtml, actualHtml) {
   return canonExpected === canonActual;
 }
 
-function normalizeTaxonomyCategoryCode(rawVal) {
-  if (typeof rawVal !== "string") return "";
-  const trimmed = rawVal.trim();
-  if (!trimmed) return "";
-  const gidPrefix = "gid://shopify/TaxonomyCategory/";
-  if (trimmed.startsWith(gidPrefix)) {
-    return trimmed.slice(gidPrefix.length).trim();
-  }
-  return trimmed;
-}
-
-function doesCategoryMatchConstraintValue(productCategoryId, constraintValue) {
-  const prodCode = normalizeTaxonomyCategoryCode(productCategoryId);
-  const consCode = normalizeTaxonomyCategoryCode(constraintValue);
-  if (!prodCode || !consCode) return false;
-  if (prodCode === consCode) return true;
-  if (prodCode.startsWith(`${consCode}-`)) return true;
-  return false;
-}
-
-async function fetchMetafieldDefinitionsByOwnerWithConstraints(admin, ownerType = "PRODUCT") {
-  const normalizedOwnerType =
-    ownerType === "PRODUCTVARIANT" ? "PRODUCTVARIANT" : "PRODUCT";
-  const defs = {};
-  let defsReadComplete = true;
-  const errors = [];
-  const constraintErrorsByDestination = {};
-  let defPageInfo = { hasNextPage: true, endCursor: null };
-  let defPagesFetched = 0;
-  const MAX_DEF_PAGES = 10;
-  const MAX_CONSTRAINT_PAGES = 20;
-  const seenDefRequestedCursors = new Set();
-  const seenDefReturnedCursors = new Set();
-
-  try {
-    while (defPageInfo.hasNextPage && defPagesFetched < MAX_DEF_PAGES) {
-      const requestedDefCursor =
-        typeof defPageInfo.endCursor === "string" && defPageInfo.endCursor.trim() !== ""
-          ? defPageInfo.endCursor.trim()
-          : null;
-
-      if (defPagesFetched > 0) {
-        if (!requestedDefCursor) {
-          defsReadComplete = false;
-          errors.push(
-            `${normalizedOwnerType} metafield definitions pagination stopped after page ${defPagesFetched}: hasNextPage is true but endCursor is missing.`
-          );
-          break;
-        }
-        if (seenDefRequestedCursors.has(requestedDefCursor)) {
-          defsReadComplete = false;
-          errors.push(
-            `${normalizedOwnerType} metafield definitions pagination stopped at page ${defPagesFetched}: repeated cursor "${requestedDefCursor}".`
-          );
-          break;
-        }
-        seenDefRequestedCursors.add(requestedDefCursor);
-      }
-
-      defPagesFetched++;
-      const defRes = await admin.graphql(`
-        query getMetafieldDefsByOwnerWithConstraints($ownerType: MetafieldOwnerType!, $cursor: String) {
-          metafieldDefinitions(first: 250, ownerType: $ownerType, after: $cursor) {
-            nodes {
-              id
-              name
-              namespace
-              key
-              type { name }
-              validations { name value }
-              constraints {
-                key
-                values(first: 250) {
-                  nodes { value }
-                  pageInfo { hasNextPage endCursor }
-                }
-              }
-            }
-            pageInfo { hasNextPage endCursor }
-          }
-        }
-      `, { variables: { ownerType: normalizedOwnerType, cursor: requestedDefCursor } });
-
-      const defJson = await defRes.json();
-      if (defJson.errors?.length) {
-        throw new Error(defJson.errors.map(e => e.message).join("; "));
-      }
-
-      const defConn = defJson?.data?.metafieldDefinitions;
-      if (!defConn || !Array.isArray(defConn.nodes) || typeof defConn.pageInfo?.hasNextPage !== "boolean") {
-        throw new Error(`Malformed ${normalizedOwnerType} metafieldDefinitions connection response.`);
-      }
-
-      for (const node of defConn.nodes) {
-        if (!node || !node.namespace || !node.key) continue;
-        const fullKey = `${node.namespace}.${node.key}`;
-        const validation = Array.isArray(node.validations)
-          ? node.validations.find(v => v.name === "metaobject_definition_id")
-          : null;
-
-        let constraintKey = null;
-        const constraintValues = [];
-        const seenConstraintValues = new Set();
-        let constraintsComplete = true;
-        let constraintError = null;
-        let constraintContinuation = null;
-
-        const rawConstraints = node.constraints;
-        if (rawConstraints !== null && rawConstraints !== undefined) {
-          if (typeof rawConstraints !== "object" || Array.isArray(rawConstraints)) {
-            constraintsComplete = false;
-            constraintError = `Malformed constraints object on ${fullKey}.`;
-            constraintErrorsByDestination[fullKey] = constraintError;
-          } else {
-            constraintKey = typeof rawConstraints.key === "string" ? rawConstraints.key : null;
-            const valConn = rawConstraints.values;
-            if (!valConn || !Array.isArray(valConn.nodes) || typeof valConn.pageInfo?.hasNextPage !== "boolean") {
-              constraintsComplete = false;
-              constraintError = `Malformed constraint values connection on ${fullKey}.`;
-              constraintErrorsByDestination[fullKey] = constraintError;
-            } else {
-              for (const vNode of valConn.nodes) {
-                if (typeof vNode?.value === "string" && vNode.value.trim() !== "") {
-                  const trimmedVal = vNode.value.trim();
-                  if (!seenConstraintValues.has(trimmedVal)) {
-                    seenConstraintValues.add(trimmedVal);
-                    constraintValues.push(trimmedVal);
-                  }
-                }
-              }
-
-              let cPageInfo = valConn.pageInfo;
-              let cPagesFetched = 1;
-              const seenRequestedCursors = new Set();
-              const seenReturnedCursors = new Set();
-              if (typeof cPageInfo.endCursor === "string" && cPageInfo.endCursor.trim() !== "") {
-                seenReturnedCursors.add(cPageInfo.endCursor.trim());
-              }
-
-              while (cPageInfo.hasNextPage && cPagesFetched < MAX_CONSTRAINT_PAGES) {
-                if (!node.id) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    endCursor: cPageInfo.endCursor ?? null,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "missing_definition_id"
-                  };
-                  constraintError = `Constraint value pagination stopped on ${fullKey}: missing definition ID at page ${cPagesFetched}.`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
-
-                const requestedCursor = typeof cPageInfo.endCursor === "string" ? cPageInfo.endCursor.trim() : "";
-                if (!requestedCursor) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    endCursor: cPageInfo.endCursor ?? null,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "missing_end_cursor"
-                  };
-                  constraintError = `Constraint value pagination stopped on ${fullKey}: hasNextPage is true after page ${cPagesFetched}, but endCursor is missing or blank.`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
-
-                if (seenRequestedCursors.has(requestedCursor)) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    endCursor: requestedCursor,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "repeated_requested_cursor"
-                  };
-                  constraintError = `Constraint value pagination stopped on ${fullKey}: cursor "${requestedCursor}" was already requested (page ${cPagesFetched}).`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
-
-                seenRequestedCursors.add(requestedCursor);
-                cPagesFetched++;
-
-                try {
-                  const moreRes = await admin.graphql(`
-                    query getMetafieldDefConstraintValues($id: ID!, $cursor: String!) {
-                      metafieldDefinition(id: $id) {
-                        id
-                        constraints {
-                          key
-                          values(first: 250, after: $cursor) {
-                            nodes { value }
-                            pageInfo { hasNextPage endCursor }
-                          }
-                        }
-                      }
-                    }
-                  `, { variables: { id: node.id, cursor: requestedCursor } });
-
-                  const moreJson = await moreRes.json();
-                  if (moreJson.errors?.length) {
-                    throw new Error(moreJson.errors.map(e => e.message).join("; "));
-                  }
-
-                  const moreConn = moreJson?.data?.metafieldDefinition?.constraints?.values;
-                  if (!moreConn || !Array.isArray(moreConn.nodes) || typeof moreConn.pageInfo?.hasNextPage !== "boolean") {
-                    throw new Error(`Malformed paginated constraint values response for ${fullKey}.`);
-                  }
-
-                  let newUniqueValuesOnPage = 0;
-                  for (const vNode of moreConn.nodes) {
-                    if (typeof vNode?.value === "string" && vNode.value.trim() !== "") {
-                      const trimmedVal = vNode.value.trim();
-                      if (!seenConstraintValues.has(trimmedVal)) {
-                        seenConstraintValues.add(trimmedVal);
-                        constraintValues.push(trimmedVal);
-                        newUniqueValuesOnPage++;
-                      }
-                    }
-                  }
-
-                  const nextPageInfo = moreConn.pageInfo;
-                  const returnedCursor = typeof nextPageInfo.endCursor === "string" ? nextPageInfo.endCursor.trim() : "";
-
-                  if (nextPageInfo.hasNextPage) {
-                    if (!returnedCursor) {
-                      constraintsComplete = false;
-                      constraintContinuation = {
-                        hasNextPage: true,
-                        requestedCursor,
-                        endCursor: nextPageInfo.endCursor ?? null,
-                        pagesFetched: cPagesFetched,
-                        stopReason: "missing_returned_cursor"
-                      };
-                      constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} reported hasNextPage:true with a missing endCursor.`;
-                      constraintErrorsByDestination[fullKey] = constraintError;
-                      break;
-                    }
-
-                    if (returnedCursor === requestedCursor || seenReturnedCursors.has(returnedCursor) || seenRequestedCursors.has(returnedCursor)) {
-                      constraintsComplete = false;
-                      constraintContinuation = {
-                        hasNextPage: true,
-                        requestedCursor,
-                        endCursor: returnedCursor,
-                        pagesFetched: cPagesFetched,
-                        stopReason: "repeated_returned_cursor"
-                      };
-                      constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} returned repeated cursor "${returnedCursor}" while hasNextPage:true.`;
-                      constraintErrorsByDestination[fullKey] = constraintError;
-                      break;
-                    }
-
-                    if (newUniqueValuesOnPage === 0) {
-                      constraintsComplete = false;
-                      constraintContinuation = {
-                        hasNextPage: true,
-                        requestedCursor,
-                        endCursor: returnedCursor,
-                        pagesFetched: cPagesFetched,
-                        stopReason: "no_new_values_with_has_next_page"
-                      };
-                      constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} returned hasNextPage:true (cursor "${returnedCursor}") but yielded zero new constraint values.`;
-                      constraintErrorsByDestination[fullKey] = constraintError;
-                      break;
-                    }
-
-                    seenReturnedCursors.add(returnedCursor);
-                  }
-
-                  cPageInfo = nextPageInfo;
-                } catch (cErr) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    requestedCursor,
-                    endCursor: cPageInfo.endCursor ?? null,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "query_error"
-                  };
-                  constraintError = `Constraint value pagination failed for ${fullKey} on page ${cPagesFetched}: ${cErr.message}`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
-              }
-
-              if (cPageInfo.hasNextPage && !constraintError) {
-                constraintsComplete = false;
-                constraintContinuation = {
-                  hasNextPage: true,
-                  endCursor: cPageInfo.endCursor ?? null,
-                  pagesFetched: cPagesFetched,
-                  stopReason: "max_pages_reached"
-                };
-                constraintError = `Constraint values pagination for ${fullKey} reached bounded limit (${MAX_CONSTRAINT_PAGES} pages; endCursor: ${cPageInfo.endCursor || "none"}).`;
-                constraintErrorsByDestination[fullKey] = constraintError;
-              }
-            }
-          }
-        }
-
-        const typeName = node.type && typeof node.type === "object" ? node.type.name : node.type;
-        defs[fullKey] = {
-          id: node.id || null,
-          name: node.name || null,
-          namespace: node.namespace,
-          key: node.key,
-          ownerType: normalizedOwnerType,
-          type: typeName || null,
-          requiredDefinitionId: validation?.value || null,
-          restrictedMetaobjectDefinitionId: validation?.value || null,
-          validations: node.validations || [],
-          constraints: {
-            hasConstraints: Boolean(constraintKey !== null || constraintValues.length > 0),
-            key: constraintKey,
-            values: constraintValues,
-            isComplete: constraintsComplete,
-            continuation: constraintContinuation,
-            error: constraintError
-          }
-        };
-      }
-
-      const nextDefPageInfo = defConn.pageInfo;
-      const returnedDefCursor =
-        typeof nextDefPageInfo.endCursor === "string" ? nextDefPageInfo.endCursor.trim() : "";
-
-      if (nextDefPageInfo.hasNextPage) {
-        if (!returnedDefCursor) {
-          defsReadComplete = false;
-          errors.push(
-            `${normalizedOwnerType} metafield definitions pagination stopped on page ${defPagesFetched}: hasNextPage is true with a missing endCursor.`
-          );
-          break;
-        }
-        if (
-          returnedDefCursor === requestedDefCursor ||
-          seenDefReturnedCursors.has(returnedDefCursor) ||
-          seenDefRequestedCursors.has(returnedDefCursor)
-        ) {
-          defsReadComplete = false;
-          errors.push(
-            `${normalizedOwnerType} metafield definitions pagination stopped on page ${defPagesFetched}: repeated cursor "${returnedDefCursor}" while hasNextPage:true.`
-          );
-          break;
-        }
-        seenDefReturnedCursors.add(returnedDefCursor);
-      }
-
-      defPageInfo = nextDefPageInfo;
-    }
-
-    if (defPageInfo.hasNextPage && defsReadComplete) {
-      defsReadComplete = false;
-      errors.push(`${normalizedOwnerType} metafield definitions pagination exceeded bounded limit (${MAX_DEF_PAGES} pages). endCursor: ${defPageInfo.endCursor}`);
-    }
-  } catch (err) {
-    defsReadComplete = false;
-    errors.push(`Failed reading live ${normalizedOwnerType} metafield definitions: ${err.message}`);
-  }
-
-  return {
-    defs,
-    defsReadComplete,
-    errors,
-    constraintErrorsByDestination
-  };
-}
-
-async function fetchProductMetafieldDefinitionsWithConstraints(admin) {
-  return fetchMetafieldDefinitionsByOwnerWithConstraints(admin, "PRODUCT");
-}
-
-async function fetchVariantMetafieldDefinitionsWithConstraints(admin) {
-  return fetchMetafieldDefinitionsByOwnerWithConstraints(admin, "PRODUCTVARIANT");
-}
-
-/**
- * Paginates metafields for a single verified owner GID (Product or ProductVariant)
- * with cursor-loop and page-budget guards.
- */
-async function paginateOwnerMetafieldsConnection({
-  admin,
-  ownerGid,
-  connectionLabel,
-  initialEdges,
-  initialPageInfo,
-  maxPages = 10,
-  buildPageQuery,
-  extractConnection
-}) {
-  const edges = Array.isArray(initialEdges) ? [...initialEdges] : [];
-  let pageInfo =
-    initialPageInfo && typeof initialPageInfo.hasNextPage === "boolean"
-      ? {
-          hasNextPage: initialPageInfo.hasNextPage,
-          endCursor: initialPageInfo.endCursor ?? null
-        }
-      : { hasNextPage: true, endCursor: null };
-
-  if (
-    !initialPageInfo ||
-    typeof initialPageInfo.hasNextPage !== "boolean" ||
-    !Array.isArray(initialEdges)
-  ) {
-    return {
-      edges,
-      pageInfo,
-      isComplete: false,
-      error: `Initial ${connectionLabel} connection or pageInfo was missing or malformed.`
-    };
-  }
-
-  let pagesFetched = 1;
-  const seenRequestedCursors = new Set();
-  const seenReturnedCursors = new Set();
-  if (typeof pageInfo.endCursor === "string" && pageInfo.endCursor.trim() !== "") {
-    seenReturnedCursors.add(pageInfo.endCursor.trim());
-  }
-
-  while (pageInfo.hasNextPage && pagesFetched < maxPages) {
-    const requestedCursor =
-      typeof pageInfo.endCursor === "string" ? pageInfo.endCursor.trim() : "";
-
-    if (!requestedCursor) {
-      return {
-        edges,
-        pageInfo: { hasNextPage: true, endCursor: pageInfo.endCursor ?? null },
-        isComplete: false,
-        error: `${connectionLabel} pagination stopped after page ${pagesFetched}: hasNextPage is true, but endCursor is missing or blank.`
-      };
-    }
-
-    if (seenRequestedCursors.has(requestedCursor)) {
-      return {
-        edges,
-        pageInfo: { hasNextPage: true, endCursor: requestedCursor },
-        isComplete: false,
-        error: `${connectionLabel} pagination stopped on page ${pagesFetched}: cursor "${requestedCursor}" was already requested.`
-      };
-    }
-
-    seenRequestedCursors.add(requestedCursor);
-    pagesFetched++;
-
-    try {
-      const res = await admin.graphql(buildPageQuery(), {
-        variables: { id: ownerGid, cursor: requestedCursor }
-      });
-      const json = await res.json();
-      if (json.errors?.length) {
-        throw new Error(json.errors.map((e) => e.message).join("; "));
-      }
-
-      const conn = extractConnection(json);
-      if (!conn || !Array.isArray(conn.edges) || typeof conn.pageInfo?.hasNextPage !== "boolean") {
-        throw new Error(`Malformed paginated ${connectionLabel} response on page ${pagesFetched}.`);
-      }
-
-      edges.push(...conn.edges);
-
-      const nextPageInfo = conn.pageInfo;
-      const returnedCursor =
-        typeof nextPageInfo.endCursor === "string" ? nextPageInfo.endCursor.trim() : "";
-
-      if (nextPageInfo.hasNextPage) {
-        if (!returnedCursor) {
-          return {
-            edges,
-            pageInfo: { hasNextPage: true, endCursor: nextPageInfo.endCursor ?? null },
-            isComplete: false,
-            error: `${connectionLabel} pagination stopped on page ${pagesFetched}: hasNextPage is true with a missing endCursor.`
-          };
-        }
-
-        if (
-          returnedCursor === requestedCursor ||
-          seenReturnedCursors.has(returnedCursor) ||
-          seenRequestedCursors.has(returnedCursor)
-        ) {
-          return {
-            edges,
-            pageInfo: { hasNextPage: true, endCursor: returnedCursor },
-            isComplete: false,
-            error: `${connectionLabel} pagination stopped on page ${pagesFetched}: repeated cursor "${returnedCursor}" while hasNextPage:true.`
-          };
-        }
-
-        if (conn.edges.length === 0) {
-          return {
-            edges,
-            pageInfo: { hasNextPage: true, endCursor: returnedCursor },
-            isComplete: false,
-            error: `${connectionLabel} pagination stopped on page ${pagesFetched}: returned 0 edges while hasNextPage:true.`
-          };
-        }
-
-        seenReturnedCursors.add(returnedCursor);
-      }
-
-      pageInfo = {
-        hasNextPage: nextPageInfo.hasNextPage,
-        endCursor: nextPageInfo.endCursor ?? null
-      };
-    } catch (err) {
-      return {
-        edges,
-        pageInfo: { hasNextPage: true, endCursor: requestedCursor },
-        isComplete: false,
-        error: `${connectionLabel} pagination failed on page ${pagesFetched}: ${err.message}`
-      };
-    }
-  }
-
-  if (pageInfo.hasNextPage) {
-    return {
-      edges,
-      pageInfo,
-      isComplete: false,
-      error: `${connectionLabel} pagination reached bounded limit (${maxPages} pages; endCursor: ${pageInfo.endCursor || "none"}).`
-    };
-  }
-
-  return {
-    edges,
-    pageInfo,
-    isComplete: true,
-    error: null
-  };
-}
-
-/**
- * Fetches and paginates metafields for a single verified ProductVariant GID
- * bound to expectedProductGid (never nesting 250 metafields under variants).
- */
-async function fetchSingleVariantMetafieldsForWriter(admin, expectedProductGid, variantGid) {
-  if (!admin || typeof admin.graphql !== "function") {
-    return {
-      metafields: null,
-      metafieldTypes: null,
-      metafieldIds: null,
-      isComplete: false,
-      error: "Authenticated Shopify admin GraphQL client is required."
-    };
-  }
-
-  if (!EXACT_PRODUCT_VARIANT_GID_REGEX.test(String(variantGid || ""))) {
-    return {
-      metafields: null,
-      metafieldTypes: null,
-      metafieldIds: null,
-      isComplete: false,
-      error: `Invalid ProductVariant GID "${String(variantGid ?? "")}".`
-    };
-  }
-
-  let initialJson = null;
-  try {
-    const res = await admin.graphql(
-      `
-      query getSingleVariantMetafieldsForWriter($id: ID!) {
-        productVariant(id: $id) {
-          id
-          product {
-            id
-          }
-          metafields(first: 250) {
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-            edges {
-              node {
-                id
-                namespace
-                key
-                value
-                type
-              }
-            }
-          }
-        }
-      }
-    `,
-      { variables: { id: variantGid } }
-    );
-    initialJson = await res.json();
-    if (initialJson.errors?.length) {
-      throw new Error(initialJson.errors.map((e) => e.message).join("; "));
-    }
-  } catch (err) {
-    return {
-      metafields: null,
-      metafieldTypes: null,
-      metafieldIds: null,
-      isComplete: false,
-      error: `Failed to query variant metafields for ${variantGid}: ${err.message}`
-    };
-  }
-
-  const variantNode = initialJson?.data?.productVariant;
-  if (!variantNode || variantNode.id !== variantGid) {
-    return {
-      metafields: null,
-      metafieldTypes: null,
-      metafieldIds: null,
-      isComplete: false,
-      error: `ProductVariant ${variantGid} not found or ID mismatch.`
-    };
-  }
-
-  if (!variantNode.product?.id || variantNode.product.id !== expectedProductGid) {
-    return {
-      metafields: null,
-      metafieldTypes: null,
-      metafieldIds: null,
-      isComplete: false,
-      error: `ProductVariant ${variantGid} owner mismatch (expected ${expectedProductGid}, got ${String(variantNode.product?.id ?? "none")}).`
-    };
-  }
-
-  const paginated = await paginateOwnerMetafieldsConnection({
-    admin,
-    ownerGid: variantGid,
-    connectionLabel: "Variant metafields",
-    initialEdges: variantNode.metafields?.edges,
-    initialPageInfo: variantNode.metafields?.pageInfo,
-    maxPages: 10,
-    buildPageQuery: () => `
-      query getMoreSingleVariantMetafieldsForWriter($id: ID!, $cursor: String!) {
-        productVariant(id: $id) {
-          id
-          metafields(first: 250, after: $cursor) {
-            pageInfo { hasNextPage endCursor }
-            edges {
-              node {
-                id
-                namespace
-                key
-                value
-                type
-              }
-            }
-          }
-        }
-      }
-    `,
-    extractConnection: (json) => json?.data?.productVariant?.metafields
-  });
-
-  const metafields = {};
-  const metafieldTypes = {};
-  const metafieldIds = {};
-
-  for (const edge of paginated.edges) {
-    const node = edge?.node;
-    if (!node || typeof node.namespace !== "string" || typeof node.key !== "string") continue;
-    const fullKey = `${node.namespace}.${node.key}`;
-    metafields[fullKey] = node.value;
-    metafieldTypes[fullKey] = typeof node.type === "string" ? node.type : null;
-    metafieldIds[fullKey] = node.id || null;
-  }
-
-  return {
-    metafields,
-    metafieldTypes,
-    metafieldIds,
-    isComplete: paginated.isComplete === true,
-    error: paginated.error || null
-  };
-}
-
 /**
  * Evaluates explicit live definition validations on a plain-text proposal
  * (such as choices, max, min, regex) when present on the live definition.
@@ -1192,138 +446,6 @@ function validateAgainstLiveTextDefinitionValidations(liveDef, exactValue, desti
     }
   }
   return { valid: true, reason: null };
-}
-
-function evaluateStandardizedCategoryEligibility({
-  destination,
-  liveDef,
-  defsReadComplete,
-  productCategory,
-  productCategoryReadComplete
-}) {
-  const catId = productCategory?.id || null;
-  const catFullName = productCategory?.fullName || null;
-  const normalizedProductCategoryCode = normalizeTaxonomyCategoryCode(catId);
-
-  if (!defsReadComplete || !productCategoryReadComplete) {
-    return {
-      destination,
-      isComplete: false,
-      isEligible: false,
-      status: "incomplete",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
-      constraintKey: liveDef?.constraints?.key || null,
-      permittedCategoryValues: liveDef?.constraints?.values || [],
-      reason: "Prerequisite product category or PRODUCT metafieldDefinition enumeration did not complete."
-    };
-  }
-
-  if (!liveDef) {
-    return {
-      destination,
-      isComplete: true,
-      isEligible: false,
-      status: "missing_definition",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
-      constraintKey: null,
-      permittedCategoryValues: [],
-      reason: `Missing live PRODUCT metafield definition for ${destination}.`
-    };
-  }
-
-  const constraintInfo = liveDef.constraints;
-  if (!constraintInfo || constraintInfo.isComplete !== true || constraintInfo.error) {
-    return {
-      destination,
-      isComplete: false,
-      isEligible: false,
-      status: "incomplete_constraints",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
-      constraintKey: constraintInfo?.key || null,
-      permittedCategoryValues: constraintInfo?.values || [],
-      continuation: constraintInfo?.continuation || null,
-      reason: constraintInfo?.error || `Incomplete constraint enumeration on ${destination}.`
-    };
-  }
-
-  const permittedValues = Array.isArray(constraintInfo.values) ? constraintInfo.values : [];
-  const hasCategoryConstraint = Boolean(constraintInfo.hasConstraints || constraintInfo.key || permittedValues.length > 0);
-
-  if (!hasCategoryConstraint) {
-    return {
-      destination,
-      isComplete: true,
-      isEligible: true,
-      status: "unconstrained_eligible",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
-      constraintKey: null,
-      permittedCategoryValues: [],
-      reason: `No owner-subtype/category constraints restricted on ${destination}.`
-    };
-  }
-
-  if (!catId || !normalizedProductCategoryCode) {
-    return {
-      destination,
-      isComplete: true,
-      isEligible: false,
-      status: "missing_product_category",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode: null,
-      constraintKey: constraintInfo.key || "category",
-      permittedCategoryValues: permittedValues,
-      reason: `Product has no assigned taxonomy category, but ${destination} requires category constraint (${constraintInfo.key || "category"}: [${permittedValues.join(", ")}]).`
-    };
-  }
-
-  if (permittedValues.length === 0) {
-    return {
-      destination,
-      isComplete: true,
-      isEligible: false,
-      status: "empty_constraint_values",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode,
-      constraintKey: constraintInfo.key || "category",
-      permittedCategoryValues: [],
-      reason: `Metafield definition ${destination} declares constraint key "${constraintInfo.key}" with zero permitted values.`
-    };
-  }
-
-  const matchedConstraintVal = permittedValues.find(val => doesCategoryMatchConstraintValue(catId, val)) || null;
-
-  if (!matchedConstraintVal) {
-    const catDesc = catFullName ? `${catFullName} (${catId})` : catId;
-    return {
-      destination,
-      isComplete: true,
-      isEligible: false,
-      status: "category_ineligible",
-      productCategory: productCategory || null,
-      normalizedProductCategoryCode,
-      constraintKey: constraintInfo.key || "category",
-      permittedCategoryValues: permittedValues,
-      matchedConstraintValue: null,
-      reason: `Category constraint mismatch on ${destination}: product category "${catDesc}" is not permitted by definition constraints [${permittedValues.join(", ")}].`
-    };
-  }
-
-  return {
-    destination,
-    isComplete: true,
-    isEligible: true,
-    status: "eligible",
-    productCategory: productCategory || null,
-    normalizedProductCategoryCode,
-    constraintKey: constraintInfo.key || "category",
-    permittedCategoryValues: permittedValues,
-    matchedConstraintValue: matchedConstraintVal,
-    reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedConstraintVal}).`
-  };
 }
 
 function parseIndexedMutationFieldIndex(fieldProp, rootFieldName) {
@@ -1401,6 +523,13 @@ function attachNativeDestinationToUserErrors(userErrors, nativeInput) {
   });
 }
 
+function parsePriceToCentsBigInt(str) {
+  const parts = (str || "0").split(".");
+  const dollars = parts[0];
+  const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
+  return BigInt(dollars + cents);
+}
+
 export const action = async ({ request }) => {
   let matchingContext = null;
   try {
@@ -1457,7 +586,7 @@ export const action = async ({ request }) => {
       const allMedia = [];
       let vPageInfo = product.variants?.pageInfo || { hasNextPage: false, endCursor: null };
       let mPageInfo = product.media?.pageInfo || { hasNextPage: false, endCursor: null };
-      
+
       if (product.variants?.edges) allVariants.push(...product.variants.edges);
       if (product.media?.edges) {
           allMedia.push(...product.media.edges.filter(e => e.node && e.node.id));
@@ -1546,7 +675,6 @@ export const action = async ({ request }) => {
       const repairPlan = {};
       const legacyFields = {};
 
-      // Explicit namespace + metaKey routing from shared catalog (all 21 shopify.* and active custom.* kept distinct)
       CATALOG_METAFIELD_DESTINATIONS.forEach(destKey => {
           const val = currentMetafields[destKey] ?? "";
           canonicalFields[destKey] = val;
@@ -1555,7 +683,6 @@ export const action = async ({ request }) => {
           }
       });
 
-      // Preserve non-contract stored values in canonicalFields for inspection/compatibility without seeding executable proposals
       const INSPECTION_ONLY_KEYS = [
         "global.title_tag",
         "global.description_tag",
@@ -1582,7 +709,6 @@ export const action = async ({ request }) => {
           canonicalFields["native_seo_description"] = product.seo.description;
       }
 
-      // Removed mapping is_one_of_a_kind -> is_ooak per requirement
       const LEGACY_MAP_LOCAL = {
         "custom.crystal-system": "shopify.crystal-system",
         "custom.mineral-class": "shopify.mineral-class",
@@ -1629,7 +755,7 @@ export const action = async ({ request }) => {
         readOnly: true
       };
 
-      if (!pieceId || !/^gid:\/\/shopify\/Product\/\d+$/.test(pieceId)) {
+      if (!pieceId || !isExactProductGid(pieceId)) {
         return Response.json({
           intent: "resolveStandardizedCandidates",
           readOnly: true,
@@ -1750,7 +876,6 @@ export const action = async ({ request }) => {
       const topErrors = [];
       let overallComplete = true;
 
-      // 1. Read exact product's category and current assignments (paginated metafield read)
       const productShopifyMetafields = {};
       let productCategory = null;
       let productCategoryReadComplete = false;
@@ -1844,7 +969,6 @@ export const action = async ({ request }) => {
         topErrors.push(`Failed reading product metafields and category: ${err.message}`);
       }
 
-      // 2. Read live PRODUCT metafield definitions + paginated constraints
       const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
       const liveDefs = defReadResult.defs;
       const defsReadComplete = defReadResult.defsReadComplete;
@@ -1855,7 +979,6 @@ export const action = async ({ request }) => {
         topErrors.push(...defReadResult.errors);
       }
 
-      // Evaluate category applicability for all 21 standardized destinations.
       const categoryEligibility = {};
       const nonCandidateConstraintDiagnostics = {};
       for (const stdMetaKey of ALL_STANDARDIZED_META_KEYS) {
@@ -1874,7 +997,6 @@ export const action = async ({ request }) => {
         }
       }
 
-      // Cache for resolved metaobject definitions and their enumerated entries
       const metaobjectDefCache = new Map();
       const MAX_ENTRY_PAGES = 20;
 
@@ -2104,7 +1226,6 @@ export const action = async ({ request }) => {
             });
           }
         } else {
-          // Perform entry matching distinctly from category eligibility so candidate evidence and entry matches remain visible
           const enumState = await resolveAndEnumerateMetaobjectDef(liveDef.restrictedMetaobjectDefinitionId);
           resolvedMetaobjectDefinition = enumState.definition;
           enumeratedEntries = enumState.entries;
@@ -2193,8 +1314,6 @@ export const action = async ({ request }) => {
               entryMatchStatus = "incomplete";
             }
 
-            // Category eligibility gate: an exact reference match is not sufficient to unlock saving.
-            // Fail closed on incomplete candidate constraint reads.
             if (!catElig.isComplete) {
               fieldStatus = "incomplete";
               fieldComplete = false;
@@ -2280,7 +1399,7 @@ export const action = async ({ request }) => {
         typeof rawCallerVariantTargetId === "string" && rawCallerVariantTargetId.trim() !== ""
           ? rawCallerVariantTargetId.trim()
           : null;
-      
+
       if (!pieceId || !rawPlan) {
         return Response.json({ intent: "executeRepairPlan", success: false, status: "REPAIR_FAILED", message: "Missing pieceId or repairPlan payload." });
       }
@@ -2288,7 +1407,7 @@ export const action = async ({ request }) => {
       const repairPlan = JSON.parse(rawPlan);
       const legacyKeysToRemove = rawLegacy ? JSON.parse(rawLegacy) : [];
       const nativeChanges = rawNativeChanges ? JSON.parse(rawNativeChanges) : {};
-      
+
       const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
 
       let lookupData = null;
@@ -2390,17 +1509,16 @@ export const action = async ({ request }) => {
       const currentNativeBodyHtml = hasNativeBodyBaseline ? productNode.descriptionHtml : undefined;
       const currentNativeSeoTitle = hasNativeSeoTitleBaseline ? (productNode.seo.title ?? "") : undefined;
       const currentNativeSeoDescription = hasNativeSeoDescriptionBaseline ? (productNode.seo.description ?? "") : undefined;
-      
+
       const currentMetafields = {};
       const currentMetafieldsTypes = {};
-      currentMetaList.forEach(e => { 
+      currentMetaList.forEach(e => {
         if (!e?.node?.namespace || !e?.node?.key) return;
         const fullKey = `${e.node.namespace}.${e.node.key}`;
         currentMetafields[fullKey] = e.node.value;
-        currentMetafieldsTypes[fullKey] = e.node.type; 
+        currentMetafieldsTypes[fullKey] = e.node.type;
       });
 
-      // Evaluate single-variant enumeration state from product lookup
       const variantsConn = productNode?.variants;
       const variantsEnumerationComplete = Boolean(
         productLookupComplete &&
@@ -2418,7 +1536,7 @@ export const action = async ({ request }) => {
           ? String(variantsConn.edges[0]?.node?.id || "").trim()
           : null;
       const hasVerifiedSingleVariantGid = Boolean(
-        candidateSingleVariantGid && EXACT_PRODUCT_VARIANT_GID_REGEX.test(candidateSingleVariantGid)
+        candidateSingleVariantGid && isExactProductVariantGid(candidateSingleVariantGid)
       );
       const verifiedSingleVariantGid = hasVerifiedSingleVariantGid
         ? candidateSingleVariantGid
@@ -2437,12 +1555,10 @@ export const action = async ({ request }) => {
         variantTargetStatus = "invalid_or_missing_variant_gid";
       }
 
-      // Fetch dynamic PRODUCT definitions + paginated constraints for true types and live category eligibility
       const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
       const defs = defReadResult.defs;
       const defsReadComplete = defReadResult.defsReadComplete;
 
-      // Determine whether repairPlan contains any allowlisted Bench V2 variant destination
       const hasBenchV2VariantEntryInPlan = Boolean(
         isBenchV2OptIn &&
         repairPlan &&
@@ -2453,8 +1569,6 @@ export const action = async ({ request }) => {
         })
       );
 
-      // Only fetch variant metafields & PRODUCTVARIANT definitions when an allowlisted
-      // variant destination is present in the opted-in repairPlan.
       let currentVariantMetafields = null;
       let currentVariantMetafieldTypes = null;
       let currentVariantMetafieldIds = null;
@@ -2508,7 +1622,7 @@ export const action = async ({ request }) => {
       let newPriceString = null;
       let priceReadBackVerified = false;
       let attemptedVariantMetafieldWrite = false;
-      
+
       // Native Changes Integration (Decoupled from custom.* metafields)
       let nativeTitleUpdated = false;
       if (nativeChanges.title !== undefined) {
@@ -2531,12 +1645,11 @@ export const action = async ({ request }) => {
       }
 
       let nativeDescriptionUpdated = false;
-      if (nativeChanges.description !== undefined) {
-        const rawDescStr = String(nativeChanges.description ?? "").trim();
+      const evaluateAndStageNativeDescription = (rawDescStr, allowEmptyBlock) => {
         const sanitizedDescStr = sanitizeDescription(rawDescStr);
         if (!hasNativeBodyBaseline) {
           blockedFields["native_description"] = "Native product description baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (rawDescStr === "") {
+        } else if (allowEmptyBlock && rawDescStr === "") {
           blockedFields["native_description"] = "Native product description cannot be empty.";
         } else if (sanitizedDescStr !== rawDescStr) {
           blockedFields["native_description"] = "Native product description contains disallowed anchor links that alter approved content; remove disallowed links and re-approve before saving.";
@@ -2551,15 +1664,18 @@ export const action = async ({ request }) => {
         } else {
           unchanged.push("native_description");
         }
+      };
+
+      if (nativeChanges.description !== undefined) {
+        evaluateAndStageNativeDescription(String(nativeChanges.description ?? "").trim(), true);
       }
 
       let nativeSeoTitleUpdated = false;
-      if (nativeChanges.seoTitle !== undefined) {
-        const rawSeoTitleStr = String(nativeChanges.seoTitle ?? "").trim();
+      const evaluateAndStageNativeSeoTitle = (rawSeoTitleStr, allowEmptyBlock) => {
         const normalizedSeoTitleStr = normalizeMetafieldValue("seo_title", rawSeoTitleStr).trim();
         if (!hasNativeSeoTitleBaseline) {
           blockedFields["native_seo_title"] = "Native SEO title baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (normalizedSeoTitleStr === "") {
+        } else if (allowEmptyBlock && normalizedSeoTitleStr === "") {
           blockedFields["native_seo_title"] = "Native SEO title cannot be empty.";
         } else if (normalizedSeoTitleStr !== rawSeoTitleStr) {
           blockedFields["native_seo_title"] = "Native SEO title contains warning prefixes that alter approved content; edit and re-approve before saving.";
@@ -2575,14 +1691,17 @@ export const action = async ({ request }) => {
         } else {
           unchanged.push("native_seo_title");
         }
+      };
+
+      if (nativeChanges.seoTitle !== undefined) {
+        evaluateAndStageNativeSeoTitle(String(nativeChanges.seoTitle ?? "").trim(), true);
       }
 
       let nativeSeoDescriptionUpdated = false;
-      if (nativeChanges.seoDescription !== undefined) {
-        const seoDescStr = String(nativeChanges.seoDescription ?? "").trim();
+      const evaluateAndStageNativeSeoDescription = (seoDescStr, allowEmptyBlock) => {
         if (!hasNativeSeoDescriptionBaseline) {
           blockedFields["native_seo_description"] = "Native SEO description baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (seoDescStr === "") {
+        } else if (allowEmptyBlock && seoDescStr === "") {
           blockedFields["native_seo_description"] = "Native SEO description cannot be empty.";
         } else if (seoDescStr.length > 160) {
           blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
@@ -2596,21 +1715,24 @@ export const action = async ({ request }) => {
         } else {
           unchanged.push("native_seo_description");
         }
+      };
+
+      if (nativeChanges.seoDescription !== undefined) {
+        evaluateAndStageNativeSeoDescription(String(nativeChanges.seoDescription ?? "").trim(), true);
       }
-      
-      // We must handle shipping weight via inventoryItem mutation, not productUpdate
+
       let doShippingWeightUpdate = false;
       let shippingWeightInput = null;
-      
+
       if (nativeChanges.shippingWeight) {
          const sw = nativeChanges.shippingWeight;
          const valStr = String(sw.value !== null && sw.value !== undefined ? sw.value : "").trim();
-         
+
          if (valStr !== "") {
             const parsedNum = parseFloat(valStr);
             if (isNaN(parsedNum) || parsedNum < 0) {
                blockedFields["native_shipping_weight"] = "Shipping weight must be a positive number.";
-            } else if (!sw.variantId || !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(sw.variantId)) {
+            } else if (!sw.variantId || !isExactProductVariantGid(sw.variantId)) {
                blockedFields["native_shipping_weight"] = "Missing or invalid variant ID for shipping weight.";
             } else if (sw.unit !== "OUNCES") {
                blockedFields["native_shipping_weight"] = "Shipping weight unit must be exactly 'OUNCES'.";
@@ -2625,22 +1747,22 @@ export const action = async ({ request }) => {
                   `, { variables: { id: sw.variantId }});
                   const invJson = await invRes.json();
                   const invItem = invJson.data?.productVariant?.inventoryItem;
-                  
+
                   if (!invItem) {
                      blockedFields["native_shipping_weight"] = "Failed to resolve inventory item for variant.";
                   } else {
                      const currentWeight = invItem.measurement?.weight?.value;
                      const currentUnit = invItem.measurement?.weight?.unit;
-                     
+
                      if (parseFloat(currentWeight) !== parsedNum || currentUnit !== sw.unit) {
                         doShippingWeightUpdate = true;
                         shippingWeightInput = {
                            id: invItem.id,
                            measurement: { weight: { value: parsedNum, unit: sw.unit } }
                         };
-                        proposedChanges["native_shipping_weight"] = { 
-                           from: `${currentWeight} ${currentUnit}`, 
-                           to: `${parsedNum} ${sw.unit}` 
+                        proposedChanges["native_shipping_weight"] = {
+                           from: `${currentWeight} ${currentUnit}`,
+                           to: `${parsedNum} ${sw.unit}`
                         };
                         attemptedDestinations.push("native_shipping_weight");
                      } else {
@@ -2653,26 +1775,25 @@ export const action = async ({ request }) => {
             }
          }
       }
-      
-      // Image Alt Text Native Updates
+
       let doImageAltUpdates = false;
       const imageAltInputs = [];
-      
+
       if (nativeChanges.imageAlts && Array.isArray(nativeChanges.imageAlts)) {
          const currentMedia = lookupData?.data?.product?.media?.edges || [];
-         
+
          for (const imgReq of nativeChanges.imageAlts) {
             if (!imgReq.imageId || !/^gid:\/\/shopify\/MediaImage\/\d+$/.test(imgReq.imageId)) {
                blockedFields[`native_image_alts_${imgReq.imageId || 'unknown'}`] = "Invalid image ID.";
                continue;
             }
-            
+
             const match = currentMedia.find(m => m.node.id === imgReq.imageId);
             if (!match) {
                blockedFields[`native_image_alts_${imgReq.imageId}`] = "Image ID not found on this product.";
                continue;
             }
-            
+
             if (match.node.alt !== imgReq.altText) {
                doImageAltUpdates = true;
                imageAltInputs.push({
@@ -2687,9 +1808,8 @@ export const action = async ({ request }) => {
          }
       }
 
-      // Shared Metaobject Validation Cache
       const moValidationCache = new Map();
-      
+
       for (const [fullKey, val] of Object.entries(repairPlan)) {
         if (fullKey === "shopify_title" || fullKey === "native_title") {
            if (!nativeTitleUpdated && nativeChanges.title === undefined) {
@@ -2701,22 +1821,7 @@ export const action = async ({ request }) => {
         if (fullKey === "native_description") {
            const rawDescStr = String(val !== null && val !== undefined ? val : "").trim();
            if (!nativeDescriptionUpdated && nativeChanges.description === undefined && rawDescStr !== "") {
-              const sanitizedDescStr = sanitizeDescription(rawDescStr);
-              if (!hasNativeBodyBaseline) {
-                 blockedFields["native_description"] = "Native product description baseline could not be loaded from Shopify; reload product data before saving.";
-              } else if (sanitizedDescStr !== rawDescStr) {
-                 blockedFields["native_description"] = "Native product description contains disallowed anchor links that alter approved content; remove disallowed links and re-approve before saving.";
-              } else if (sanitizedDescStr.length > 10000) {
-                 blockedFields["native_description"] = "Native product description exceeds 10,000 characters limit.";
-              } else if (sanitizedDescStr !== currentNativeBodyHtml) {
-                 nativeInput.descriptionHtml = sanitizedDescStr;
-                 doNativeUpdate = true;
-                 nativeDescriptionUpdated = true;
-                 proposedChanges["native_description"] = { from: currentNativeBodyHtml, to: sanitizedDescStr };
-                 attemptedDestinations.push("native_description");
-              } else {
-                 unchanged.push("native_description");
-              }
+              evaluateAndStageNativeDescription(rawDescStr, false);
            } else if (!nativeDescriptionUpdated) {
               skippedKeys.push(fullKey);
            }
@@ -2726,23 +1831,7 @@ export const action = async ({ request }) => {
         if (fullKey === "native_seo_title") {
            const rawSeoTitleStr = String(val !== null && val !== undefined ? val : "").trim();
            if (!nativeSeoTitleUpdated && nativeChanges.seoTitle === undefined && rawSeoTitleStr !== "") {
-              const normalizedSeoTitleStr = normalizeMetafieldValue("seo_title", rawSeoTitleStr).trim();
-              if (!hasNativeSeoTitleBaseline) {
-                 blockedFields["native_seo_title"] = "Native SEO title baseline could not be loaded from Shopify; reload product data before saving.";
-              } else if (normalizedSeoTitleStr !== rawSeoTitleStr) {
-                 blockedFields["native_seo_title"] = "Native SEO title contains warning prefixes that alter approved content; edit and re-approve before saving.";
-              } else if (normalizedSeoTitleStr.length > 70) {
-                 blockedFields["native_seo_title"] = "Native SEO title exceeds 70 characters limit.";
-              } else if (normalizedSeoTitleStr !== currentNativeSeoTitle) {
-                 nativeInput.seo = nativeInput.seo || {};
-                 nativeInput.seo.title = normalizedSeoTitleStr;
-                 doNativeUpdate = true;
-                 nativeSeoTitleUpdated = true;
-                 proposedChanges["native_seo_title"] = { from: currentNativeSeoTitle, to: normalizedSeoTitleStr };
-                 attemptedDestinations.push("native_seo_title");
-              } else {
-                 unchanged.push("native_seo_title");
-              }
+              evaluateAndStageNativeSeoTitle(rawSeoTitleStr, false);
            } else if (!nativeSeoTitleUpdated) {
               skippedKeys.push(fullKey);
            }
@@ -2752,20 +1841,7 @@ export const action = async ({ request }) => {
         if (fullKey === "native_seo_description") {
            const valStr = String(val !== null && val !== undefined ? val : "").trim();
            if (!nativeSeoDescriptionUpdated && nativeChanges.seoDescription === undefined && valStr !== "") {
-              if (!hasNativeSeoDescriptionBaseline) {
-                 blockedFields["native_seo_description"] = "Native SEO description baseline could not be loaded from Shopify; reload product data before saving.";
-              } else if (valStr.length > 160) {
-                 blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
-              } else if (valStr !== currentNativeSeoDescription) {
-                 nativeInput.seo = nativeInput.seo || {};
-                 nativeInput.seo.description = valStr;
-                 doNativeUpdate = true;
-                 nativeSeoDescriptionUpdated = true;
-                 proposedChanges["native_seo_description"] = { from: currentNativeSeoDescription, to: valStr };
-                 attemptedDestinations.push("native_seo_description");
-              } else {
-                 unchanged.push("native_seo_description");
-              }
+              evaluateAndStageNativeSeoDescription(valStr, false);
            } else if (!nativeSeoDescriptionUpdated) {
               skippedKeys.push(fullKey);
            }
@@ -2798,7 +1874,7 @@ export const action = async ({ request }) => {
            const targetVariantId = variantsConn.edges[0].node.id;
            const currentPriceStr = variantsConn.edges[0].node.price;
 
-           if (!targetVariantId || !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(targetVariantId)) {
+           if (!targetVariantId || !isExactProductVariantGid(targetVariantId)) {
                blockedFields["price"] = "Invalid variant ID retrieved.";
                continue;
            }
@@ -2807,14 +1883,7 @@ export const action = async ({ request }) => {
                continue;
            }
 
-           const getCents = (str) => {
-               const parts = (str || "0").split(".");
-               const dollars = parts[0];
-               const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
-               return BigInt(dollars + cents);
-           };
-
-           if (getCents(valStr) !== getCents(currentPriceStr)) {
+           if (parsePriceToCentsBigInt(valStr) !== parsePriceToCentsBigInt(currentPriceStr)) {
                doPriceUpdate = true;
                priceVariantGid = targetVariantId;
                newPriceString = valStr;
@@ -2838,12 +1907,6 @@ export const action = async ({ request }) => {
 
         // ====================================================================
         // SCOPED BENCH V2 OPT-IN VARIANT-OWNED DESTINATION PATH
-        // Handles ONLY the 3 allowlisted PRODUCTVARIANT destinations:
-        // - mm-google-shopping.age_group
-        // - mm-google-shopping.condition
-        // - mm-google-shopping.gender
-        // Never routes to productGid, never unlocks other variant keys,
-        // and requires caller variantTargetId matching verified single variant.
         // ====================================================================
         if (BENCH_V2_OPT_IN_VARIANT_DESTINATIONS.has(canonicalDestinationKey)) {
           if (!isBenchV2OptIn || fullKey !== canonicalDestinationKey) {
@@ -2851,7 +1914,7 @@ export const action = async ({ request }) => {
             continue;
           }
 
-          if (!callerVariantTargetId || !EXACT_PRODUCT_VARIANT_GID_REGEX.test(callerVariantTargetId)) {
+          if (!callerVariantTargetId || !isExactProductVariantGid(callerVariantTargetId)) {
             blockedFields[fullKey] = `Missing or invalid caller variantTargetId for variant-owned destination ${canonicalDestinationKey}; exact Shopify ProductVariant GID is required.`;
             continue;
           }
@@ -2995,13 +2058,11 @@ export const action = async ({ request }) => {
           ns === "custom" &&
           BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS.has(canonicalDestinationKey);
 
-        // 🟢 STRICT NAMESPACE ENFORCEMENT FOR BENCH V2 OPT-IN UNHELD KEYS
         if (isBenchV2OptIn && BENCH_V2_OPT_IN_UNHELD_BARE_KEYS.has(key) && ns !== "custom") {
             unsupportedKeys.push(fullKey);
             continue;
         }
 
-        // 🟢 RETIREMENT GUARD (Bypassed ONLY for opted-in Bench V2 requests on custom.cut_and_shape, custom.stone_shape, custom.color)
         if (
           !isBenchV2UnheldCustomTarget &&
           (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey))
@@ -3010,8 +2071,6 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        // 🟢 SINGLE CANONICAL OOAK & IDENTITY COMPANION WRITE GUARD
-        // Retain legacy reads without dual writes for legacy callers; opted-in Bench V2 requests may write custom.is_ooak and custom.stone_family as their own distinct destinations.
         if (
           ns === "custom" &&
           (((key === "is_ooak" || key === "stone_family") && !isBenchV2UnheldCustomTarget) ||
@@ -3022,13 +2081,11 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        // 🟢 STRICT NAMESPACE ENFORCEMENT FOR CUSTOM KEYS
         if (STRICT_CUSTOM_KEYS.includes(key) && ns !== "custom") {
             unsupportedKeys.push(fullKey);
             continue;
         }
 
-        // 🟢 STRICT NAMESPACE & SIX-FIELD GATE FOR STANDARDIZED KEYS
         if (ns === "shopify" && !CATALOG_STANDARDIZED_META_KEYS.has(key)) {
             unsupportedKeys.push(fullKey);
             continue;
@@ -3038,7 +2095,6 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        // 🟢 STRICT ALLOWLIST ENFORCEMENT
         if (
           !isBenchV2UnheldCustomTarget &&
           !ALLOWED_TAB3_KEYS.includes(key) &&
@@ -3064,7 +2120,6 @@ export const action = async ({ request }) => {
           : (currentMetafields[canonicalDestinationKey] ?? null);
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
 
-        // Preserve six-field standardized write gate: non-verified shopify.* attributes remain read-only
         if (ns === "shopify" && !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
             if (!currentVal && valStr === "") {
                 unchanged.push(fullKey);
@@ -3075,17 +2130,13 @@ export const action = async ({ request }) => {
             }
             continue;
         }
-        
-        // Blank strings and N/A collection_date placeholders must not implicitly delete or publish as dates.
+
         if (valStr === "" || (ns === "custom" && key === "collection_date" && /^(n\/a|none|unknown)$/i.test(valStr))) {
             if (!currentVal) unchanged.push(fullKey);
             else skippedKeys.push(fullKey);
-            continue; 
+            continue;
         }
 
-        // Resolve exact type from definition, stored type, or reviewed exact destination contract
-        // For Bench V2 opt-in requests, require actual live definition or stored type evidence
-        // (never using reviewedContractType as a fallback when both liveDef and storedType are missing).
         const def = defs[fullKey] || defs[canonicalDestinationKey];
         const storedType = currentMetafieldsTypes[fullKey] || currentMetafieldsTypes[canonicalDestinationKey];
         const reviewedContractType = Object.prototype.hasOwnProperty.call(
@@ -3119,9 +2170,6 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        // Bench V2 opt-in contract type verification for the five unheld destinations:
-        // - custom.is_ooak allows observed "single_line_text_field" or "boolean"
-        // - custom.stone_family, custom.cut_and_shape, custom.stone_shape, custom.color require observed "single_line_text_field"
         if (isBenchV2UnheldCustomTarget) {
             if (canonicalDestinationKey === "custom.is_ooak") {
                 if (resolvedType !== "single_line_text_field" && resolvedType !== "boolean") {
@@ -3134,7 +2182,6 @@ export const action = async ({ request }) => {
             }
         }
 
-        // Live category / owner-subtype constraint preflight check for standardized destinations
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
             const catElig = evaluateStandardizedCategoryEligibility({
                 destination: fullKey,
@@ -3204,14 +2251,14 @@ export const action = async ({ request }) => {
              }
           }
         } else if (resolvedType.includes("metaobject_reference")) {
-          
+
           let idsToVerify = [];
-          
+
           if (resolvedType.includes("list.")) {
              try {
                 const parsed = JSON.parse(resolvedValue);
                 if (!Array.isArray(parsed)) throw new Error();
-                
+
                 for (const item of parsed) {
                     if (!String(item).startsWith("gid://shopify/Metaobject/")) {
                         throw new Error(`Invalid item: ${item}`);
@@ -3236,7 +2283,6 @@ export const action = async ({ request }) => {
              idsToVerify.push(String(resolvedValue));
           }
 
-          // Strict Structural Metaobject Validation
           const requiredDefId = def?.requiredDefinitionId;
           if (!requiredDefId) {
              blockedFields[fullKey] = "Destination field lacks a required metaobject definition ID restriction.";
@@ -3263,15 +2309,15 @@ export const action = async ({ request }) => {
                       `, { variables: { id: moId } });
                       const moJson = await moRes.json();
                       const actualDefId = moJson?.data?.metaobject?.definition?.id;
-                      
+
                       if (!actualDefId) {
                           blockedFields[fullKey] = `Metaobject ${moId} not found or missing definition.`;
                           allValid = false;
                           break;
                       }
-                      
+
                       moValidationCache.set(moId, actualDefId);
-                      
+
                       if (actualDefId !== requiredDefId) {
                           blockedFields[fullKey] = `Reference ${moId} belongs to def ${actualDefId}, but field requires ${requiredDefId}`;
                           allValid = false;
@@ -3284,7 +2330,7 @@ export const action = async ({ request }) => {
                   }
               }
           }
-          
+
           if (!allValid) continue;
 
         } else if (resolvedType === "list.single_line_text_field") {
@@ -3327,19 +2373,16 @@ export const action = async ({ request }) => {
 
         const canonicalDestinationKey = `${ns}.${key}`;
 
-        // 🟢 RETIREMENT GUARD
         if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
             skippedKeys.push(fullKey);
             return;
         }
 
-        // 🟢 STRICT NAMESPACE ENFORCEMENT
         if (STRICT_CUSTOM_KEYS.includes(key) && ns !== "custom") {
             unsupportedKeys.push(fullKey);
             return;
         }
 
-        // 🟢 STRICT ALLOWLIST ENFORCEMENT FOR DELETES
         if (!ALLOWED_TAB3_KEYS.includes(key) && !ALLOWED_TAB3_KEYS.includes(fullKey) && !ALLOWED_TAB3_KEYS.includes(canonicalDestinationKey)) {
             unsupportedKeys.push(fullKey);
             return;
@@ -3508,7 +2551,7 @@ export const action = async ({ request }) => {
           allErrors.push({ destination: "price", message: `API Error on Price Update: ${priceErr.message}` });
         }
       }
-      
+
       let shippingWeightSucceeded = false;
       if (doShippingWeightUpdate) {
          try {
@@ -3521,7 +2564,7 @@ export const action = async ({ request }) => {
                   }
                }
             `, { variables: { id: shippingWeightInput.id, input: { measurement: shippingWeightInput.measurement } } });
-            
+
             const swJson = await swResponse.json();
             const swData = swJson?.data?.inventoryItemUpdate;
             if (swData?.userErrors?.length) {
@@ -3547,10 +2590,10 @@ export const action = async ({ request }) => {
                      }
                   }
                `, { variables: { productId: productGid, media: [{ id: imgInput.id, alt: imgInput.alt }] } });
-               
+
                const imgJson = await imgResponse.json();
                const imgData = imgJson?.data?.productUpdateMedia;
-               
+
                if (imgData?.userErrors?.length) {
                   allErrors.push(...imgData.userErrors.map(uErr => ({
                      ...uErr,
@@ -3574,7 +2617,7 @@ export const action = async ({ request }) => {
              blockedFields[errObj.destination] = errObj.message || "Shopify write error.";
            }
          });
-         return Response.json({ 
+         return Response.json({
              intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
              errors: allErrors,
              currentMetafields,
@@ -3594,13 +2637,13 @@ export const action = async ({ request }) => {
          });
       }
 
-      await new Promise(r => setTimeout(r, 600)); 
-      
+      await new Promise(r => setTimeout(r, 600));
+
       let readBackVariantId = null;
       if (doPriceUpdate) readBackVariantId = priceVariantGid;
       if (doShippingWeightUpdate && nativeChanges.shippingWeight?.variantId) readBackVariantId = nativeChanges.shippingWeight.variantId;
       if (attemptedVariantMetafieldWrite && verifiedSingleVariantGid) readBackVariantId = verifiedSingleVariantGid;
-      
+
       const readBackQuery = `
         query getProductAndVariant($id: ID!${readBackVariantId ? ', $variantId: ID!' : ''}) {
           product(id: $id) { 
@@ -3633,7 +2676,7 @@ export const action = async ({ request }) => {
       `;
       const readBackVars = { id: productGid };
       if (readBackVariantId) readBackVars.variantId = readBackVariantId;
-      
+
       let readBackData = null;
       let readBackError = null;
       try {
@@ -3719,7 +2762,6 @@ export const action = async ({ request }) => {
         }
       });
 
-      // Variant metafield read-back (with pagination completeness and exact owner verification)
       const readBackVariantNode = readBackVariantId ? readBackData?.data?.node : null;
       const hasValidVariantNodeReadBack = Boolean(
         readBackVariantId &&
@@ -3842,13 +2884,7 @@ export const action = async ({ request }) => {
                  unresolvedChanges["price"] = { reason: "Missing, detached, or malformed variant node", expected: newPriceString, actual: "Unknown" };
                  conflicts["price"] = { expected: newPriceString, actual: "Missing, detached, or malformed variant node" };
              } else {
-                 const getCents = (str) => {
-                     const parts = (str || "0").split(".");
-                     const dollars = parts[0];
-                     const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
-                     return BigInt(dollars + cents);
-                 };
-                 if (getCents(variantNode.price) !== getCents(newPriceString)) {
+                 if (parsePriceToCentsBigInt(variantNode.price) !== parsePriceToCentsBigInt(newPriceString)) {
                      readBackVerified = false;
                      unresolvedChanges["price"] = { reason: "Read-back mismatch", expected: newPriceString, actual: variantNode.price };
                      conflicts["price"] = { expected: newPriceString, actual: variantNode.price };
@@ -3868,61 +2904,28 @@ export const action = async ({ request }) => {
               if (nativeInput.seo?.description !== undefined) unresolvedChanges["native_seo_description"] = { reason: "API mutation failed", expected: nativeInput.seo.description, actual: "Unchanged" };
               if (nativeInput.title !== undefined) unresolvedChanges["native_title"] = { reason: "API mutation failed", expected: nativeInput.title, actual: "Unchanged" };
           } else {
-              if (nativeInput.descriptionHtml !== undefined) {
-                 if (!hasBodyReadBack) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_description"] = { reason: "Unverified native read-back (descriptionHtml missing)", expected: nativeInput.descriptionHtml, actual: "Unverified" };
-                     conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: "Unverified (missing from read-back)" };
-                 } else if (!areDescriptionHtmlEquivalentOnReadBack(nativeInput.descriptionHtml, actualBodyHtml)) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_description"] = { reason: "Read-back mismatch", expected: nativeInput.descriptionHtml, actual: actualBodyHtml };
-                     conflicts["native_description"] = { expected: nativeInput.descriptionHtml, actual: actualBodyHtml };
-                 } else {
-                     verifiedDestinations.push("native_description");
-                 }
-              }
-              if (nativeInput.seo?.title !== undefined) {
-                 if (actualSeoTitle === undefined) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_seo_title"] = { reason: "Unverified native read-back (seo.title missing)", expected: nativeInput.seo.title, actual: "Unverified" };
-                     conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: "Unverified (missing from read-back)" };
-                 } else if (nativeInput.seo.title !== actualSeoTitle) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_seo_title"] = { reason: "Read-back mismatch", expected: nativeInput.seo.title, actual: actualSeoTitle };
-                     conflicts["native_seo_title"] = { expected: nativeInput.seo.title, actual: actualSeoTitle };
-                 } else {
-                     verifiedDestinations.push("native_seo_title");
-                 }
-              }
-              if (nativeInput.seo?.description !== undefined) {
-                 if (actualSeoDescription === undefined) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_seo_description"] = { reason: "Unverified native read-back (seo.description missing)", expected: nativeInput.seo.description, actual: "Unverified" };
-                     conflicts["native_seo_description"] = { expected: nativeInput.seo.description, actual: "Unverified (missing from read-back)" };
-                 } else if (nativeInput.seo.description !== actualSeoDescription) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_seo_description"] = { reason: "Read-back mismatch", expected: nativeInput.seo.description, actual: actualSeoDescription };
-                     conflicts["native_seo_description"] = { expected: nativeInput.seo.description, actual: actualSeoDescription };
-                 } else {
-                     verifiedDestinations.push("native_seo_description");
-                 }
-              }
-              if (nativeInput.title !== undefined) {
-                 if (!hasTitleReadBack) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_title"] = { reason: "Unverified native read-back (title missing)", expected: nativeInput.title, actual: "Unverified" };
-                     conflicts["native_title"] = { expected: nativeInput.title, actual: "Unverified (missing from read-back)" };
-                 } else if (nativeInput.title !== actualTitle) {
-                     readBackVerified = false;
-                     unresolvedChanges["native_title"] = { reason: "Read-back mismatch", expected: nativeInput.title, actual: actualTitle };
-                     conflicts["native_title"] = { expected: nativeInput.title, actual: actualTitle };
-                 } else {
-                     verifiedDestinations.push("native_title");
-                 }
-              }
+              const verifyNativeFieldReadBack = (destKey, expectedVal, actualVal, hasFieldReadBack, missingFieldLabel, eqFn = (a, b) => a === b) => {
+                if (expectedVal === undefined) return;
+                if (!hasFieldReadBack) {
+                  readBackVerified = false;
+                  unresolvedChanges[destKey] = { reason: `Unverified native read-back (${missingFieldLabel} missing)`, expected: expectedVal, actual: "Unverified" };
+                  conflicts[destKey] = { expected: expectedVal, actual: "Unverified (missing from read-back)" };
+                } else if (!eqFn(expectedVal, actualVal)) {
+                  readBackVerified = false;
+                  unresolvedChanges[destKey] = { reason: "Read-back mismatch", expected: expectedVal, actual: actualVal };
+                  conflicts[destKey] = { expected: expectedVal, actual: actualVal };
+                } else {
+                  verifiedDestinations.push(destKey);
+                }
+              };
+
+              verifyNativeFieldReadBack("native_description", nativeInput.descriptionHtml, actualBodyHtml, hasBodyReadBack, "descriptionHtml", areDescriptionHtmlEquivalentOnReadBack);
+              verifyNativeFieldReadBack("native_seo_title", nativeInput.seo?.title, actualSeoTitle, actualSeoTitle !== undefined, "seo.title");
+              verifyNativeFieldReadBack("native_seo_description", nativeInput.seo?.description, actualSeoDescription, actualSeoDescription !== undefined, "seo.description");
+              verifyNativeFieldReadBack("native_title", nativeInput.title, actualTitle, hasTitleReadBack, "title");
           }
       }
-      
+
       if (doShippingWeightUpdate) {
          if (!shippingWeightSucceeded) {
              readBackVerified = false;
@@ -3938,7 +2941,7 @@ export const action = async ({ request }) => {
                 const actualUnit = variantNode.inventoryItem?.measurement?.weight?.unit;
                 const expectedWeight = shippingWeightInput.measurement.weight.value;
                 const expectedUnit = shippingWeightInput.measurement.weight.unit;
-                
+
                 if (parseFloat(actualWeight) !== parseFloat(expectedWeight) || actualUnit !== expectedUnit) {
                    readBackVerified = false;
                    unresolvedChanges["native_shipping_weight"] = { reason: "Read-back mismatch", expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
@@ -4046,7 +3049,7 @@ export const action = async ({ request }) => {
          const actual = newMetafields[dotKey];
          let expStr = String(m.value).trim();
          let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
-         
+
          if (m.type === "number_decimal") {
              if (parseFloat(expStr) !== parseFloat(actStr)) {
                  readBackVerified = false;
@@ -4100,7 +3103,7 @@ export const action = async ({ request }) => {
 
       const hasUnresolved = Object.keys(unresolvedChanges).length > 0 || Object.keys(conflicts).length > 0;
       const hasExcluded = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
-      
+
       let finalStatus = "REPAIRED";
       let finalSuccess = true;
 
@@ -4109,11 +3112,11 @@ export const action = async ({ request }) => {
           finalSuccess = false;
       }
 
-      const diagnosticMsg = finalStatus === "PARTIAL_SUCCESS" 
-          ? `Partial execution: ${verifiedDestinations.length} verified. ${Object.keys(unresolvedChanges).length} unresolved, ${Object.keys(blockedFields).length} blocked, ${unsupportedKeys.length} unsupported.` 
+      const diagnosticMsg = finalStatus === "PARTIAL_SUCCESS"
+          ? `Partial execution: ${verifiedDestinations.length} verified. ${Object.keys(unresolvedChanges).length} unresolved, ${Object.keys(blockedFields).length} blocked, ${unsupportedKeys.length} unsupported.`
           : `Repair successful: ${verifiedDestinations.length} verified destinations.`;
 
-      return Response.json({ 
+      return Response.json({
         intent: "executeRepairPlan", pieceId, success: finalSuccess, status: finalStatus,
         fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
         message: diagnosticMsg,

@@ -1,4 +1,6 @@
 import { DROPDOWN_OPTIONS, normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
+import { ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS } from "./meta-injector.standardized.jsx";
+import { ENGINE_ALLOWED_PROVENANCE_BARE_KEYS } from "./bench-v2.contract.jsx";
 
 // 🟢 AI Engine — No Prisma Import Here
 
@@ -80,7 +82,7 @@ async function getLiveStoreDirectory(admin) {
       `;
       const pagesRes = await admin.graphql(pagesQuery, endCursor ? { variables: { cursor: endCursor } } : {});
       const pagesData = await pagesRes.json();
-      
+
       if (pagesData.data?.pages?.edges) {
         pagesList = pagesList.concat(pagesData.data.pages.edges.map(e => {
           const rawBody = (e.node.body || "").replace(/<[^>]*>?/gm, "").replace(/\s+/g, " ").trim();
@@ -139,28 +141,37 @@ function collectionsDataEdgesMap(edges) {
   });
 }
 
-function splitSegmentedTitle(val) {
-  if (typeof val !== "string") return [];
-  const normalized = val
+function normalizeTitleMojibakeEmDashes(str) {
+  return String(str)
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
     .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
     .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
     .trim();
+}
+
+function replaceCandidateMojibakeEmDashes(str) {
+  return str
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
+    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"/g, "—")
+    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—");
+}
+
+function splitSegmentedTitle(val) {
+  if (typeof val !== "string") return [];
+  const normalized = normalizeTitleMojibakeEmDashes(val);
   if (!normalized) return [];
   return normalized.split(/\s+[—–-]\s+/).map(s => s.trim()).filter(Boolean);
 }
 
 function extractStoneName(title) {
   if (!title) return "Unknown";
-  const normalized = String(title)
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
-    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
-    .trim();
+  const normalized = normalizeTitleMojibakeEmDashes(title);
   const segs = splitSegmentedTitle(normalized);
   const sectionOne = segs.length >= 2 ? segs[0] : normalized.split(/[—–-]/)[0].trim();
   const adjectives = ["Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown", "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome", "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled", "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"];
@@ -214,11 +225,11 @@ function resolveOriginHandle(locationSegment, pagesList, explicitHandle = "") {
 
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
   if (!cleanLoc || cleanLoc === "unknown origin") return "";
-  
+
   let targetHandle = "";
   if (cleanLoc.includes("richardson")) targetHandle = "the-richardson-strike";
-  else if (cleanLoc.includes("irv")) targetHandle = ""; 
-  else if (cleanLoc.includes("spokane")) targetHandle = ""; 
+  else if (cleanLoc.includes("irv")) targetHandle = "";
+  else if (cleanLoc.includes("spokane")) targetHandle = "";
   else if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc === "nor" || cleanLoc.startsWith("nor ")) targetHandle = "the-north-fork-strike";
   else if (cleanLoc.includes("yakima") || cleanLoc.includes("chert") || cleanLoc === "yak" || cleanLoc.startsWith("yak ")) targetHandle = "the-shop-lore-chert-road-detour-yakima-river-jasper";
   else {
@@ -248,7 +259,7 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   }
 
   const cleanLoc = (locationSegment || "").toLowerCase().trim();
-  
+
   let targetSlug = "";
   let targetName = "";
 
@@ -259,11 +270,11 @@ function resolveCollectionData(locationSegment, defaultOriginSlug, collectionsLi
   if (cleanLoc.includes("yakima") || cleanLoc.includes("chert") || cleanLoc === "yak" || cleanLoc.startsWith("yak ")) { targetSlug = "yakima-canyon"; targetName = "Yakima River Canyon"; }
   else if (cleanLoc.includes("richardson")) { targetSlug = "richardsons-rock-ranch"; targetName = "Richardson's Rock Ranch Collection"; }
   else if (cleanLoc.includes("spokane")) { targetSlug = "the-spokane-river-collection"; targetName = "Spokane River Stones and Stories"; }
-  else if (cleanLoc.includes("irv")) { targetSlug = ""; targetName = ""; } 
+  else if (cleanLoc.includes("irv")) { targetSlug = ""; targetName = ""; }
   else if (cleanLoc.includes("north fork") || cleanLoc.includes("north-fork") || cleanLoc.includes("cda") || cleanLoc === "nor" || cleanLoc.startsWith("nor ")) { targetSlug = "north-fork-cda-collection"; targetName = "North Fork CdA Collection"; }
   else {
-    const matchedCol = collectionsList.find(c => 
-      (defaultOriginSlug && c.url.includes(defaultOriginSlug)) || 
+    const matchedCol = collectionsList.find(c =>
+      (defaultOriginSlug && c.url.includes(defaultOriginSlug)) ||
       (cleanLoc && c.title.toLowerCase().includes(cleanLoc))
     );
     if (matchedCol) {
@@ -384,7 +395,6 @@ function formatBenchV2OoakProposalForType(rawVal, polarity, observedType) {
   };
 }
 
-// Evaluates found_object polarity without mutating the underlying stored value or type
 function classifyFoundObjectPolarity(rawVal) {
   if (rawVal === undefined || rawVal === null) return "unknown";
   if (typeof rawVal === "boolean") return rawVal ? "wild_found" : "purchased";
@@ -454,8 +464,6 @@ function parseIdentityAndOriginInputs(body, provenance = null) {
   const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
   const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
 
-  // Purchase provenance is established when found_object explicitly indicates purchased polarity
-  // (or when operator_locked_fields locks found_object/origin_location as purchased).
   const isPurchasedProvenance = foundObjectPolarity === "purchased";
   const isOriginOperatorLocked = operatorLockedSet.has("origin_location") && Boolean(explicitOriginLocation);
 
@@ -465,8 +473,6 @@ function parseIdentityAndOriginInputs(body, provenance = null) {
   const hasSegmentedProductTitle = productTitleSegments.length >= 3;
   const hasSegmentedPieceName = pieceNameSegments.length >= 3;
 
-  // Preserve exact human identifiers (including hyphenated codes like BQH-1).
-  // Never treat a 1-segment human ID as stone_family.
   let preservedPieceName = "";
   if (rawHumanId) {
     preservedPieceName = rawHumanId;
@@ -484,8 +490,6 @@ function parseIdentityAndOriginInputs(body, provenance = null) {
     ? productTitleSegments[0]
     : (hasSegmentedPieceName ? pieceNameSegments[0] : "");
 
-  // When human/locked facts establish purchased provenance or lock origin_location,
-  // never derive originSegment from the middle segment of a segmented marketing title.
   const titleOriginCandidate = (isPurchasedProvenance || isOriginOperatorLocked)
     ? ""
     : (hasSegmentedProductTitle
@@ -523,14 +527,6 @@ function parseIdentityAndOriginInputs(body, provenance = null) {
   };
 }
 
-/**
- * Builds an ordered list of stone identity lookup candidates for getGeoData:
- * prioritizes explicit operator-locked stone identity (material / stone_family),
- * then the explicit stone variety from the 3-segment title's first (STONE) segment
- * or valid material variety before falling back to broad stone_family.
- * Never derives or synthesizes a stone variety from origin, location, collection,
- * trip, product nickname, or the second/third title segments.
- */
 function buildGeoLookupCandidates({
   idOrigin,
   stoneIdentityContext,
@@ -639,10 +635,6 @@ async function getGeoData(admin, stoneFamily) {
 
   try {
     const { lookupStone } = await import("../utils/geoLibrary.jsx");
-    // Try explicit stone variety / title stone segment candidates in order first
-    // (preserving exact multi-word entries like "Yakima Jasper", "Fire Obsidian",
-    // "Dalmatian Stone", "Botswana Agate", "Montana Agate", "Picture Jasper", "Brecciated Jasper"),
-    // then fall back to cleaned base rock name.
     let localResult = null;
     for (const candidate of fullCandidates) {
       localResult = lookupStone(candidate);
@@ -764,33 +756,14 @@ async function getGeoData(admin, stoneFamily) {
   return emptyGeo;
 }
 
-const ALLOWED_STANDARDIZED_CANDIDATE_KEYS = [
-  "chain-link-type",
-  "construction",
-  "jewelry-finding-type",
-  "material-origin",
-  "product-classification",
-  "product-use"
-];
-
 const INVALID_CANDIDATE_FILLERS = new Set(["none", "unknown", "n/a", "null", "undefined", "tbd", "not applicable"]);
 
+// Producer-local provenance set: reuses the 54 shared ENGINE_ALLOWED_PROVENANCE_BARE_KEYS
+// plus legacy "overall_solid_length_in" (kept producer-only for legacy Tab 2/3 provenance;
+// permanently cancelled in Bench V2).
 const ALLOWED_PROVENANCE_FIELD_KEYS = new Set([
-  "color_pattern", "primary_color", "secondary_colors", "color",
-  "dimensions_mm", "overall_solid_length_in", "weight_grams", "shipping_weight_oz", "price",
-  "honest_flaws_and_character", "character_marks",
-  "surface_finish", "cut_type", "cut_and_shape", "stone_shape",
-  "jewelry_finding_type", "bail_included", "chain_material",
-  "wire_material", "secondary_medium", "primary_medium", "primary_use",
-  "product_format", "jewelry_type", "necklace_design", "chain_link_type",
-  "setting_ready", "craftsmanship", "poetic_hook",
-  "seo_title", "alt_text", "google_product_category", "treated", "treatment_status",
-  "stone_family", "material", "origin_location", "origin_handle", "origin_page_handle",
-  "collection_name", "collection_location", "collection_date", "found_object",
-  "is_one_of_a_kind", "is_ooak",
-  "mohs_hardness", "specific_gravity", "crystal_system", "luster",
-  "cleavage", "fracture_pattern", "diaphaneity", "tenacity",
-  "mineral_class", "rock_composition", "rock_formation", "geological_age"
+  ...ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  "overall_solid_length_in"
 ]);
 
 const CLASSIFICATION_OVERRIDE_KEYS = new Set([
@@ -812,8 +785,6 @@ const PASSIVE_CONSTRUCTION_REVIEW_KEYS = new Set([
   "alt_text"
 ]);
 
-// Passive stored provenance/SEO keys that may have been populated by earlier AI runs or title parses.
-// When not operator-locked, they must not override explicit human purchase provenance.
 const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
   "origin_location",
   "origin_handle",
@@ -823,7 +794,6 @@ const PASSIVE_PROVENANCE_AND_SEO_KEYS = new Set([
   "poetic_hook"
 ]);
 
-// Passive stored geology keys so non-locked stored baseline geology values do not become operator-locked facts in CURRENT KNOWN DATA
 const PASSIVE_GEOLOGY_REVIEW_KEYS = new Set([
   "mohs_hardness",
   "specific_gravity",
@@ -850,12 +820,6 @@ function isGenericBareStoneProposal(rawVal) {
   return String(rawVal).trim().toLowerCase() === "stone";
 }
 
-/**
- * Detects when a setting, metal alloy, plating, wire, chain, or bail phrase was mistakenly placed
- * in a stone identity field (custom.primary_medium, custom.material, or custom.stone_family).
- * Preserves legitimate stone/mineral names from DROPDOWN_OPTIONS.stone_family (such as "Silver Sheen Obsidian",
- * "Gold Sheen Obsidian", "Ironstone", or native "Copper"/"Gold"/"Silver" when not paired with hardware/plating terms).
- */
 function isSettingOrHardwareMediumValue(rawVal) {
   if (rawVal === undefined || rawVal === null) return false;
   const trimmed = String(rawVal).trim();
@@ -866,7 +830,6 @@ function isSettingOrHardwareMediumValue(rawVal) {
     return true;
   }
 
-  // Explicit hardware, plating, alloy, wire, chain, or setting terms are never stone identity
   if (
     /\b(plated|plating|electroplated|alloy|sterling|925|fine\s+silver|nickel\s+silver|german\s+silver|tibetan\s+silver|pewter|brass|bronze|stainless|steel|aluminum|aluminium|vermeil|gold[-\s]?filled|silver[-\s]?filled|rose\s+gold|white\s+gold|yellow\s+gold|karat|10k|14k|18k|24k|bezel|bail|pinch\s+bail|glue[-\s]?on|glue[-\s]?in|wire[-\s]?wrap(?:ped)?|craft\s+wire|copper\s+wire|silver\s+wire|gold\s+wire|brass\s+wire|snake\s+chain|chain|cord|pendant\s+setting|metal\s+setting|finding|clasp|loop|rim|frame)\b/i.test(
       trimmed
@@ -882,11 +845,6 @@ function isSettingOrHardwareMediumValue(rawVal) {
   return false;
 }
 
-/**
- * Resolves verified stone family and variety/material context from supplied inputs,
- * rejecting any setting, metal, plating, or hardware value in primary_medium, material, or stone_family.
- * Preserves distinct stone_family (e.g. Agate) and variety/material (e.g. Botswana Agate) without forcing them to be identical.
- */
 function resolveVerifiedStoneIdentityContext(inputs = {}, derivedTitleFamily = "") {
   const rawStoneFamily = String(inputs.stone_family || "").trim();
   const rawMaterial = String(inputs.material || "").trim();
@@ -911,7 +869,6 @@ function resolveVerifiedStoneIdentityContext(inputs = {}, derivedTitleFamily = "
     (validMaterial ? resolvePicklistStoneFamily(validMaterial) : "") ||
     (validPrimaryMedium ? resolvePicklistStoneFamily(validPrimaryMedium) : "");
 
-  // Keep variety/material distinct when a valid variety is present; only fall back to family when variety was blank or contaminated by hardware
   const effectiveMaterial =
     validMaterial ||
     validPrimaryMedium ||
@@ -1008,15 +965,7 @@ function resolveTab3FieldProvenance(body) {
 function sanitizeCandidateString(str) {
   if (typeof str !== "string") return "";
   if (str.includes("See Shopify")) return "";
-  return str
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
-    .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
-    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"/g, "—")
-    .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
-    .trim();
+  return replaceCandidateMojibakeEmDashes(str).trim();
 }
 
 function isCleanCandidateLabel(label) {
@@ -1124,14 +1073,7 @@ function sanitizeObject(obj) {
   for (let key in obj) {
     if (typeof obj[key] === "string") {
       if (obj[key].includes("See Shopify")) obj[key] = "";
-      else obj[key] = obj[key]
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬"/g, "—")
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬"/g, "—")
-        .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
-        .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬"/g, "—")
-        .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—");
+      else obj[key] = replaceCandidateMojibakeEmDashes(obj[key]);
     }
   }
   return obj;
@@ -1380,19 +1322,19 @@ If the provided origin-page story contains an explicit collection date, trip dat
 
 function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [], collectionStory = "", operatorFacts = {} }) {
   let dwellButtonsHTML = `<br><br>`;
-  
+
   let displayOriginName = fullCollectionTitle || originSegment;
   let displayColName = fullCollectionTitle || originSegment;
-  
+
   if (originSegment === "Yakima River Canyon" || (targetUrlPath && targetUrlPath.includes("chert-road-detour-yakima-river-jasper"))) {
     displayOriginName = "Chert Road Detour";
     displayColName = "Yakima River Canyon";
   }
-  
+
   if (targetUrlPath && targetUrlPath !== "/pages/") {
     dwellButtonsHTML += `<a href="${targetUrlPath}">${displayOriginName} Story</a>\n`;
   }
-  
+
   if (collectionUrlPath && collectionUrlPath !== "/collections/") {
     if (targetUrlPath && targetUrlPath !== "/pages/") dwellButtonsHTML += `<br>`;
     let colLabel = displayColName;
@@ -1406,7 +1348,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
       dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
     }
     dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
-    
+
     if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
       dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
     }
@@ -1419,7 +1361,7 @@ function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, deri
     .filter(([k, v]) => v !== undefined && v !== null && v !== "")
     .map(([k, v]) => `- ${k}: ${v}`)
     .join("\n");
-  
+
   return `You are a lapidary artist for Rockhound Studio. Analyze this photo and return a JSON object.
 ${getSharedFactualContract()}
 
@@ -1519,7 +1461,6 @@ function buildTab3VisionPrompt({
 
   Object.entries(currentData || {}).forEach(([k, v]) => {
     if (v === undefined || v === null || v === "") return;
-    // Never pass a metal, plating, or setting hardware string inside primary_medium, material, or stone_family as verified stone identity
     if (STONE_IDENTITY_KEYS.has(k) && isSettingOrHardwareMediumValue(v)) {
       passiveHardwareEntries.push(`- [IGNORED NON-STONE VALUE IN ${k}]: "${v}" (This is hardware/metal, NOT stone identity; use reviewed stone_family/material facts instead)`);
       return;
@@ -1655,22 +1596,14 @@ export async function executeAutofill(intent, body, admin) {
 
     if (intent === "geoLookup") {
       const stoneFamily = body.get("stoneFamily") || "";
-      const geoFields = await getGeoData(admin, stoneFamily); 
-      return Response.json({ success: true, intent: "geoLookup", geoFields: sanitizeObject(geoFields) }); 
+      const geoFields = await getGeoData(admin, stoneFamily);
+      return Response.json({ success: true, intent: "geoLookup", geoFields: sanitizeObject(geoFields) });
     }
 
     if (intent === "titleParse") {
-      const pieceNameInput = (body.get("pieceName") || "")
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â/g, "—")
-        .replace(/ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â/g, "—")
-        .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â/g, "—")
-        .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â/g, "—")
-        .trim();
+      const pieceNameInput = normalizeTitleMojibakeEmDashes(body.get("pieceName") || "");
       const segments = splitSegmentedTitle(pieceNameInput);
 
-      // Only parse a segmented title when it actually contains 3 title segments.
-      // A standalone human identifier (e.g. "BQH-1") must never be parsed as stone_family.
       if (segments.length < 3) {
         return Response.json({
           success: false,
@@ -1690,8 +1623,6 @@ export async function executeAutofill(intent, body, admin) {
 
       const rawSegment1Stone = cleanStoneFamilyShape(segments[0] || "");
       const segment1 = resolvePicklistStoneFamily(segments[0] || "");
-      // When explicit human/locked provenance establishes purchased material or locks origin_location,
-      // do not let the middle title segment override origin_location with a river/field location.
       const segment2 = isOriginLocked
         ? explicitOriginLocation
         : isPurchasedProvenance
@@ -1830,7 +1761,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       const matchedPage = defaultOriginSlug
         ? pagesList.find(p => p.handle === defaultOriginSlug || p.url.includes(defaultOriginSlug))
         : null;
-      
+
       let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
       if (!extractedStory) {
         extractedStory = (body.get("origin_story") || "").trim();
@@ -1871,7 +1802,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         return Response.json({ success: false, intent, pieceId, error: "No image data supplied for Vision scan." }, { status: 400 });
       }
 
-      // Sanitize input facts: never pass setting/hardware strings in primary_medium, material, or stone_family as operator stone facts
       const currentInputFacts = { ...rawInputFacts };
       for (const sKey of STONE_IDENTITY_KEYS) {
         if (currentInputFacts[sKey] !== undefined && isSettingOrHardwareMediumValue(currentInputFacts[sKey])) {
@@ -1922,7 +1852,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           return Response.json({ success: false, intent, pieceId, error: "Vision response failed JSON parsing." }, { status: 500 });
         }
 
-        // Prevent bare generic "Stone" or setting/hardware terms from becoming a stone identity proposal
         for (const sKey of ["primary_medium", "material", "stone_family"]) {
           if (
             isGenericBareStoneProposal(parsedVision[sKey]) ||
@@ -1932,7 +1861,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         }
 
-        // Validate photo-based solid length measurement (decimal inches, strictly excluding 18" necklace chain/cord)
         if (parsedVision.overall_solid_length_in !== undefined) {
           const validSolidLen = parseValidPhotoSolidLengthInches(parsedVision.overall_solid_length_in);
           if (validSolidLen) {
@@ -1957,7 +1885,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           delete parsedVision[`custom.std_${k.replace(/-/g, "_")}`];
         });
 
-        // Never allow Vision to replace the human identifier or inject retired rarity/authenticity fields
         delete parsedVision.piece_name;
         delete parsedVision.rarity;
         delete parsedVision.authenticity;
@@ -1967,7 +1894,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         parsedVision.generated_description = formatDyslexiaText(parsedVision.generated_description);
 
-        // Preserve explicit operator inputs field-by-field; if Vision disagrees with an explicit operator value, keep operator value and record proposal for review.
         const reviewProposals = {};
         if (stoneIdentityContext.hadHardwareContamination && stoneIdentityContext.isIdentityUncertain) {
           reviewProposals.stone_identity_warning = `Setting/metal value in ${stoneIdentityContext.contaminatedFields.join(", ")} is not a valid stone identity; verify stone family/material before saving.`;
@@ -2005,7 +1931,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               collectionsList
             );
 
-        // Ensure generated SEO does not contradict explicit purchased provenance
         if (idOrigin.isPurchasedProvenance) {
           if (typeof parsedVision.seo_title === "string" && hasRiverOrFieldCollectionClaim(parsedVision.seo_title)) {
             parsedVision.seo_title = buildSafePurchasedSeoTitle(resolvedFamily, parsedVision.product_format);
@@ -2019,7 +1944,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete parsedVision.is_ooak;
         delete parsedVision.is_one_of_a_kind;
 
-        // Single-photo alt text stays associated with the single scanned photo only
         const singleImageId = (body.get("imageId") || "").trim();
         const singleAltText = (currentInputFacts.alt_text || parsedVision.alt_text || "").trim();
 
@@ -2167,12 +2091,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       const matchedPage = defaultOriginSlug
         ? pagesList.find(p => p.handle === defaultOriginSlug || p.url.includes(defaultOriginSlug))
         : null;
-      
+
       let extractedStory = matchedPage && matchedPage.excerpt ? matchedPage.excerpt : "";
       if (!extractedStory) {
         extractedStory = (body.get("origin_story") || "").trim();
       }
-      
+
       let mediaInputs = [];
       try {
         const rawMedia = body.get("mediaInputs");
@@ -2189,7 +2113,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       const matchedCollectionObj = defaultCollection.slug
         ? collectionsList.find(c => c.handle === defaultCollection.slug)
         : null;
-      
+
       const promptText = buildTab3VisionPrompt({
         pagesMenu: pagesList.map(p => `- Title: "${p.title}" | Handle: ${p.handle}`).join("\n"),
         collectionsMenu: collectionsList.map(c => `- Title: "${c.title}" | Handle: ${c.handle}`).join("\n"),
@@ -2286,10 +2210,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           );
         }
 
-        // ====================================================================
-        // CAPTURE RAW VISION OUTPUTS FOR BENCH V2 BEFORE PASSIVE FALLBACK
-        // SUBSTITUTION, OOAK COLLAPSING/DELETION, OR BASELINE MERGES
-        // ====================================================================
         const rawVisionSnapshot = {};
         if (parsedVision && typeof parsedVision === "object" && !Array.isArray(parsedVision)) {
           for (const [vk, vv] of Object.entries(parsedVision)) {
@@ -2298,20 +2218,18 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
           }
         }
-        
+
         let validatedImageAlts = [];
         let altValidationErrors = [];
 
         if (hasMultipleImages) {
-          // Only retain a separate general alt_text proposal when the product already has an existing custom.alt_text compatibility field;
-          // never create custom.alt_text on products that lack it, and never copy a per-photo alt into alt_text.
           if (!hasExistingGeneralAlt) {
             delete parsedVision.alt_text;
           }
           if (Array.isArray(parsedVision.imageAlts)) {
             const inputIdSet = new Set(mediaInputs.map(m => m.imageId));
             const processedIdSet = new Set();
-            
+
             for (const altObj of parsedVision.imageAlts) {
               if (!altObj.imageId || !altObj.altText) {
                 altValidationErrors.push(`Malformed alt object: missing ID or text.`);
@@ -2331,7 +2249,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               });
               processedIdSet.add(altObj.imageId);
             }
-            
+
             for (const inputId of inputIdSet) {
               if (!processedIdSet.has(inputId)) {
                 altValidationErrors.push(`Missing target image ID: ${inputId}`);
@@ -2354,7 +2272,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           delete parsedVision.imageAlts;
         }
 
-        // Prevent bare generic "Stone" or setting/hardware terms from becoming a material/primary_medium/stone_family proposal
         for (const sKey of ["primary_medium", "material", "stone_family"]) {
           if (
             isGenericBareStoneProposal(parsedVision[sKey]) ||
@@ -2364,7 +2281,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         }
 
-        // Validate photo-based solid length measurement (decimal inches, strictly excluding 18" necklace chain/cord)
         if (parsedVision.overall_solid_length_in !== undefined) {
           const validSolidLen = parseValidPhotoSolidLengthInches(parsedVision.overall_solid_length_in);
           if (validSolidLen) {
@@ -2374,8 +2290,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         }
 
-        // Preserve genuinely operator-locked facts field-by-field; allow fresh evidence to propose corrections for
-        // passive classification keys, passive hardware/construction keys, passive provenance/SEO keys, and hardware-contaminated stone identity fields.
         const protectedKeys = [
           "color_pattern", "primary_color", "secondary_colors", "dimensions_mm", "overall_solid_length_in",
           "honest_flaws_and_character", "surface_finish", "jewelry_finding_type", "bail_included",
@@ -2404,7 +2318,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               provenance.passiveStoredSet.has(k) &&
               !isOperatorLocked;
 
-            // Never restore a setting/metal/plating string into primary_medium or material
             if ((k === "primary_medium" || k === "material") && isSettingOrHardwareMediumValue(currentData[k])) {
               const replacementStoneVal =
                 k === "material"
@@ -2480,8 +2393,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         });
 
         const geoKeys = [
-          "mohs_hardness", "luster", "fracture_pattern", "cleavage", 
-          "specific_gravity", "diaphaneity", "tenacity", "crystal_system", 
+          "mohs_hardness", "luster", "fracture_pattern", "cleavage",
+          "specific_gravity", "diaphaneity", "tenacity", "crystal_system",
           "geological_era", "mineral_class", "rock_composition", "rock_formation", "geological_age"
         ];
         const verifiedGeoValues = {};
@@ -2506,7 +2419,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         });
 
-        // Never regenerate or overwrite titles, human IDs, weights, prices, or retired rarity/authenticity during repair
         delete parsedVision.piece_name;
         delete parsedVision.origin_story;
         delete parsedVision.price;
@@ -2536,7 +2448,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
               collectionsList
             );
 
-        // Enforce purchase provenance consistency on SEO outputs when not operator-locked
         const isSeoTitleOperatorLocked =
           provenance.hasValidProvenance &&
           provenance.operatorLockedSet.has("seo_title") &&
@@ -2612,13 +2523,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
         // ====================================================================
         // OPT-IN BENCH V2 PRODUCER PROPOSALS SEPARATION (tab3FullRescan ONLY)
-        // Emits ONLY genuine nonblank Batch 1 + Drawer 6 + Drawer 7 + Drawer 8
-        // (custom.google_product_category) producer outputs captured BEFORE
-        // passive stored fallback substitution, OOAK collapsing/deletion, or
-        // baseline merges. Never substitutes stored values for absent model/lookup outputs.
-        // Never emits cancelled overall_solid_length_in, manual-only
-        // measurements (dimensions_mm, weight_grams), AI dates, legacy geological_era,
-        // variant channel fields, held custom_product flag, or later-batch/parked/protected fields.
         // ====================================================================
         let producerProposals = undefined;
         let producerDiagnostics = undefined;
@@ -2698,7 +2602,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             producerProposals[destKey] = { value: cleaned, source };
           };
 
-          // 1. Segmented Product Title Piece Name (only when derived from a 3-segment title, never echoing a 1-segment caller piece_name)
+          // 1. Segmented Product Title Piece Name
           if (idOrigin.hasSegmentedTitle && idOrigin.preservedPieceName) {
             const segs = splitSegmentedTitle(idOrigin.rawTitleInput || "");
             const lastSeg = segs.length >= 3 ? segs[segs.length - 1] : "";
@@ -2711,9 +2615,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
           }
 
-          // 2. Dominant Material (custom.material):
-          // Only from genuine Vision stone/material output (never hardware, never bare "Stone",
-          // and never auto-populated from stone_family).
+          // 2. Dominant Material (custom.material)
           const rawVisMaterial = cleanNonBlankVisionStr(rawVisionSnapshot.material);
           const rawVisPrimaryMedium = cleanNonBlankVisionStr(rawVisionSnapshot.primary_medium);
 
@@ -2728,9 +2630,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
             !isSettingOrHardwareMediumValue(rawVisPrimaryMedium)
           ) {
-            // Map primary_medium to custom.material only when it is a verified stone/mineral
-            // identity (never hardware/metal) and distinct from or more specific than a bare
-            // caller-supplied stone_family echo.
             const rawVisStoneFam = cleanNonBlankVisionStr(rawVisionSnapshot.stone_family);
             const isDistinctVarietyOrConfirmedStone =
               !rawVisStoneFam ||
@@ -2745,10 +2644,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
           }
 
-          // 3. Intentional Distinct OOAK Destinations (custom.is_one_of_a_kind & custom.is_ooak):
-          // Derive only from genuine Vision OOAK output (never echoing currentData),
-          // check for conflicts, and format each destination using its explicitly supplied
-          // observed type.
+          // 3. Intentional Distinct OOAK Destinations
           const hasVisionOoak1 =
             rawVisionSnapshot.is_one_of_a_kind !== undefined &&
             rawVisionSnapshot.is_one_of_a_kind !== null &&
@@ -2804,7 +2700,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
                   ? String(rawVisionSnapshot.is_ooak).trim()
                   : String(rawVisionSnapshot.is_one_of_a_kind).trim();
 
-                // custom.is_one_of_a_kind (contract allows single_line_text_field only)
                 if (ooak1ObservedType === "single_line_text_field") {
                   const fmt1 = formatBenchV2OoakProposalForType(
                     rawOoakStr1,
@@ -2826,7 +2721,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
                     : "Observed type for custom.is_one_of_a_kind was not supplied; omitted proposal.";
                 }
 
-                // custom.is_ooak (contract allows boolean or single_line_text_field)
                 if (
                   ooak2ObservedType === "boolean" ||
                   ooak2ObservedType === "single_line_text_field"
@@ -2854,8 +2748,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
           }
 
-          // 4. Origin & Collection Batch 1 Destinations (only when genuinely produced by Vision,
-          // 3-segment title origin parse, or live store directory resolution — never echoing currentData):
+          // 4. Origin & Collection Batch 1 Destinations
           const rawVisOriginLoc = cleanNonBlankVisionStr(rawVisionSnapshot.origin_location);
           const titleDerivedOrigin =
             !idOrigin.explicitOriginLocation &&
@@ -2978,9 +2871,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             addProposal("custom.found_object", rawVisFoundObj, "Gemini Vision (found_object)");
           }
 
-          // Note: custom.collection_date is never inferred or emitted by AI.
-
-          // 5. Treatment Batch 1 Destinations (only when genuinely returned by Vision and not merely echoing caller currentData):
+          // 5. Treatment Batch 1 Destinations
           const rawVisTreated = cleanNonBlankVisionStr(rawVisionSnapshot.treated);
           if (rawVisTreated && rawVisTreated !== currentData.treated) {
             addProposal("custom.treated", rawVisTreated, "Gemini Vision (treated)");
@@ -2999,7 +2890,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             );
           }
 
-          // 6. Appearance and Character Batch 1 Destinations (from rawVisionSnapshot before protectedKeys overwrote them):
+          // 6. Appearance and Character Batch 1 Destinations
           const rawVisSurfaceFinish = cleanNonBlankVisionStr(rawVisionSnapshot.surface_finish);
           if (rawVisSurfaceFinish) {
             addProposal(
@@ -3038,12 +2929,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             );
           }
 
-          // 7. Setting and Hardware Drawer 6 Destinations (from rawVisionSnapshot before protectedKeys overwrote them):
-          // Emits genuine nonblank Vision outputs captured in rawVisionSnapshot (even when matching
-          // baseline, which the client reports as matching saved value and not staged). Never substitutes
-          // stored values for absent model outputs. Allows destination-specific domain answers "N/A" for
-          // jewelry_type and "None" for chain_material only when actually returned by the model.
-          // Manual measurements (dimensions_mm, weight_grams) remain excluded.
+          // 7. Setting and Hardware Drawer 6 Destinations
           const DRAWER_6_HARDWARE_KEYS = [
             "secondary_medium",
             "jewelry_type",
@@ -3070,15 +2956,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             );
           }
 
-          // 8. Geology Drawer 7 Destinations (12 active destinations from getGeoData ONLY;
-          // legacy custom.geological_era is intentionally omitted):
-          // Uses actual getGeoData-derived values and truthful per-field source labels:
-          // - library facts: "Geo Library (GEO_LIBRARY)"
-          // - library computed luster: "Geo Library (computed stone luster default)"
-          // - cache: "Geo Library (StoneCache)"
-          // - profile: "Geo Library (StoneProfile DB)"
-          // - Mindat: "Mindat API"
-          // Never substitutes stored values or speculative Vision guesses when getGeoData has no value.
+          // 8. Geology Drawer 7 Destinations (12 active destinations from getGeoData ONLY)
           const DRAWER_7_ACTIVE_GEOLOGY_KEYS = [
             "mohs_hardness",
             "specific_gravity",
@@ -3127,11 +3005,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
           }
 
-          // 9. Drawer 8 Product-Owned Google Product Category (custom.google_product_category):
-          // Emits ONLY genuine nonblank Vision output captured in rawVisionSnapshot.google_product_category
-          // before protectedKeys fallback substitution. Never substitutes a default or passive stored value.
-          // Manual variant destinations (mm-google-shopping.age_group, mm-google-shopping.condition,
-          // mm-google-shopping.gender) and held mm-google-shopping.custom_product are never emitted here.
+          // 9. Drawer 8 Product-Owned Google Product Category
           const rawVisGoogleCat = cleanNonBlankVisionStr(
             rawVisionSnapshot.google_product_category
           );
@@ -3143,13 +3017,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             );
           }
         }
-        
-        return Response.json({ 
-          success: true, 
-          intent, 
+
+        return Response.json({
+          success: true,
+          intent,
           pieceId,
           ...(requestId ? { requestId } : {}),
-          tab3Data: finalPayload, 
+          tab3Data: finalPayload,
           ...(isBenchV2OptIn ? { producerProposals } : {}),
           ...(isBenchV2OptIn && producerDiagnostics && Object.keys(producerDiagnostics).length > 0
             ? { producerDiagnostics }
@@ -3178,7 +3052,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       const sharedFields = JSON.parse(body.get("sharedFields") || "{}");
       const pieceDataStr = body.get("pieceData");
       let promptText = "";
-      
+
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
 
       let diagPieceId = "Unknown_GID";
@@ -3211,7 +3085,6 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             sharedFields.stone_family || pieceData.stone_family || ""
           );
 
-          // Fail closed rather than guessing if stone identity is completely missing because only hardware/metal was supplied
           if (stoneIdentityContext.isIdentityUncertain) {
             return Response.json({
               success: false,
@@ -3238,13 +3111,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
           const rawFoundObj = pieceData.found_object ?? pieceData["custom.found_object"] ?? sharedFields.found_object ?? sharedFields["custom.found_object"];
           const isPurchasedProvenance = classifyFoundObjectPolarity(rawFoundObj) === "purchased";
-          
+
           const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
-          
+
           const rawOriginSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
           const originSegment = resolveEvidencedOriginLocation(rawOriginSegment);
-          
+
           const explicitOriginHandle = sharedFields.origin_handle || sharedFields.origin_page_handle || pieceData.origin_handle || pieceData.origin_page_handle || "";
           const targetOriginHandle = resolveOriginHandle(originSegment, pagesList, explicitOriginHandle);
           diagTargetOriginHandle = targetOriginHandle || "None";
@@ -3281,7 +3154,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           if (!canonicalCollectionName && collectionData.name) {
             canonicalCollectionName = collectionData.name;
           }
-          
+
           if (!targetOriginHandle && originSegment !== "Unknown Origin" && originSegment !== "") {
             console.warn(`[ROUTING WARNING] Piece ${diagPieceName}: Could not resolve Origin Handle for location "${originSegment}"`);
           }
@@ -3338,21 +3211,21 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         let cleanJson = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        
+
         let generatedDescription = "";
-        
+
         try {
           const parsed = JSON.parse(cleanJson.slice(cleanJson.indexOf("{"), cleanJson.lastIndexOf("}") + 1));
-          
+
           if (!parsed.generated_description || typeof parsed.generated_description !== "string" || parsed.generated_description.trim() === "") {
             return Response.json({ success: false, intent, pieceId, error: "AI failed to return the expected generated_description string property." });
           }
-          
+
           generatedDescription = parsed.generated_description;
         } catch (e) {
           return Response.json({ success: false, intent, pieceId, error: "AI response failed strict JSON parsing or wrapper validation." });
         }
-        
+
         if (pieceDataStr) {
           const pieceData = JSON.parse(pieceDataStr);
           const rawFoundObj = pieceData.found_object ?? pieceData["custom.found_object"] ?? sharedFields.found_object ?? sharedFields["custom.found_object"];
@@ -3360,15 +3233,15 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
           const validPieceOrigin = pieceData.origin_location && pieceData.origin_location !== "Unknown Origin" && pieceData.origin_location.trim() !== "";
           const isSharedOriginDerived = !sharedFields.origin_location || sharedFields.origin_location === "Unknown Origin" || sharedFields.origin_location.trim() === "";
-          
+
           const rawOriginSegment = (isSharedOriginDerived && validPieceOrigin) ? pieceData.origin_location : (sharedFields.origin_location || pieceData.origin_location || "");
           const originSegment = resolveEvidencedOriginLocation(rawOriginSegment);
-          
+
           let fullCollectionTitle = pieceData.collection_name || sharedFields.collection_name || "";
           if (originSegment === "Yakima River Canyon" || fullCollectionTitle === "The Yakima Canyon Collection") {
             fullCollectionTitle = "Yakima River Canyon";
           }
-          
+
           const explicitOriginHandle = sharedFields.origin_handle || sharedFields.origin_page_handle || pieceData.origin_handle || pieceData.origin_page_handle || "";
           const targetOriginHandle = resolveOriginHandle(originSegment, pagesList, explicitOriginHandle);
           const collectionData = resolveCollectionData(
@@ -3377,42 +3250,42 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             collectionsList,
             fullCollectionTitle
           );
-          
+
           let dwellButtonsHTML = `<br><br>`;
-          
+
           let displayOriginName = fullCollectionTitle || originSegment;
           let displayColName = fullCollectionTitle || originSegment;
-          
+
           if (originSegment === "Yakima River Canyon" || targetOriginHandle === "the-shop-lore-chert-road-detour-yakima-river-jasper") {
             displayOriginName = "Chert Road Detour";
             displayColName = "Yakima River Canyon";
           }
-          
+
           if (targetOriginHandle) {
             dwellButtonsHTML += `<a href="/pages/${targetOriginHandle}">${displayOriginName} Story</a>\n`;
           }
-          
+
           if (collectionData.slug) {
             if (targetOriginHandle) dwellButtonsHTML += `<br>`;
             let colLabel = displayColName;
             if (!/collection/i.test(colLabel)) colLabel += " Collection";
             dwellButtonsHTML += `<a href="/collections/${collectionData.slug}">${colLabel}</a>`;
           }
-          
+
           if (originSegment === "Richardson's Rock Ranch" || targetOriginHandle === "the-richardson-strike") {
             dwellButtonsHTML = `<br><br>`;
             if (pagesList.some(p => p.handle === "the-richardson-strike")) {
               dwellButtonsHTML += `<a href="/pages/the-richardson-strike">Richardson's Rock Ranch Story</a>\n`;
             }
-            
+
             if (collectionsList.some(c => c.handle === "richardsons-rock-ranch")) {
               dwellButtonsHTML += `<br><a href="/collections/richardsons-rock-ranch">Richardson's Rock Ranch Collection</a>`;
             }
-            
+
             if (pagesList.some(p => p.handle === "the-3-000-mile-run")) {
               dwellButtonsHTML += `\n<br><a href="/pages/the-3-000-mile-run">The 3,000-Mile Run Story</a>`;
             }
-            
+
             if (collectionsList.some(c => c.handle === "the-3-000-mile-run-1")) {
               dwellButtonsHTML += `\n<br><a href="/collections/the-3-000-mile-run-1">The 3,000-Mile Run Collection</a>`;
             }

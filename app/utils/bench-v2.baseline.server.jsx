@@ -2,50 +2,10 @@
 // ROCKHOUND STUDIO — BENCH V2 ISOLATED READ-ONLY BASELINE CONNECTION
 // File: app/utils/bench-v2.baseline.server.jsx
 //
-// Verified Existing Sources Confirmed in Context:
-// 1. app/routes/app.meta-injector-api.jsx (145,763 chars — read-only query
-//    shapes and definition/constraint readers organized locally below)
-// 2. app/utils/bench-v2.contract.jsx (Current saved contract with Drawer 8
-//    single-variant PRODUCTVARIANT support and isExactProductVariantGid)
-//
-// Source Dependency Note:
-// - In app/routes/app.meta-injector-api.jsx, the read-only helpers
-//   (fetchProductMetafieldDefinitionsWithConstraints,
-//   evaluateStandardizedCategoryEligibility, normalizeTaxonomyCategoryCode,
-//   doesCategoryMatchConstraintValue) and the single-product read queries inside
-//   action (loadProductData and resolveStandardizedCandidates) are module-private
-//   and not exported separately from the route action (which also contains
-//   writer/mutation internals).
-// - Per architectural boundary rules, we do NOT import app.meta-injector-api.jsx
-//   into this module and do NOT claim global deduplication is completed yet.
-//   Instead, this module organizes those exact verified read-only queries and
-//   definition/constraint readers into an isolated, zero-mutation server module
-//   that produces the exact baselineSnapshot shape consumed by
-//   app/utils/bench-v2.contract.jsx.
-//
-// Strict Guarantees:
-// - Accepts the authenticated admin client and one exact Product GID.
-// - Reads ONLY that single product (never loads whole-store product inventory).
-// - Completes pagination for product metafields, variants, media, and live
-//   PRODUCT metafieldDefinitions + constraint values with cursor/loop/budget guards.
-// - Only AFTER variant pagination is complete and exactly ONE distinct variant
-//   exists with a valid gid://shopify/ProductVariant/<digits> ID:
-//   * Binds primaryVariantId to the loaded product.
-//   * Fetches and paginates that single variant's metafields using a separate
-//     read-only query (never nesting 250 metafields under 250 variants).
-// - Reads live PRODUCTVARIANT metafieldDefinitions + constraint values into a
-//   separate map (liveVariantDefinitions) with bounded pagination and error reporting.
-// - CRITICAL FAILURE ISOLATION: Variant metafield/definition read failures or
-//   zero/multiple variant states are caught and reported in variant-specific
-//   fields (variantMetafieldsReadComplete, variantMetafieldsReadError,
-//   variantDefsReadComplete, variantDefReadErrors, variantConstraintErrorsByDestination)
-//   and NEVER turn an otherwise complete PRODUCT baseline into a failed load or
-//   disable PRODUCT drawers.
-// - Preserves raw stored strings and types verbatim (zero trimming or coercion).
-// - Never seeds baseline values into a repairPlan or proposal map.
-// - Missing/failed/truncated reads report explicit false/incomplete flags and
-//   per-destination constraint errors; never fabricates empty/absent completeness.
-// - Zero GraphQL mutations, zero AI calls, zero database/service writes.
+// Shared server-only read module for single-product baseline snapshots,
+// category constraint eligibility, live PRODUCT / PRODUCTVARIANT metafield
+// definition enumeration, owner metafield pagination, and single-variant
+// metafield reads. Zero GraphQL mutations, zero AI calls, zero DB writes.
 // ==========================================================================
 
 import { isExactProductGid, isExactProductVariantGid } from "./bench-v2.contract.jsx";
@@ -79,7 +39,6 @@ export function doesCategoryMatchConstraintValue(productCategoryId, constraintVa
 /**
  * Evaluates category constraint eligibility for a destination using live
  * PRODUCT metafield definition constraints and the product's taxonomy category.
- * Organized from app/routes/app.meta-injector-api.jsx without modification.
  */
 export function evaluateStandardizedCategoryEligibility({
   destination,
@@ -221,7 +180,7 @@ export function evaluateStandardizedCategoryEligibility({
  * ownerType ("PRODUCT" or "PRODUCTVARIANT") and paginates their constraint values
  * with cursor/loop/budget guards.
  */
-async function readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, ownerType = "PRODUCT") {
+export async function readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, ownerType = "PRODUCT") {
   const normalizedOwnerType =
     ownerType === "PRODUCTVARIANT" ? "PRODUCTVARIANT" : "PRODUCT";
 
@@ -606,35 +565,25 @@ async function readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, ownerTy
   };
 }
 
-/**
- * Reads live PRODUCT metafieldDefinitions and paginates their constraint values
- * with cursor/loop/budget guards.
- * Organized from app/routes/app.meta-injector-api.jsx (fetchProductMetafieldDefinitionsWithConstraints).
- */
 export async function readProductMetafieldDefinitionsWithConstraints(admin) {
   return readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, "PRODUCT");
 }
 
-/**
- * Reads live PRODUCTVARIANT metafieldDefinitions and paginates their constraint values
- * with cursor/loop/budget guards into a separate map.
- */
 export async function readVariantMetafieldDefinitionsWithConstraints(admin) {
   return readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, "PRODUCTVARIANT");
 }
 
 /**
- * Paginates remaining connection edges (product metafields, variants, media, or
- * single-variant metafields) on a single owner GID with strict cursor-loop and
- * page-budget guards.
+ * Paginates remaining connection edges on a single owner GID with strict
+ * cursor-loop and page-budget guards.
  */
-async function paginateProductConnection({
+export async function paginateProductConnection({
   admin,
   productGid,
   connectionName,
   initialEdges,
   initialPageInfo,
-  maxPages,
+  maxPages = MAX_METAFIELD_PAGES,
   buildPageQuery,
   extractConnection
 }) {
@@ -779,14 +728,40 @@ async function paginateProductConnection({
 }
 
 /**
+ * Exact caller-signature adapter for app/routes/app.meta-injector-api.jsx
+ * (`ownerGid` -> `productGid`, `connectionLabel` -> `connectionName`).
+ */
+export async function paginateOwnerMetafieldsConnection({
+  admin,
+  ownerGid,
+  connectionLabel,
+  initialEdges,
+  initialPageInfo,
+  maxPages = MAX_METAFIELD_PAGES,
+  buildPageQuery,
+  extractConnection
+}) {
+  return paginateProductConnection({
+    admin,
+    productGid: ownerGid,
+    connectionName: connectionLabel,
+    initialEdges,
+    initialPageInfo,
+    maxPages,
+    buildPageQuery,
+    extractConnection
+  });
+}
+
+/**
  * Fetches and paginates metafields for a single verified ProductVariant GID
- * bound to the loaded productId.
+ * bound to expectedProductId.
  * - Never nests 250 metafields under 250 variants.
  * - Verifies that the returned ProductVariant node matches variantId and
  *   belongs to expectedProductId.
  * - Preserves raw values, types, and IDs verbatim.
  */
-async function readSingleVariantMetafields(admin, expectedProductId, variantId) {
+export async function readSingleVariantMetafields(admin, expectedProductId, variantId) {
   if (!admin || typeof admin.graphql !== "function") {
     return {
       metafields: null,
@@ -928,18 +903,6 @@ async function readSingleVariantMetafields(admin, expectedProductId, variantId) 
 /**
  * Reads the complete single-product baseline and live PRODUCT + PRODUCTVARIANT
  * metafield definitions required by app/utils/bench-v2.contract.jsx.
- *
- * - Requires an authenticated admin client and one exact Product GID
- *   ("gid://shopify/Product/<digits>").
- * - Never seeds a repairPlan or proposal map.
- * - Preserves raw values and types verbatim without trimming or normalization.
- * - Reports explicit completeness flags (metafieldsReadComplete, defsReadComplete,
- *   variantsReadComplete, mediaReadComplete, productCategoryReadComplete,
- *   variantMetafieldsReadComplete, variantDefsReadComplete) and per-destination
- *   constraint errors (constraintErrorsByDestination, variantConstraintErrorsByDestination).
- * - Failure isolation: variant metafield/definition read failures hold ONLY
- *   variant-owned destinations and never fail the product baseline load or
- *   disable product-owned drawers.
  */
 export async function loadSingleProductBaselineSnapshot(admin, productId) {
   if (!admin || typeof admin.graphql !== "function") {
@@ -1056,7 +1019,7 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
     };
   }
 
-  // 1. Paginate product metafields (with id, namespace, key, value, type)
+  // 1. Paginate product metafields
   const mfPaginated = await paginateProductConnection({
     admin,
     productGid: productId,
@@ -1194,7 +1157,6 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
       : null;
   const productCategoryReadComplete = hasProductCategoryField;
 
-  // Verify native field presence without fabricating values
   const unverifiedNativeFields = [];
   const hasNativeTitle = typeof product.title === "string";
   const hasNativeDescriptionHtml = typeof product.descriptionHtml === "string";
@@ -1216,8 +1178,6 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
   const nativeIsComplete =
     unverifiedNativeFields.length === 0 && nativeLoadErrors.length === 0;
 
-  // Establish single-variant identity ONLY when variant pagination is complete
-  // and exactly 1 distinct variant exists with a valid ProductVariant GID.
   const variantCount = variantsPaginated.isComplete ? uniqueVariants.length : null;
   const candidateSingleVariantId =
     variantsPaginated.isComplete && uniqueVariants.length === 1
@@ -1288,8 +1248,6 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
   // 4. Read live PRODUCT metafield definitions + paginated constraint values
   const defReadResult = await readProductMetafieldDefinitionsWithConstraints(admin);
 
-  // Merge any destination-level category/constraint ineligibility or incomplete
-  // constraint errors for definitions that declare constraints.
   const constraintErrorsByDestination = {
     ...(defReadResult.constraintErrorsByDestination || {})
   };
@@ -1382,8 +1340,6 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
     variantConstraintErrorsByDestination = {};
   }
 
-  // Product-level errors list remains strictly scoped to product baseline & PRODUCT definitions
-  // so a variant-only read failure never invalidates product drawers.
   const allErrors = [
     mfPaginated.error,
     ...nativeLoadErrors,

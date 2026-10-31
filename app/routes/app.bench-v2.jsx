@@ -1,46 +1,16 @@
 // ==========================================================================
-// ROCKHOUND STUDIO — REPLACEMENT BENCH V2 (BATCH 1 + MANUAL MEASUREMENTS + SETTING & HARDWARE + GEOLOGY + CHANNEL ATTRIBUTES + SIDEKICK SNAPSHOT SYNC)
+// ROCKHOUND STUDIO — REPLACEMENT BENCH V2
 // File: app/routes/app.bench-v2.jsx
 //
-// Verified Current Sources Confirmed in Context:
-// 1. app/utils/bench-v2.contract.jsx (Current saved contract with Drawer 8 connected
-//    custom.google_product_category on PRODUCT + replacement-bench-local single-variant
-//    PRODUCTVARIANT destinations mm-google-shopping.age_group, mm-google-shopping.condition,
-//    mm-google-shopping.gender, plus isExactProductVariantGid and BENCH_V2_CONNECTED_VARIANT_DESTINATIONS)
-// 2. app/utils/bench-v2.baseline.server.jsx (Current saved baseline loader with
-//    primaryVariantId, variantCount, variantTargetStatus, currentVariantMetafields,
-//    currentVariantMetafieldTypes, currentVariantMetafieldIds, variantMetafieldsReadComplete,
-//    variantMetafieldsReadError, liveVariantDefinitions, variantDefsReadComplete,
-//    variantDefReadErrors, and variantConstraintErrorsByDestination)
-// 3. app/routes/app.meta-injector-api.jsx (Current saved writer API with benchV2OptIn="true"
-//    and caller variantTargetId verification for the 3 allowlisted PRODUCTVARIANT destinations)
-// 4. app/routes/app.meta-injector-autofill.jsx (698 chars, SHA256: FC207DA09F4DD0F6942CC9C4B4B83B6694B9749BB86748355227ADDA494CE5C5 — action delegates to executeAutofill)
-// 5. app/utils/meta-injector.autofill.server.jsx (Current saved producer with Section 9
-//    custom.google_product_category proposal emission under benchV2OptIn="true")
-// 6. app/routes/app.bench-v2.jsx (Saved baseline SHA256: 7306C45DBA6F2426723DE4A45BD31C6AEA00741543CF14005443E931D82D1960)
-// 7. app/utils/meta-injector.constants.jsx (Unchanged shared constants, SHA256: 4E399E09C5926B13012503252963CC4B9627E8A4F8FDB59545C406D1B9B8AF9B)
-//
-// Authorized Channel & Logical Sub-Harness Route Connection Update:
-// - Connects route handling for Drawer 8 (custom.google_product_category on PRODUCT +
-//   manual/preset single-variant PRODUCTVARIANT destinations mm-google-shopping.age_group,
-//   mm-google-shopping.condition, mm-google-shopping.gender), while keeping
-//   mm-google-shopping.custom_product held (UNVERIFIED_CONTRACT_HOLD) and legacy
-//   google.* variant slots + custom.target_gender read-only.
-// - Adds the 3 manual/preset variant destinations to MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS
-//   so AI Scan never stages proposals into them.
-// - Binds exact single-variant identity (variantTargetId) on Save when any approved
-//   entry targets PRODUCTVARIANT, verifying approval-bound product/owner/variant/destination/baseline.
-// - Reconciles verified PRODUCT and PRODUCTVARIANT destinations separately on read-back
-//   without cross-owner map corruption or optimistic completion flags.
-// - Exposes observation variantId and variantTargetStatus in per-field technical Details
-//   and existing Sidekick live snapshot metadata.
-// - Updates subtitles and header/empty-save notes with honest logical sub-harness status
-//   (distinguishing connected detailed custom.* paths from pending standardized shopify.*
-//   reference companions such as shopify.geological-era, shopify.crystal-system,
-//   shopify.mineral-class, shopify.rock-composition, shopify.rock-formation,
-//   shopify.material, and shopify.color-pattern, and noting that within Drawer 7
-//   12 detailed fields had scan-delivery evidence on Canyon Red while only AGE
-//   custom.geological_age has independently verified actual Save/readback).
+// Connects Drawers 1 to 8 (Identity, Origin & Collection, Treatment,
+// Appearance & Character, Manual Measurements [dimensions_mm, weight_grams],
+// Conditional Setting & Hardware, Geology [12 active custom.* destinations +
+// read-only compatibility custom.geological_era], and Channel Attributes
+// [PRODUCT custom.google_product_category + single-variant PRODUCTVARIANT
+// mm-google-shopping.age_group, condition, gender]), plus read-only Drawers 9,
+// 10 (shopify.* reference attributes including authoritative ERA dropdown
+// shopify.geological-era), and 11 (Parked & Protected inventory), with
+// Sidekick live bench snapshot sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -54,6 +24,10 @@ import {
   BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
+  ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS,
+  isManualOnlyNoAiDestination,
+  checkExistingWriterStringFidelity,
   isExactProductGid,
   isExactProductVariantGid,
   getFieldContractByDestination,
@@ -71,10 +45,10 @@ import {
   FIELD_CATALOG
 } from "../utils/meta-injector.constants.jsx";
 
+export { checkExistingWriterStringFidelity };
+
 export const CANYON_RED_PRODUCT_GID = "gid://shopify/Product/9226849616123";
 
-// Exact 11 FILTER_OPTIONS from app/utils/meta-injector.matrix-domain.jsx (lines 483-495)
-// with readable labels and "All" as default.
 export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
   { label: "All Fields (Default)", value: "All" },
   { label: "Needs Review", value: "Needs review" },
@@ -89,100 +63,6 @@ export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
   { label: "Source: Manual", value: "Manual" }
 ]);
 
-// Exact 54 bare provenance keys allowed by parseProvenanceFieldSet in
-// app/utils/meta-injector.autofill.server.jsx (42 original + 12 active Drawer 7 geology keys;
-// legacy geological_era remains excluded).
-// Any key outside this set causes parseProvenanceFieldSet to mark provenance invalid!
-const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
-  "color_pattern",
-  "primary_color",
-  "secondary_colors",
-  "color",
-  "dimensions_mm",
-  "weight_grams",
-  "shipping_weight_oz",
-  "price",
-  "honest_flaws_and_character",
-  "character_marks",
-  "surface_finish",
-  "cut_type",
-  "cut_and_shape",
-  "stone_shape",
-  "jewelry_finding_type",
-  "bail_included",
-  "chain_material",
-  "wire_material",
-  "secondary_medium",
-  "primary_medium",
-  "primary_use",
-  "product_format",
-  "jewelry_type",
-  "necklace_design",
-  "chain_link_type",
-  "setting_ready",
-  "craftsmanship",
-  "poetic_hook",
-  "seo_title",
-  "alt_text",
-  "google_product_category",
-  "treated",
-  "treatment_status",
-  "stone_family",
-  "material",
-  "origin_location",
-  "origin_handle",
-  "origin_page_handle",
-  "collection_name",
-  "collection_location",
-  "collection_date",
-  "found_object",
-  "is_one_of_a_kind",
-  "is_ooak",
-  "mohs_hardness",
-  "specific_gravity",
-  "crystal_system",
-  "luster",
-  "cleavage",
-  "fracture_pattern",
-  "diaphaneity",
-  "tenacity",
-  "mineral_class",
-  "rock_composition",
-  "rock_formation",
-  "geological_age"
-]);
-
-// Explicit guard set for all manual-measurement and manual-only destinations
-// (including held measurement keepers and the 3 manual/preset single-variant
-// channel destinations) so AI Scan never stages proposals into them.
-const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
-  new Set([
-    ...(BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS || []),
-    ...(BENCH_V2_CONNECTED_VARIANT_DESTINATIONS || []),
-    "custom.dimensions_mm",
-    "custom.weight_grams",
-    "custom.whole_product_weight_grams",
-    "custom.chain_cord_length_in",
-    "custom.accessory_dimensions_mm",
-    "custom.fitting_opening_mm",
-    "custom.collection_date",
-    "mm-google-shopping.age_group",
-    "mm-google-shopping.condition",
-    "mm-google-shopping.gender"
-  ])
-);
-
-function isManualOnlyNoAiDestination(destinationKey, contract = null) {
-  if (!destinationKey || typeof destinationKey !== "string") return false;
-  if (MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS.has(destinationKey)) return true;
-  if (contract && (contract.isManualOnlyNoAi === true || contract.drawerId === "manual_measurements")) {
-    return true;
-  }
-  return false;
-}
-
-// Lookup map for actual FIELD_CATALOG metadata (applicability, registryRole, role)
-// so snapshot publication uses actual catalog/registry facts without inventing classifications.
 const CATALOG_META_BY_OWNER_IDENTITY = Object.freeze(
   (Array.isArray(FIELD_CATALOG) ? FIELD_CATALOG : []).reduce((acc, entry) => {
     if (entry && entry.registryOwner && entry.registryIdentity) {
@@ -192,8 +72,6 @@ const CATALOG_META_BY_OWNER_IDENTITY = Object.freeze(
   }, {})
 );
 
-// Telemetry endpoint & cache limits from app/routes/api.meta-injector-telemetry.jsx
-// and app/utils/meta-injector.sidekick-report-cache.server.js
 const TELEMETRY_ENDPOINT_PATH = "/api/meta-injector-telemetry";
 const TELEMETRY_LIVE_BENCH_MODE = "live_bench_state";
 const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024;
@@ -314,8 +192,6 @@ function resolveFieldRegistryAndApplicabilityMeta(contract) {
     }
   }
 
-  // Only mark true parked/excluded entries as isParkedExcluded; Protected third-party
-  // app data (PROTECTED_DATA / PROTECTED_READ_ONLY) stays distinct as protected read-only.
   const isProtectedAppData =
     registryRole === "PROTECTED_DATA" ||
     contract.batchStage === "PROTECTED_READ_ONLY" ||
@@ -327,7 +203,6 @@ function resolveFieldRegistryAndApplicabilityMeta(contract) {
       contract.batchStage === "PARKED_EXCLUDED_READ_ONLY" ||
       contract.writeCapability === "PARKED_EXCLUDED_NO_WRITE");
 
-  // Preserve actual catalog applicability scope when known; never label read-only rows as "inapplicable".
   const applicability =
     typeof catEntry?.applicability === "string" && catEntry.applicability.trim() !== ""
       ? catEntry.applicability.trim()
@@ -347,9 +222,6 @@ function resolveFieldRegistryAndApplicabilityMeta(contract) {
   };
 }
 
-// Lightweight single-page product list query patterned from Shopify Admin GraphQL
-// products(first: 50, after: $cursor, query: $searchQuery), fetching ONLY id, title,
-// and the single custom.piece_name metafield (zero whole-inventory manifest loading).
 const GET_LIGHTWEIGHT_PRODUCT_PAGE_QUERY = `
   query GetLightweightProductsPage($cursor: String, $searchQuery: String) {
     products(first: 50, after: $cursor, query: $searchQuery) {
@@ -447,65 +319,6 @@ async function loadLightweightProductPage(admin, cursor = null, rawSearch = "") 
   }
 }
 
-// Explicit Writer-Connection Holds:
-// The five previously held Batch 1 custom destinations (custom.is_ooak,
-// custom.stone_family, custom.cut_and_shape, custom.stone_shape, custom.color)
-// plus custom.dimensions_mm, custom.weight_grams, the 8 Drawer 6 Setting & Hardware
-// destinations, the 12 active Drawer 7 Geology destinations, and the 4 connected
-// Drawer 8 Channel destinations (custom.google_product_category on PRODUCT +
-// single-variant PRODUCTVARIANT mm-google-shopping.age_group, mm-google-shopping.condition,
-// mm-google-shopping.gender) are supported by saved app/routes/app.meta-injector-api.jsx
-// when executeRepairPlan is submitted with benchV2OptIn="true" (and exact variantTargetId
-// for variant destinations).
-// Approval and save readiness still require all live definition, stored type,
-// completeness, baseline, string-fidelity, and exact-value approval checks.
-export const EXISTING_WRITER_CONNECTION_HOLDS = Object.freeze({});
-
-export function isDestinationHeldByExistingWriter(destinationKey) {
-  return Boolean(
-    typeof destinationKey === "string" &&
-      Object.prototype.hasOwnProperty.call(EXISTING_WRITER_CONNECTION_HOLDS, destinationKey)
-  );
-}
-
-export function getExistingWriterHoldReason(destinationKey) {
-  if (!isDestinationHeldByExistingWriter(destinationKey)) return null;
-  return EXISTING_WRITER_CONNECTION_HOLDS[destinationKey];
-}
-
-// Existing executeRepairPlan in app/routes/app.meta-injector-api.jsx
-// applies String(val).trim() when comparing/writing values and strips leading "⚠️"
-// via normalizeMetafieldValue. Since exact-value approval in Bench V2
-// forbids silent value rewriting between approvedValue and what the writer stores,
-// preflight blocks any proposal that would be altered by the existing writer's
-// trim or warning-prefix strip.
-export function checkExistingWriterStringFidelity(exactProposedValue) {
-  if (typeof exactProposedValue !== "string") {
-    return {
-      faithful: false,
-      reason: "Proposed value must be a string."
-    };
-  }
-  if (exactProposedValue.trim() !== exactProposedValue) {
-    return {
-      faithful: false,
-      reason:
-        "Existing writer (executeRepairPlan) trims leading/trailing whitespace on save, which would alter your exact untrimmed value. Remove leading/trailing whitespace before approving for save."
-    };
-  }
-  if (/^⚠️\s*/.test(exactProposedValue)) {
-    return {
-      faithful: false,
-      reason:
-        "Existing writer (normalizeMetafieldValue) strips leading '⚠️' prefixes, which would alter your exact approved value. Remove the prefix before approving for save."
-    };
-  }
-  return {
-    faithful: true,
-    reason: null
-  };
-}
-
 export const loader = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -514,9 +327,6 @@ export const loader = async ({ request }) => {
   const requestedCursor = url.searchParams.get("cursor");
   const requestedSearch = url.searchParams.get("q") || "";
 
-  // Dedicated lightweight picker-only read path:
-  // When searching or paging the product picker via pickerFetcher, load ONLY the
-  // lightweight 50-item page without re-fetching the selected product's full baseline.
   if (isPickerOnly) {
     const selectorPageResult = await loadLightweightProductPage(
       admin,
@@ -661,7 +471,6 @@ function getShortPlainNotice(row) {
     baselineObservation: obs,
     hasProposalKey,
     validation,
-    isWriterHeld,
     fidelityCheck
   } = row;
 
@@ -706,13 +515,6 @@ function getShortPlainNotice(row) {
     return {
       tone: "muted",
       text: "Read-only in this batch."
-    };
-  }
-
-  if (isWriterHeld) {
-    return {
-      tone: "warning",
-      text: "Save on hold: current writer skips this field. Drafts stay in bench."
     };
   }
 
@@ -780,9 +582,6 @@ function getShortPlainNotice(row) {
   return null;
 }
 
-// Evaluates whether a Bench V2 evaluated row matches the selected Tab 3 filter
-// option from app/utils/meta-injector.matrix-domain.jsx + app/routes/app.meta-injector.matrix.jsx,
-// adapted honestly to Bench V2's actual row state and producerProposals source labels.
 export function matchesBenchV2Filter(row, activeFilter) {
   if (!row || typeof row !== "object") return false;
   if (!activeFilter || activeFilter === "All") return true;
@@ -799,7 +598,6 @@ export function matchesBenchV2Filter(row, activeFilter) {
     validation,
     isApproved,
     isKeepOriginal,
-    isWriterHeld,
     fidelityCheck,
     hasSaveErrorOrConflict
   } = row;
@@ -824,7 +622,6 @@ export function matchesBenchV2Filter(row, activeFilter) {
     hasProposalKey &&
     (!validation?.valid ||
       !fidelityCheck.faithful ||
-      isWriterHeld ||
       obs.metafieldsCompleteState !== "complete" ||
       obs.defsCompleteState !== "complete" ||
       Boolean(obs.destinationDefError));
@@ -866,7 +663,6 @@ export function matchesBenchV2Filter(row, activeFilter) {
     return false;
   }
 
-  // Source-based filter options ("Shopify", "Gemini", "Vision", "Geo Library", "Derived", "Manual")
   const activeSourceStr =
     hasProposalKey && typeof proposalSource === "string" && proposalSource !== "None"
       ? proposalSource
@@ -950,7 +746,7 @@ function getDrawerConnectionSubtitle(drawer) {
         r.baselineObservation.metafieldsCompleteState === "complete" &&
         r.baselineObservation.defsCompleteState === "complete" &&
         Boolean(r.baselineObservation.liveDefType || r.baselineObservation.storedType) &&
-        !r. baselineObservation.destinationDefError
+        !r.baselineObservation.destinationDefError
     ).length;
     return `4 channel destinations wired (${readyCount}/${writableRows.length} ready on current product: PRODUCT custom.google_product_category + manual/preset single-variant PRODUCTVARIANT mm-google-shopping.age_group, condition, gender; mm-google-shopping.custom_product held; legacy google.* variant slots & custom.target_gender read-only)`;
   }
@@ -963,6 +759,93 @@ function getDrawerConnectionSubtitle(drawer) {
   return "Read-only in Batch 1";
 }
 
+function mergeKnownProductsMap(prevMap, pageItems, snap) {
+  const next = { ...prevMap };
+  if (Array.isArray(pageItems)) {
+    for (const item of pageItems) {
+      if (item && isExactProductGid(item.id)) {
+        const existing = next[item.id];
+        next[item.id] = {
+          id: item.id,
+          title: typeof item.title === "string" ? item.title : existing?.title || item.id,
+          pieceName:
+            typeof item.pieceName === "string" && item.pieceName.trim() !== ""
+              ? item.pieceName.trim()
+              : existing?.pieceName || null
+        };
+      }
+    }
+  }
+  if (snap && isExactProductGid(snap.productId)) {
+    const existing = next[snap.productId];
+    const snapPieceName =
+      typeof snap.currentMetafields?.["custom.piece_name"] === "string" &&
+      snap.currentMetafields["custom.piece_name"].trim() !== ""
+        ? snap.currentMetafields["custom.piece_name"].trim()
+        : existing?.pieceName || null;
+    next[snap.productId] = {
+      id: snap.productId,
+      title: snap.productTitle || existing?.title || snap.productId,
+      pieceName: snapPieceName
+    };
+  }
+  return next;
+}
+
+const DISMISS_BTN_STYLE = Object.freeze({
+  backgroundColor: "#ffffff",
+  color: "#0f172a",
+  border: "1px solid #475569",
+  borderRadius: "6px",
+  padding: "4px 12px",
+  cursor: "pointer",
+  fontSize: "14px",
+  fontWeight: 600
+});
+
+const DRAWER_BULK_BTN_STYLE = Object.freeze({
+  padding: "8px 14px",
+  fontSize: "15px",
+  fontWeight: 600,
+  backgroundColor: "#f8fafc",
+  color: "#0f172a",
+  border: "1px solid #64748b",
+  borderRadius: "6px",
+  cursor: "pointer"
+});
+
+const DETAILS_PANEL_STYLE = Object.freeze({
+  marginTop: "8px",
+  padding: "10px 14px",
+  backgroundColor: "#f8fafc",
+  border: "1px solid #cbd5e1",
+  borderRadius: "6px"
+});
+
+const THUMBNAIL_WRAPPER_STYLE = Object.freeze({
+  width: "120px",
+  height: "120px",
+  minWidth: "120px",
+  minHeight: "120px",
+  flex: "0 0 120px",
+  flexShrink: 0,
+  borderRadius: "8px",
+  border: "2px solid #94a3b8",
+  backgroundColor: "#f8fafc",
+  overflow: "hidden",
+  boxSizing: "border-box"
+});
+
+const THUMBNAIL_IMG_STYLE = Object.freeze({
+  width: "120px",
+  height: "120px",
+  minWidth: "120px",
+  minHeight: "120px",
+  objectFit: "cover",
+  objectPosition: "center",
+  display: "block"
+});
+
 export default function BenchV2Route() {
   const loaderData = useLoaderData();
   const revalidator = useRevalidator();
@@ -971,9 +854,6 @@ export default function BenchV2Route() {
   const pickerFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Requested product from URL searchParams vs. loaderData.targetProductId:
-  // Detects in-flight product navigation so we never publish the previous product's
-  // baseline/rows under a newly selected productId while the loader is still fetching.
   const rawUrlProductId = searchParams.get("productId");
   const requestedUrlProductId =
     rawUrlProductId && isExactProductGid(rawUrlProductId.trim())
@@ -997,49 +877,22 @@ export default function BenchV2Route() {
     return {};
   });
 
-  // 2. Known Product Metadata Cache (Keyed by exact Product GID so selected product
-  // remains clearly identified with pieceName + full title even when absent from search results)
-  const [knownProductsById, setKnownProductsById] = useState(() => {
-    const map = {
-      [CANYON_RED_PRODUCT_GID]: {
-        id: CANYON_RED_PRODUCT_GID,
-        title: "Canyon Red",
-        pieceName: null
-      }
-    };
-    const pageItems = loaderData?.selectorPage?.items;
-    if (Array.isArray(pageItems)) {
-      for (const item of pageItems) {
-        if (item && isExactProductGid(item.id)) {
-          map[item.id] = {
-            id: item.id,
-            title: typeof item.title === "string" ? item.title : item.id,
-            pieceName:
-              typeof item.pieceName === "string" && item.pieceName.trim() !== ""
-                ? item.pieceName.trim()
-                : null
-          };
+  // 2. Known Product Metadata Cache
+  const [knownProductsById, setKnownProductsById] = useState(() =>
+    mergeKnownProductsMap(
+      {
+        [CANYON_RED_PRODUCT_GID]: {
+          id: CANYON_RED_PRODUCT_GID,
+          title: "Canyon Red",
+          pieceName: null
         }
-      }
-    }
-    const snap = loaderData?.baselineSnapshot;
-    if (snap && isExactProductGid(snap.productId)) {
-      const snapPieceName =
-        typeof snap.currentMetafields?.["custom.piece_name"] === "string" &&
-        snap.currentMetafields["custom.piece_name"].trim() !== ""
-          ? snap.currentMetafields["custom.piece_name"].trim()
-          : map[snap.productId]?.pieceName || null;
-      map[snap.productId] = {
-        id: snap.productId,
-        title: snap.productTitle || map[snap.productId]?.title || snap.productId,
-        pieceName: snapPieceName
-      };
-    }
-    return map;
-  });
+      },
+      loaderData?.selectorPage?.items,
+      loaderData?.baselineSnapshot
+    )
+  );
 
   // 3. Dedicated Product Search & Paginated Picker State
-  // Searching/paging uses pickerFetcher so it NEVER switches the selected product or reloads its baseline.
   const [pickerPageState, setPickerPageState] = useState(() => {
     return (
       loaderData?.selectorPage || {
@@ -1063,17 +916,15 @@ export default function BenchV2Route() {
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
 
   // 4. Staged Proposals State (Never pre-seeded from baseline, preserved per productId)
-  // Each entry: { value, source, origin: "Manual" | "AI", updatedAt }
   const [proposedByProduct, setProposedByProduct] = useState({});
 
-  // 5. Held AI Alternatives State (Preserved per productId when an AI suggestion
-  // conflicts with an existing human draft, approval, or Keep Original decision)
+  // 5. Held AI Alternatives State
   const [aiAlternativesByProduct, setAiAlternativesByProduct] = useState({});
 
-  // 6. Exact-Value Approval Records State (Preserved per productId)
+  // 6. Exact-Value Approval Records State
   const [approvalsByProduct, setApprovalsByProduct] = useState({});
 
-  // 7. Keep Original Decision Records State (Preserved per productId)
+  // 7. Keep Original Decision Records State
   const [keepOriginalByProduct, setKeepOriginalByProduct] = useState({});
 
   // 8. Save Request Tracking & Honest Outcome Reporting
@@ -1098,12 +949,12 @@ export default function BenchV2Route() {
   );
   const [activeFilter, setActiveFilter] = useState("All");
 
-  // 11. Focus Retention State for Filtered Views (so a row being edited does not vanish mid-edit)
+  // 11. Focus Retention State for Filtered Views
   const [retainedFieldEditorsByProduct, setRetainedFieldEditorsByProduct] = useState({});
   const blurClearTimersRef = useRef(new Map());
   const isMountedRef = useRef(true);
 
-  // 12. Read-Only Sidekick Live Snapshot Publication State (Strictly excluded from content fingerprint)
+  // 12. Read-Only Sidekick Live Snapshot Publication State
   const benchSessionIdRef = useRef(null);
   if (!benchSessionIdRef.current) {
     benchSessionIdRef.current = generateBenchSessionId();
@@ -1210,6 +1061,16 @@ export default function BenchV2Route() {
     []
   );
 
+  const clearDecisionForDestination = useCallback((setter, productId, destinationKey) => {
+    setter((prev) => {
+      const prodMap = prev[productId];
+      if (!prodMap || !prodMap[destinationKey]) return prev;
+      const nextMap = { ...prodMap };
+      delete nextMap[destinationKey];
+      return { ...prev, [productId]: nextMap };
+    });
+  }, []);
+
   const handleToggleDrawer = (drawerId) => {
     setOpenDrawersById((prev) => ({
       ...prev,
@@ -1234,7 +1095,6 @@ export default function BenchV2Route() {
     activeAiScanRequestRef.current = activeAiScanRequest;
   }, [activeAiScanRequest]);
 
-  // Keep latest state refs for safe asynchronous AI Scan reconciliation
   const baselineByProductRef = useRef(baselineByProduct);
   useEffect(() => {
     baselineByProductRef.current = baselineByProduct;
@@ -1255,8 +1115,6 @@ export default function BenchV2Route() {
     keepOriginalByProductRef.current = keepOriginalByProduct;
   }, [keepOriginalByProduct]);
 
-  // Synchronize fresh loader baseline snapshots and initial selector page items
-  // without erasing pending manual drafts, AI alternatives, or approvals for any product.
   useEffect(() => {
     const snap = loaderData?.baselineSnapshot;
     if (snap && isExactProductGid(snap.productId)) {
@@ -1268,7 +1126,6 @@ export default function BenchV2Route() {
 
     if (loaderData?.selectorPage && !loaderData?.pickerOnly) {
       setPickerPageState((prev) => {
-        // Only initialize from loaderData if picker hasn't already navigated to a custom search/page
         if (
           prev.appliedSearch === (loaderData.selectorPage.appliedSearch || "") &&
           prev.requestedCursor === (loaderData.selectorPage.requestedCursor || null)
@@ -1279,42 +1136,11 @@ export default function BenchV2Route() {
       });
     }
 
-    setKnownProductsById((prev) => {
-      const next = { ...prev };
-      const pageItems = loaderData?.selectorPage?.items;
-      if (Array.isArray(pageItems)) {
-        for (const item of pageItems) {
-          if (item && isExactProductGid(item.id)) {
-            const existing = next[item.id];
-            next[item.id] = {
-              id: item.id,
-              title: typeof item.title === "string" ? item.title : existing?.title || item.id,
-              pieceName:
-                typeof item.pieceName === "string" && item.pieceName.trim() !== ""
-                  ? item.pieceName.trim()
-                  : existing?.pieceName || null
-            };
-          }
-        }
-      }
-      if (snap && isExactProductGid(snap.productId)) {
-        const existing = next[snap.productId];
-        const snapPieceName =
-          typeof snap.currentMetafields?.["custom.piece_name"] === "string" &&
-          snap.currentMetafields["custom.piece_name"].trim() !== ""
-            ? snap.currentMetafields["custom.piece_name"].trim()
-            : existing?.pieceName || null;
-        next[snap.productId] = {
-          id: snap.productId,
-          title: snap.productTitle || existing?.title || snap.productId,
-          pieceName: snapPieceName
-        };
-      }
-      return next;
-    });
+    setKnownProductsById((prev) =>
+      mergeKnownProductsMap(prev, loaderData?.selectorPage?.items, snap)
+    );
   }, [loaderData?.baselineSnapshot, loaderData?.selectorPage, loaderData?.loadedAt, loaderData?.pickerOnly]);
 
-  // Synchronize pickerFetcher results when searching or paging product inventory
   useEffect(() => {
     if (pickerFetcher.state !== "idle" || !pickerFetcher.data) return;
     const fetchedPage = pickerFetcher.data.selectorPage;
@@ -1322,23 +1148,9 @@ export default function BenchV2Route() {
 
     setPickerPageState(fetchedPage);
     if (Array.isArray(fetchedPage.items) && fetchedPage.items.length > 0) {
-      setKnownProductsById((prev) => {
-        const next = { ...prev };
-        for (const item of fetchedPage.items) {
-          if (item && isExactProductGid(item.id)) {
-            const existing = next[item.id];
-            next[item.id] = {
-              id: item.id,
-              title: typeof item.title === "string" ? item.title : existing?.title || item.id,
-              pieceName:
-                typeof item.pieceName === "string" && item.pieceName.trim() !== ""
-                  ? item.pieceName.trim()
-                  : existing?.pieceName || null
-            };
-          }
-        }
-        return next;
-      });
+      setKnownProductsById((prev) =>
+        mergeKnownProductsMap(prev, fetchedPage.items, null)
+      );
     }
   }, [pickerFetcher.state, pickerFetcher.data]);
 
@@ -1367,7 +1179,6 @@ export default function BenchV2Route() {
   const isPickerLoading = pickerFetcher.state !== "idle";
   const isAnyOperationBusy = isWriterBusy || isAiScanBusy || isBaselineReloading;
 
-  // Selected product display metadata (pieceName when available, plus full title)
   const activeProductKnownEntry = knownProductsById[activeProductId] || null;
   const activeProductPieceName =
     (typeof currentBaseline?.currentMetafields?.["custom.piece_name"] === "string" &&
@@ -1387,8 +1198,6 @@ export default function BenchV2Route() {
       ? `${activeProductPieceName} — ${activeProductTitle}`
       : activeProductTitle;
 
-  // Extract selected product's loaded MediaImage items strictly from currentBaseline
-  // (where currentBaseline is already verified to match activeProductId).
   const activeProductMediaItems = React.useMemo(() => {
     if (!currentBaseline || currentBaseline.productId !== activeProductId) {
       return [];
@@ -1410,12 +1219,6 @@ export default function BenchV2Route() {
     return list;
   }, [currentBaseline, activeProductId]);
 
-  // ==========================================================================
-  // LIGHTWEIGHT PRODUCT SEARCH & PAGINATION HANDLERS (via pickerFetcher)
-  // - Never switches activeProductId or reloads full baseline.
-  // - Resets cursor history when search changes.
-  // - Retains committed search query when paging.
-  // ==========================================================================
   const submitPickerQuery = (targetSearch, targetCursor) => {
     const params = new URLSearchParams();
     params.set("pickerOnly", "1");
@@ -1468,11 +1271,6 @@ export default function BenchV2Route() {
     submitPickerQuery(committedSearchQuery, prevCursor);
   };
 
-  // Product Selection Handler:
-  // - Blocks switching during an active Save or active AI Scan.
-  // - Selects strictly by exact Product GID.
-  // - Preserves all drafts, AI alternatives, approvals, and Keep Original records across products.
-  // - Never triggers Save, approval, proposal generation, or AI calls.
   const handleSelectProductGid = (nextProductGid) => {
     if (isWriterBusy || isAiScanBusy) {
       setClientPrevalidationBanner({
@@ -1515,10 +1313,6 @@ export default function BenchV2Route() {
     setSearchParams(nextParams);
   };
 
-  // ==========================================================================
-  // EXPLICIT AI SCAN HANDLER (Calls existing /app/meta-injector-autofill
-  // with intent="tab3FullRescan" and benchV2OptIn="true")
-  // ==========================================================================
   const handleExplicitAiScanProduct = () => {
     setClientPrevalidationBanner(null);
 
@@ -1577,8 +1371,6 @@ export default function BenchV2Route() {
       return;
     }
 
-    // Build operator_locked_fields and passive_stored_fields using ONLY the 54
-    // bare keys accepted by parseProvenanceFieldSet in meta-injector.autofill.server.jsx.
     const operatorLockedList = [];
     const passiveStoredList = [];
     const contextKeyValues = {};
@@ -1659,7 +1451,6 @@ export default function BenchV2Route() {
       }
     }
 
-    // Build observed_destination_types and explicit OOAK observed type parameters
     const observedDestinationTypes = {};
     for (const destKey of BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS) {
       const obs = buildBaselineObservation(currentBaseline, destKey);
@@ -1730,20 +1521,6 @@ export default function BenchV2Route() {
     });
   };
 
-  // ==========================================================================
-  // AI SCAN COMPLETION EFFECT:
-  // - Validates exact requestId and pieceId before accepting any result.
-  // - Consumes ONLY rawResponse.producerProposals (never tab3Data fallbacks).
-  // - Explicitly ignores/blocks any proposal for manual-measurement or manual-only
-  //   destinations (including held measurement keepers and manual/preset single-variant
-  //   channel destinations) and reports a clear reason.
-  // - Carries actual producerProposals[destKey].source metadata into both
-  //   breakdown lines and per-destination scan metadata (using "Source not reported"
-  //   when absent, never inferring provenance from baseline equality or field name).
-  // - Preserves manual drafts, approvals, Keep Original, and other products' state.
-  // - Conflicting AI proposals are stored in aiAlternativesByProduct[productId]
-  //   for explicit operator choice rather than overwriting human work.
-  // ==========================================================================
   useEffect(() => {
     if (aiScanFetcher.state !== "idle") return;
     const pendingScan = activeAiScanRequestRef.current;
@@ -1757,7 +1534,7 @@ export default function BenchV2Route() {
     const scannedProductId = pendingScan.productId;
     const rawResponse = aiScanFetcher.data;
 
-    if (!rawResponse || typeof rawResponse !== "object") {
+    const recordFailedScan = (summary, diagnostics = {}) => {
       setLastAiScanReportByProduct((prev) => ({
         ...prev,
         [scannedProductId]: {
@@ -1765,19 +1542,23 @@ export default function BenchV2Route() {
           productId: scannedProductId,
           completedAt: new Date().toISOString(),
           ok: false,
-          summary: "AI Scan failed: no structured response returned by /app/meta-injector-autofill.",
+          summary,
           receivedCount: 0,
           stagedCount: 0,
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
           ignoredManualOnlyCount: 0,
-          diagnostics: {},
+          diagnostics,
           details: [],
           proposalsByDestination: {}
         }
       }));
       setActiveAiScanRequest(null);
+    };
+
+    if (!rawResponse || typeof rawResponse !== "object") {
+      recordFailedScan("AI Scan failed: no structured response returned by /app/meta-injector-autofill.");
       return;
     }
 
@@ -1785,55 +1566,21 @@ export default function BenchV2Route() {
     const returnedPieceId = rawResponse.pieceId || rawResponse.productId || null;
 
     if (returnedRequestId !== pendingScan.requestId || returnedPieceId !== scannedProductId) {
-      setLastAiScanReportByProduct((prev) => ({
-        ...prev,
-        [scannedProductId]: {
-          requestId: pendingScan.requestId,
-          productId: scannedProductId,
-          completedAt: new Date().toISOString(),
-          ok: false,
-          summary: `Ignored mismatched or stale AI Scan response (expected product ${scannedProductId} / request ${pendingScan.requestId}, got product ${String(
-            returnedPieceId
-          )} / request ${String(returnedRequestId)}).`,
-          receivedCount: 0,
-          stagedCount: 0,
-          heldConflictCount: 0,
-          unchangedSkippedCount: 0,
-          rejectedInvalidCount: 0,
-          ignoredManualOnlyCount: 0,
-          diagnostics: {},
-          details: [],
-          proposalsByDestination: {}
-        }
-      }));
-      setActiveAiScanRequest(null);
+      recordFailedScan(
+        `Ignored mismatched or stale AI Scan response (expected product ${scannedProductId} / request ${pendingScan.requestId}, got product ${String(
+          returnedPieceId
+        )} / request ${String(returnedRequestId)}).`
+      );
       return;
     }
 
     if (rawResponse.success !== true) {
-      setLastAiScanReportByProduct((prev) => ({
-        ...prev,
-        [scannedProductId]: {
-          requestId: pendingScan.requestId,
-          productId: scannedProductId,
-          completedAt: new Date().toISOString(),
-          ok: false,
-          summary: rawResponse.error || "AI Scan returned an error.",
-          receivedCount: 0,
-          stagedCount: 0,
-          heldConflictCount: 0,
-          unchangedSkippedCount: 0,
-          rejectedInvalidCount: 0,
-          ignoredManualOnlyCount: 0,
-          diagnostics:
-            rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
-              ? rawResponse.producerDiagnostics
-              : {},
-          details: [],
-          proposalsByDestination: {}
-        }
-      }));
-      setActiveAiScanRequest(null);
+      recordFailedScan(
+        rawResponse.error || "AI Scan returned an error.",
+        rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
+          ? rawResponse.producerDiagnostics
+          : {}
+      );
       return;
     }
 
@@ -1843,27 +1590,9 @@ export default function BenchV2Route() {
       typeof rawProducerProposals !== "object" ||
       Array.isArray(rawProducerProposals)
     ) {
-      setLastAiScanReportByProduct((prev) => ({
-        ...prev,
-        [scannedProductId]: {
-          requestId: pendingScan.requestId,
-          productId: scannedProductId,
-          completedAt: new Date().toISOString(),
-          ok: false,
-          summary:
-            "AI Scan response did not include producerProposals separation map; refused to stage tab3Data fallbacks.",
-          receivedCount: 0,
-          stagedCount: 0,
-          heldConflictCount: 0,
-          unchangedSkippedCount: 0,
-          rejectedInvalidCount: 0,
-          ignoredManualOnlyCount: 0,
-          diagnostics: {},
-          details: [],
-          proposalsByDestination: {}
-        }
-      }));
-      setActiveAiScanRequest(null);
+      recordFailedScan(
+        "AI Scan response did not include producerProposals separation map; refused to stage tab3Data fallbacks."
+      );
       return;
     }
 
@@ -1904,10 +1633,6 @@ export default function BenchV2Route() {
         continue;
       }
 
-      // Explicit Manual Measurement / Manual-Only AI Exclusion Gate:
-      // Never stage AI suggestions into any manual measurement or manual-only destination
-      // (including custom.dimensions_mm, custom.weight_grams, custom.collection_date,
-      // the 4 held measurement keepers, and the 3 manual/preset variant channel destinations).
       if (isManualOnlyNoAiDestination(destKey, contract)) {
         ignoredManualOnlyCount++;
         const manualReason =
@@ -1972,7 +1697,6 @@ export default function BenchV2Route() {
         continue;
       }
 
-      // Check if this field already has a human draft, active approval, or active Keep Original decision
       const existingDraft = existingProdProposals[destKey];
       const existingDraftVal =
         existingDraft && typeof existingDraft === "object"
@@ -2041,7 +1765,6 @@ export default function BenchV2Route() {
         continue;
       }
 
-      // Field is untouched (or only had an unapproved prior AI draft): stage as an unapproved AI draft
       existingProdProposals[destKey] = {
         value: validation.normalizedValue,
         source: reportedSource,
@@ -2109,7 +1832,6 @@ export default function BenchV2Route() {
     setActiveAiScanRequest(null);
   }, [aiScanFetcher.state, aiScanFetcher.data]);
 
-  // Explicit Handler to Accept a Held AI Alternative on a Field
   const handleAcceptAiAlternative = (destinationKey) => {
     setClientPrevalidationBanner(null);
     const altEntry = currentAiAlternativesMap[destinationKey];
@@ -2134,43 +1856,15 @@ export default function BenchV2Route() {
       return { ...prev, [activeProductId]: prodMap };
     });
 
-    // Accepting the new value invalidates any prior approval or Keep Original on that field
-    // so the new AI draft starts strictly unapproved
-    setApprovalsByProduct((prev) => {
-      const prodApprovals = prev[activeProductId];
-      if (!prodApprovals || !prodApprovals[destinationKey]) return prev;
-      const nextApprovals = { ...prodApprovals };
-      delete nextApprovals[destinationKey];
-      return { ...prev, [activeProductId]: nextApprovals };
-    });
-
-    setKeepOriginalByProduct((prev) => {
-      const prodKeep = prev[activeProductId];
-      if (!prodKeep || !prodKeep[destinationKey]) return prev;
-      const nextKeep = { ...prodKeep };
-      delete nextKeep[destinationKey];
-      return { ...prev, [activeProductId]: nextKeep };
-    });
-
-    setAiAlternativesByProduct((prev) => {
-      const prodAlts = { ...(prev[activeProductId] || {}) };
-      delete prodAlts[destinationKey];
-      return { ...prev, [activeProductId]: prodAlts };
-    });
+    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
+    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
+    clearDecisionForDestination(setAiAlternativesByProduct, activeProductId, destinationKey);
   };
 
   const handleDismissAiAlternative = (destinationKey) => {
-    setAiAlternativesByProduct((prev) => {
-      const prodAlts = { ...(prev[activeProductId] || {}) };
-      delete prodAlts[destinationKey];
-      return { ...prev, [activeProductId]: prodAlts };
-    });
+    clearDecisionForDestination(setAiAlternativesByProduct, activeProductId, destinationKey);
   };
 
-  // Handle writerFetcher completion: match exact productId & submissionId,
-  // interpret only actual returned writer outcomes, reconcile verified PRODUCT
-  // and PRODUCTVARIANT destinations separately without cross-owner map corruption,
-  // preserve unrelated drafts, and trigger a fresh baseline revalidation.
   useEffect(() => {
     if (writerFetcher.state !== "idle") return;
     const pendingSub = activeSaveSubmissionRef.current;
@@ -2181,8 +1875,6 @@ export default function BenchV2Route() {
       return;
     }
 
-    // Even if writerFetcher.data is undefined (e.g., network drop or unhandled 500),
-    // never assume failed request means zero writes occurred on Shopify.
     processedSubmissionIdRef.current = pendingSub.submissionId;
 
     const submittedProductId = pendingSub.productId;
@@ -2274,8 +1966,6 @@ export default function BenchV2Route() {
     const responseVariantTarget =
       rawResponse.primaryVariantId || rawResponse.variantTarget || null;
 
-    // Identify any submitted destination that was neither verified, blocked, skipped,
-    // unsupported, nor unchanged (e.g. if a mutation failed mid-batch or read-back was incomplete).
     const unconfirmedDestinations = submittedDestinations.filter(
       (dest) =>
         !verifiedSet.has(dest) &&
@@ -2285,10 +1975,6 @@ export default function BenchV2Route() {
         !unchangedList.includes(dest)
     );
 
-    // Reconcile baseline currentMetafields (for verified PRODUCT destinations) and
-    // currentVariantMetafields (for verified PRODUCTVARIANT destinations when the
-    // returned variant identity matches submittedVariantTargetId) ONLY on submittedProductId,
-    // without overwriting product maps with variant maps or marking incomplete reads complete.
     const hasReturnedProductMetafields = Boolean(
       rawResponse.currentMetafields &&
       typeof rawResponse.currentMetafields === "object" &&
@@ -2385,10 +2071,6 @@ export default function BenchV2Route() {
       });
     }
 
-    // Clear proposals and approvals ONLY on submittedProductId for destinations
-    // that were positively verified on read-back AND whose current draft still
-    // matches the exact value that was submitted (and whose variant target matched
-    // for PRODUCTVARIANT destinations).
     if (verifiedSet.size > 0) {
       const canClearVerifiedDest = (vDest) => {
         const contract = getFieldContractByDestination(vDest);
@@ -2469,15 +2151,9 @@ export default function BenchV2Route() {
     });
 
     setActiveSaveSubmission(null);
-    // Trigger full single-product baseline revalidation so metafieldsReadComplete,
-    // variantMetafieldsReadComplete, currentMetafieldTypes, and liveDefinitions are refreshed.
     revalidator.revalidate();
   }, [writerFetcher.state, writerFetcher.data, revalidator]);
 
-  // Manual Proposal Edit Handler:
-  // Preserves exact untrimmed string in proposedByProduct[activeProductId] with
-  // origin="Manual" and immediately invalidates any prior Approval or Keep Original
-  // record for that destination.
   const handleManualProposalChange = (destinationKey, rawNewValue) => {
     setClientPrevalidationBanner(null);
     const exactString = typeof rawNewValue === "string" ? rawNewValue : String(rawNewValue ?? "");
@@ -2493,68 +2169,25 @@ export default function BenchV2Route() {
       return { ...prev, [activeProductId]: prodMap };
     });
 
-    // Changing a proposal immediately invalidates prior approval and Keep Original
-    setApprovalsByProduct((prev) => {
-      const prodApprovals = prev[activeProductId];
-      if (!prodApprovals || !prodApprovals[destinationKey]) return prev;
-      const nextApprovals = { ...prodApprovals };
-      delete nextApprovals[destinationKey];
-      return { ...prev, [activeProductId]: nextApprovals };
-    });
-
-    setKeepOriginalByProduct((prev) => {
-      const prodKeep = prev[activeProductId];
-      if (!prodKeep || !prodKeep[destinationKey]) return prev;
-      const nextKeep = { ...prodKeep };
-      delete nextKeep[destinationKey];
-      return { ...prev, [activeProductId]: nextKeep };
-    });
+    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
+    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
   };
 
-  // Clear Staged Draft Proposal Handler (Restores row to Unchanged without touching saved baseline)
   const handleClearDraftProposal = (destinationKey) => {
     setClientPrevalidationBanner(null);
     releaseRetainedFieldEditor(activeProductId, destinationKey);
 
-    setProposedByProduct((prev) => {
-      const prodMap = { ...(prev[activeProductId] || {}) };
-      delete prodMap[destinationKey];
-      return { ...prev, [activeProductId]: prodMap };
-    });
-
-    setApprovalsByProduct((prev) => {
-      const prodApprovals = { ...(prev[activeProductId] || {}) };
-      delete prodApprovals[destinationKey];
-      return { ...prev, [activeProductId]: prodApprovals };
-    });
-
-    setKeepOriginalByProduct((prev) => {
-      const prodKeep = { ...(prev[activeProductId] || {}) };
-      delete prodKeep[destinationKey];
-      return { ...prev, [activeProductId]: prodKeep };
-    });
+    clearDecisionForDestination(setProposedByProduct, activeProductId, destinationKey);
+    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
+    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
   };
 
-  // Toggle Exact-Value Approval (Mutually exclusive with Keep Original)
   const handleToggleApproval = (destinationKey, currentlyApproved) => {
     setClientPrevalidationBanner(null);
     releaseRetainedFieldEditor(activeProductId, destinationKey);
 
     if (currentlyApproved) {
-      setApprovalsByProduct((prev) => {
-        const prodApprovals = { ...(prev[activeProductId] || {}) };
-        delete prodApprovals[destinationKey];
-        return { ...prev, [activeProductId]: prodApprovals };
-      });
-      return;
-    }
-
-    if (isDestinationHeldByExistingWriter(destinationKey)) {
-      setClientPrevalidationBanner({
-        tone: "warning",
-        title: `Save on hold for ${destinationKey}`,
-        reasons: [getExistingWriterHoldReason(destinationKey)]
-      });
+      clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
       return;
     }
 
@@ -2592,14 +2225,7 @@ export default function BenchV2Route() {
       return;
     }
 
-    // Mutually exclude Keep Original when approving
-    setKeepOriginalByProduct((prev) => {
-      const prodKeep = prev[activeProductId];
-      if (!prodKeep || !prodKeep[destinationKey]) return prev;
-      const nextKeep = { ...prodKeep };
-      delete nextKeep[destinationKey];
-      return { ...prev, [activeProductId]: nextKeep };
-    });
+    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
 
     setApprovalsByProduct((prev) => ({
       ...prev,
@@ -2610,17 +2236,12 @@ export default function BenchV2Route() {
     }));
   };
 
-  // Toggle Keep Original Decision (Mutually exclusive with Approve; binds rejected proposal & baseline signature)
   const handleToggleKeepOriginal = (destinationKey, currentlyKeepOriginal) => {
     setClientPrevalidationBanner(null);
     releaseRetainedFieldEditor(activeProductId, destinationKey);
 
     if (currentlyKeepOriginal) {
-      setKeepOriginalByProduct((prev) => {
-        const prodKeep = { ...(prev[activeProductId] || {}) };
-        delete prodKeep[destinationKey];
-        return { ...prev, [activeProductId]: prodKeep };
-      });
+      clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
       return;
     }
 
@@ -2648,14 +2269,7 @@ export default function BenchV2Route() {
       return;
     }
 
-    // Mutually exclude Approve when selecting Keep Original
-    setApprovalsByProduct((prev) => {
-      const prodApprovals = prev[activeProductId];
-      if (!prodApprovals || !prodApprovals[destinationKey]) return prev;
-      const nextApprovals = { ...prodApprovals };
-      delete nextApprovals[destinationKey];
-      return { ...prev, [activeProductId]: nextApprovals };
-    });
+    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
 
     setKeepOriginalByProduct((prev) => ({
       ...prev,
@@ -2670,8 +2284,6 @@ export default function BenchV2Route() {
   const activeSaveReportForCurrentProduct =
     lastSaveReport && lastSaveReport.productId === activeProductId ? lastSaveReport : null;
 
-  // Evaluate all rows across all 11 drawers for the selected product, then compute
-  // view-only filter matches (never mutating underlying rows, drafts, or decisions).
   const evaluatedDrawerGroups = BENCH_V2_DRAWER_GROUPS.map((drawer) => {
     const evaluatedRows = drawer.fields.map((fieldContract) => {
       const destKey = fieldContract.destinationKey;
@@ -2695,7 +2307,6 @@ export default function BenchV2Route() {
       const heldAiAlternative = currentAiAlternativesMap[destKey] || null;
       const scanProposalMeta = currentScanProposalsMetaMap[destKey] || null;
 
-      const writerHoldReason = getExistingWriterHoldReason(destKey);
       const fidelityCheck =
         baseEval?.hasProposalKey && baseEval.proposedValue !== ""
           ? checkExistingWriterStringFidelity(baseEval.proposedValue)
@@ -2719,21 +2330,11 @@ export default function BenchV2Route() {
               activeSaveReportForCurrentProduct.unconfirmedDestinations.includes(destKey)))
       );
 
-      // Override connectionStatus and save readiness if held by existing writer skip/retirement list
-      let effectiveConnectionStatus = baseEval.connectionStatus;
+      const effectiveConnectionStatus = baseEval.connectionStatus;
       let effectiveReviewStatus = baseEval.reviewStatus;
       let effectiveStatusReason = baseEval.statusReason;
 
-      if (fieldContract.isWritableInBatch1 && writerHoldReason) {
-        effectiveConnectionStatus =
-          "Held (Writer Connection Hold — Skipped by Current /app/meta-injector-api)";
-        if (baseEval.hasProposalKey && !baseEval.isKeepOriginal) {
-          effectiveReviewStatus = "Draft Staged (Held — Writer Skip Guard Active)";
-          effectiveStatusReason = writerHoldReason;
-        } else if (!baseEval.hasProposalKey) {
-          effectiveStatusReason = `${writerHoldReason} ${fieldContract.purposeNote || ""}`.trim();
-        }
-      } else if (
+      if (
         fieldContract.isWritableInBatch1 &&
         baseEval.hasProposalKey &&
         baseEval.validation?.valid &&
@@ -2749,8 +2350,6 @@ export default function BenchV2Route() {
         heldAiAlternative,
         scanProposalMeta,
         hasSaveErrorOrConflict,
-        isWriterHeld: Boolean(writerHoldReason),
-        writerHoldReason,
         fidelityCheck,
         effectiveConnectionStatus,
         effectiveReviewStatus,
@@ -2782,7 +2381,6 @@ export default function BenchV2Route() {
     };
   });
 
-  // Summarize selected product's review state across ALL rows (never reduced by view filter)
   const allEvaluatedRows = evaluatedDrawerGroups.flatMap((d) => d.evaluatedRows);
   const totalVisibleFilteredRowCount = evaluatedDrawerGroups.reduce(
     (acc, d) => acc + d.visibleRows.length,
@@ -2790,7 +2388,7 @@ export default function BenchV2Route() {
   );
   const stagedProposalRows = allEvaluatedRows.filter((r) => r.hasProposalKey);
   const validApprovedRows = allEvaluatedRows.filter(
-    (r) => r.isApproved && !r.isWriterHeld && r.fidelityCheck.faithful
+    (r) => r.isApproved && r.fidelityCheck.faithful
   );
   const keepOriginalRows = allEvaluatedRows.filter((r) => r.isKeepOriginal);
   const heldAiAlternativesCount = Object.keys(currentAiAlternativesMap).length;
@@ -2806,18 +2404,6 @@ export default function BenchV2Route() {
 
   // ==========================================================================
   // SIDEKICK LIVE BENCH SNAPSHOT BUILDER & SINGLE-FLIGHT PUBLISHER
-  // - Builds the complete schemaVersion=1, stateKind="live_bench_state" payload
-  //   across ALL 11 drawers (never filtered by activeFilter or openDrawersById).
-  // - Expands loaded per-image MediaImage alt rows (native_image_alts_<MediaImageGid>)
-  //   alongside native_image_alt capability descriptor in Drawer 9 so per-photo
-  //   alt baselines are inspectable via view="drawer" and view="field".
-  // - Surfaces exact variantId and variantTargetStatus for PRODUCTVARIANT fields.
-  // - Eliminates redundant multi-copy string duplication (`rawStoredBaseline.signature`
-  //   and duplicate `evaluatedBaseline.value` when identical to `rawStoredBaseline.value`)
-  //   and omits inactive `false`/`null` defaults where the existing cache reader
-  //   (`evaluateFieldAttentionFlags`, `buildReviewViewData`, `resolveFieldTarget`)
-  //   already falls back to the exact same values, keeping Canyon well under the
-  //   1 MiB character/byte ceiling without clipping a single character of actual data.
   // ==========================================================================
   const drainTelemetryPublishQueue = useCallback(async () => {
     if (isTelemetrySendInFlightRef.current) return;
@@ -2936,9 +2522,6 @@ export default function BenchV2Route() {
         try {
           let result = await attemptPublishWithRevision(nextRevision);
 
-          // If server reports stale_bench_revision (e.g., an earlier timed-out or concurrent request
-          // on the same session advanced highestRevision), adopt highestRevision + 1 once if no newer
-          // state is already queued.
           if (
             !result.localOversize &&
             result.httpStatus === 409 &&
@@ -3035,11 +2618,7 @@ export default function BenchV2Route() {
     }
   }, []);
 
-  // Build deterministic snapshot content (without benchRevision or clientStateChangedAt)
-  // and enqueue publication ONLY when actual bench content changes.
   useEffect(() => {
-    // Guard against publishing previous product's fields under a newly requested productId
-    // while URL selection navigation is in flight.
     if (isSwitchingSelectedProduct) {
       return;
     }
@@ -3106,7 +2685,6 @@ export default function BenchV2Route() {
           validation,
           isApproved,
           isKeepOriginal,
-          isWriterHeld,
           fidelityCheck,
           hasSaveErrorOrConflict,
           effectiveConnectionStatus,
@@ -3137,12 +2715,12 @@ export default function BenchV2Route() {
         );
 
         const isExplicitlyApprovedValid = Boolean(
-          isApproved && !isWriterHeld && fidelityCheck.faithful
+          isApproved && fidelityCheck.faithful
         );
 
         const isActualBlockedProposal = Boolean(
           hasProposalKey &&
-            (!validation?.valid || !fidelityCheck.faithful || isWriterHeld)
+            (!validation?.valid || !fidelityCheck.faithful)
         );
 
         const hasTechnicalBlock = Boolean(
@@ -3157,9 +2735,7 @@ export default function BenchV2Route() {
                   obs.liveDefType !== obs.storedType)))
         );
 
-        const hasContractOrOwnerHold = Boolean(
-          !contract.isWritableInBatch1 || isWriterHeld
-        );
+        const hasContractOrOwnerHold = Boolean(!contract.isWritableInBatch1);
 
         let mappedFieldStatus = "Unchanged";
         if (!obs.evidenceAvailable) {
@@ -3186,7 +2762,7 @@ export default function BenchV2Route() {
           mappedFieldStatus = "Keep original (suggestion rejected)";
         } else if (
           isApproved &&
-          (isWriterHeld || !fidelityCheck.faithful || !validation?.valid)
+          (!fidelityCheck.faithful || !validation?.valid)
         ) {
           mappedFieldStatus = "Approved, blocked";
         } else if (isExplicitlyApprovedValid) {
@@ -3268,8 +2844,6 @@ export default function BenchV2Route() {
             ? baselineDisplayValue
             : formatReadableSavedValue(obs, usesMeaningDisplay, baselineDisplayValue);
 
-        // Build compact, lossless rawStoredBaseline without repeating obs.signature
-        // (which embedded another full copy of rawValue on every field).
         const rawStoredBaselineObj = {
           evidenceAvailable: obs.evidenceAvailable,
           exists: rawBaselineExists,
@@ -3292,11 +2866,6 @@ export default function BenchV2Route() {
             : {})
         };
 
-        // In evaluatedBaseline, evaluateFieldAttentionFlags falls back directly to
-        // rawStoredBaseline.exists and rawStoredBaseline.value when evaluatedBaseline.value
-        // is omitted. Only include displayValue when it differs from rawValueToStore
-        // (such as Yes/No meaning display or non-present status labels), avoiding a 2nd/3rd
-        // copy of multi-KB HTML descriptions, stories, and third-party widgets.
         const evaluatedBaselineObj = {
           currentExists: rawBaselineExists,
           ...(readableBaselineStr !== rawValueToStore
@@ -3443,7 +3012,6 @@ export default function BenchV2Route() {
 
         fieldsByKey[destKey] = fieldEntry;
 
-        // Expand loaded per-image MediaImage alt baseline rows in Drawer 9 right after native_image_alt
         if (
           isMediaCapabilityDescriptor &&
           hasMatchedBaseline &&
@@ -3735,14 +3303,6 @@ export default function BenchV2Route() {
     drainTelemetryPublishQueue();
   });
 
-  // Explicit Save Handler:
-  // - Never runs on mount, selection, AI scan, or edit.
-  // - Prevalidates every entry in currentApprovalsMap for activeProductId; if ANY
-  //   approved entry is invalid, stale, writer-held, or fails writer string-fidelity,
-  //   stops the entire submission rather than silently filtering it out.
-  // - For any approved PRODUCTVARIANT entry, verifies complete single-variant baseline
-  //   readiness, exact ProductVariant GID, and approval-bound variantId equality,
-  //   then appends variantTargetId to the executeRepairPlan FormData.
   const handleExplicitSaveApprovedChanges = () => {
     setClientPrevalidationBanner(null);
 
@@ -3793,13 +3353,6 @@ export default function BenchV2Route() {
       ) {
         prevalidationErrors.push(
           `[${destKey}] Not an eligible writable destination.`
-        );
-        continue;
-      }
-
-      if (isDestinationHeldByExistingWriter(destKey)) {
-        prevalidationErrors.push(
-          `[${destKey}] ${getExistingWriterHoldReason(destKey)}`
         );
         continue;
       }
@@ -3902,8 +3455,6 @@ export default function BenchV2Route() {
       safePlanToSubmit[destKey] = validation.normalizedValue;
     }
 
-    // Complete prevalidation gate: if ANY approved entry failed preflight, stop
-    // the entire submission (never silently drop a blocked approved field).
     if (prevalidationErrors.length > 0) {
       setClientPrevalidationBanner({
         tone: "error",
@@ -3958,6 +3509,25 @@ export default function BenchV2Route() {
   const isSelectedProductInCurrentPickerPage = pickerItems.some(
     (item) => item.id === activeProductId
   );
+
+  const prevPageDisabled =
+    isAnyOperationBusy || isPickerLoading || pickerCursorHistory.length === 0;
+  const nextPageDisabled =
+    isAnyOperationBusy ||
+    isPickerLoading ||
+    !pickerPageState?.pageInfo?.hasNextPage ||
+    !pickerPageState?.pageInfo?.endCursor;
+
+  const getPagerButtonStyle = (disabled) => ({
+    padding: "8px 14px",
+    fontSize: "15px",
+    fontWeight: 600,
+    backgroundColor: disabled ? "#e2e8f0" : "#ffffff",
+    color: disabled ? "#64748b" : "#0f172a",
+    border: "2px solid #64748b",
+    borderRadius: "6px",
+    cursor: disabled ? "not-allowed" : "pointer"
+  });
 
   return (
     <div
@@ -4134,19 +3704,7 @@ export default function BenchV2Route() {
                   return (
                     <div
                       key={`${activeProductId}_${mediaItem.id}_${idx}`}
-                      style={{
-                        width: "120px",
-                        height: "120px",
-                        minWidth: "120px",
-                        minHeight: "120px",
-                        flex: "0 0 120px",
-                        flexShrink: 0,
-                        borderRadius: "8px",
-                        border: "2px solid #94a3b8",
-                        backgroundColor: "#f8fafc",
-                        overflow: "hidden",
-                        boxSizing: "border-box"
-                      }}
+                      style={THUMBNAIL_WRAPPER_STYLE}
                     >
                       <img
                         src={mediaItem.url}
@@ -4154,15 +3712,7 @@ export default function BenchV2Route() {
                         title={accessibleAlt}
                         width={120}
                         height={120}
-                        style={{
-                          width: "120px",
-                          height: "120px",
-                          minWidth: "120px",
-                          minHeight: "120px",
-                          objectFit: "cover",
-                          objectPosition: "center",
-                          display: "block"
-                        }}
+                        style={THUMBNAIL_IMG_STYLE}
                       />
                     </div>
                   );
@@ -4171,7 +3721,7 @@ export default function BenchV2Route() {
             )}
           </div>
 
-          {/* ACCESSIBLE PRODUCT SEARCH & READABLE PICKER (REPLACES DENSE SELECT DROPDOWN) */}
+          {/* ACCESSIBLE PRODUCT SEARCH & READABLE PICKER */}
           <div
             style={{
               marginTop: "16px",
@@ -4287,7 +3837,6 @@ export default function BenchV2Route() {
               </button>
             </div>
 
-            {/* ALWAYS-VISIBLE CURRENTLY SELECTED PRODUCT SUMMARY WHEN ABSENT FROM RESULTS PAGE */}
             {!isSelectedProductInCurrentPickerPage && (
               <div
                 style={{
@@ -4312,7 +3861,6 @@ export default function BenchV2Route() {
               </div>
             )}
 
-            {/* READABLE PRODUCT RESULTS LIST (LARGE MIXED-CASE LABELS, COMFORTABLE SPACING) */}
             {isProductPickerOpen && (
               <div
                 role="region"
@@ -4347,36 +3895,8 @@ export default function BenchV2Route() {
                     <button
                       type="button"
                       onClick={handlePreviousProductPage}
-                      disabled={
-                        isAnyOperationBusy ||
-                        isPickerLoading ||
-                        pickerCursorHistory.length === 0
-                      }
-                      style={{
-                        padding: "8px 14px",
-                        fontSize: "15px",
-                        fontWeight: 600,
-                        backgroundColor:
-                          isAnyOperationBusy ||
-                          isPickerLoading ||
-                          pickerCursorHistory.length === 0
-                            ? "#e2e8f0"
-                            : "#ffffff",
-                        color:
-                          isAnyOperationBusy ||
-                          isPickerLoading ||
-                          pickerCursorHistory.length === 0
-                            ? "#64748b"
-                            : "#0f172a",
-                        border: "2px solid #64748b",
-                        borderRadius: "6px",
-                        cursor:
-                          isAnyOperationBusy ||
-                          isPickerLoading ||
-                          pickerCursorHistory.length === 0
-                            ? "not-allowed"
-                            : "pointer"
-                      }}
+                      disabled={prevPageDisabled}
+                      style={getPagerButtonStyle(prevPageDisabled)}
                     >
                       Previous 50
                     </button>
@@ -4388,40 +3908,8 @@ export default function BenchV2Route() {
                     <button
                       type="button"
                       onClick={handleNextProductPage}
-                      disabled={
-                        isAnyOperationBusy ||
-                        isPickerLoading ||
-                        !pickerPageState?.pageInfo?.hasNextPage ||
-                        !pickerPageState?.pageInfo?.endCursor
-                      }
-                      style={{
-                        padding: "8px 14px",
-                        fontSize: "15px",
-                        fontWeight: 600,
-                        backgroundColor:
-                          isAnyOperationBusy ||
-                          isPickerLoading ||
-                          !pickerPageState?.pageInfo?.hasNextPage ||
-                          !pickerPageState?.pageInfo?.endCursor
-                            ? "#e2e8f0"
-                            : "#ffffff",
-                        color:
-                          isAnyOperationBusy ||
-                          isPickerLoading ||
-                          !pickerPageState?.pageInfo?.hasNextPage ||
-                          !pickerPageState?.pageInfo?.endCursor
-                            ? "#64748b"
-                            : "#0f172a",
-                        border: "2px solid #64748b",
-                        borderRadius: "6px",
-                        cursor:
-                          isAnyOperationBusy ||
-                          isPickerLoading ||
-                          !pickerPageState?.pageInfo?.hasNextPage ||
-                          !pickerPageState?.pageInfo?.endCursor
-                            ? "not-allowed"
-                            : "pointer"
-                      }}
+                      disabled={nextPageDisabled}
+                      style={getPagerButtonStyle(nextPageDisabled)}
                     >
                       Next 50
                     </button>
@@ -4655,32 +4143,14 @@ export default function BenchV2Route() {
               <button
                 type="button"
                 onClick={() => handleSetAllDrawers(true)}
-                style={{
-                  padding: "8px 14px",
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  backgroundColor: "#f8fafc",
-                  color: "#0f172a",
-                  border: "1px solid #64748b",
-                  borderRadius: "6px",
-                  cursor: "pointer"
-                }}
+                style={DRAWER_BULK_BTN_STYLE}
               >
                 Open All Drawers
               </button>
               <button
                 type="button"
                 onClick={() => handleSetAllDrawers(false)}
-                style={{
-                  padding: "8px 14px",
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  backgroundColor: "#f8fafc",
-                  color: "#0f172a",
-                  border: "1px solid #64748b",
-                  borderRadius: "6px",
-                  cursor: "pointer"
-                }}
+                style={DRAWER_BULK_BTN_STYLE}
               >
                 Close All Drawers
               </button>
@@ -4717,15 +4187,7 @@ export default function BenchV2Route() {
             <summary style={{ cursor: "pointer", fontWeight: 600 }}>
               System and Product Details
             </summary>
-            <div
-              style={{
-                marginTop: "8px",
-                padding: "10px 14px",
-                backgroundColor: "#f8fafc",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px"
-              }}
-            >
+            <div style={DETAILS_PANEL_STYLE}>
               <div>
                 <strong>Product GID:</strong> <code>{activeProductId}</code>
               </div>
@@ -4805,7 +4267,7 @@ export default function BenchV2Route() {
           </details>
         </header>
 
-        {/* IMPORTANT BASELINE / SELECTOR ERRORS (SHOWN ONLY WHEN PRESENT) */}
+        {/* IMPORTANT BASELINE / SELECTOR ERRORS */}
         {hasBaselineErrors && (
           <div
             role="alert"
@@ -4872,16 +4334,7 @@ export default function BenchV2Route() {
                     return next;
                   })
                 }
-                style={{
-                  backgroundColor: "#ffffff",
-                  color: "#0f172a",
-                  border: "1px solid #475569",
-                  borderRadius: "6px",
-                  padding: "4px 12px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: 600
-                }}
+                style={DISMISS_BTN_STYLE}
               >
                 Dismiss
               </button>
@@ -4943,16 +4396,7 @@ export default function BenchV2Route() {
               <button
                 type="button"
                 onClick={() => setClientPrevalidationBanner(null)}
-                style={{
-                  backgroundColor: "#ffffff",
-                  color: "#0f172a",
-                  border: "1px solid #475569",
-                  borderRadius: "6px",
-                  padding: "4px 12px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: 600
-                }}
+                style={DISMISS_BTN_STYLE}
               >
                 Dismiss
               </button>
@@ -5006,14 +4450,8 @@ export default function BenchV2Route() {
                 type="button"
                 onClick={() => setLastSaveReport(null)}
                 style={{
-                  padding: "6px 12px",
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  borderRadius: "6px",
-                  border: "1px solid #475569",
-                  backgroundColor: "#ffffff",
-                  color: "#0f172a",
-                  cursor: "pointer"
+                  ...DISMISS_BTN_STYLE,
+                  padding: "6px 12px"
                 }}
               >
                 Close
@@ -5152,7 +4590,7 @@ export default function BenchV2Route() {
             const plainDrawerTitle = PLAIN_DRAWER_TITLES[drawer.drawerId] || drawer.heading;
 
             const drawerApprovedCount = drawer.evaluatedRows.filter(
-              (r) => r.isApproved && !r.isWriterHeld && r.fidelityCheck.faithful
+              (r) => r.isApproved && r.fidelityCheck.faithful
             ).length;
             const drawerStagedCount = drawer.evaluatedRows.filter(
               (r) => r.hasProposalKey
@@ -5338,7 +4776,6 @@ export default function BenchV2Route() {
                             validation,
                             isApproved,
                             isKeepOriginal,
-                            isWriterHeld,
                             fidelityCheck,
                             effectiveConnectionStatus,
                             effectiveReviewStatus,
@@ -5356,7 +4793,6 @@ export default function BenchV2Route() {
 
                           const canApproveForSave =
                             contract.isWritableInBatch1 &&
-                            !isWriterHeld &&
                             hasProposalKey &&
                             Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
                             fidelityCheck.faithful;
@@ -5390,12 +4826,12 @@ export default function BenchV2Route() {
 
                           let cardBorder = "1px solid #cbd5e1";
                           let cardBg = "#ffffff";
-                          if (isApproved && !isWriterHeld) {
+                          if (isApproved) {
                             cardBorder = "2px solid #15803d";
                             cardBg = "#f0fdf4";
                           } else if (
                             hasProposalKey &&
-                            (!validation?.valid || !fidelityCheck.faithful || isWriterHeld)
+                            (!validation?.valid || !fidelityCheck.faithful)
                           ) {
                             cardBorder = "2px solid #b45309";
                             cardBg = "#fffbeb";
@@ -5480,7 +4916,7 @@ export default function BenchV2Route() {
                                 </div>
 
                                 <div style={{ fontSize: "15px", fontWeight: 600, color: "#334155" }}>
-                                  {isApproved && !isWriterHeld
+                                  {isApproved
                                     ? "Approved to save"
                                     : isKeepOriginal
                                       ? "Keeping original"
@@ -5492,7 +4928,7 @@ export default function BenchV2Route() {
                                 </div>
                               </div>
 
-                              {/* SAVED VS. PROPOSED SIDE-BY-SIDE (STACKS ON NARROW SCREENS) */}
+                              {/* SAVED VS. PROPOSED SIDE-BY-SIDE */}
                               <div
                                 style={{
                                   display: "grid",
@@ -5690,7 +5126,7 @@ export default function BenchV2Route() {
                                           </div>
                                         )}
 
-                                      {/* HELD AI ALTERNATIVE CHOICE BOX (WHEN AI SUGGESTION CONFLICTS WITH HUMAN DRAFT/DECISION) */}
+                                      {/* HELD AI ALTERNATIVE CHOICE BOX */}
                                       {heldAiAlternative && !isManualOnlyField && (
                                         <div
                                           style={{
@@ -5799,7 +5235,7 @@ export default function BenchV2Route() {
                                         >
                                           <input
                                             type="checkbox"
-                                            checked={Boolean(isApproved && !isWriterHeld)}
+                                            checked={Boolean(isApproved)}
                                             disabled={
                                               isAnyOperationBusy ||
                                               (!canApproveForSave && !isApproved)
@@ -5807,7 +5243,7 @@ export default function BenchV2Route() {
                                             onChange={() =>
                                               handleToggleApproval(
                                                 contract.destinationKey,
-                                                Boolean(isApproved && !isWriterHeld)
+                                                Boolean(isApproved)
                                               )
                                             }
                                             style={{ width: "18px", height: "18px" }}
@@ -5903,11 +5339,8 @@ export default function BenchV2Route() {
                                 </summary>
                                 <div
                                   style={{
-                                    marginTop: "8px",
-                                    padding: "10px 12px",
-                                    backgroundColor: "#f8fafc",
-                                    border: "1px solid #cbd5e1",
-                                    borderRadius: "6px"
+                                    ...DETAILS_PANEL_STYLE,
+                                    padding: "10px 12px"
                                   }}
                                 >
                                   <div>
