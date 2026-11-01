@@ -209,6 +209,7 @@ export function useBenchV2StandardizedReferenceLoader({
   const [refChoicesStateByProduct, setRefChoicesStateByProduct] = useState({});
   const processedRefChoicesRequestIdRef = useRef(null);
   const activeRefChoicesRequestRef = useRef(null);
+  const observedBusyRequestIdRef = useRef(null);
   const autoRefChoicesAttemptedKeysRef = useRef(new Set());
   const refChoicesFetcherRef = useRef(refChoicesFetcher);
   refChoicesFetcherRef.current = refChoicesFetcher;
@@ -303,6 +304,7 @@ export function useBenchV2StandardizedReferenceLoader({
         startedAt: new Date().toISOString()
       };
 
+      observedBusyRequestIdRef.current = null;
       activeRefChoicesRequestRef.current = reqMeta;
       setActiveRefChoicesRequest(reqMeta);
 
@@ -414,9 +416,27 @@ export function useBenchV2StandardizedReferenceLoader({
   };
 
   useEffect(() => {
-    if (refChoicesFetcher.state !== "idle") return;
     const pendingReq = activeRefChoicesRequestRef.current;
     if (!pendingReq) return;
+
+    if (refChoicesFetcher.state !== "idle") {
+      observedBusyRequestIdRef.current = pendingReq.requestId;
+      return;
+    }
+
+    const rawResponse = refChoicesFetcher.data;
+    const hasMatchingResponseForPendingReq = Boolean(
+      rawResponse &&
+        typeof rawResponse === "object" &&
+        rawResponse.requestId === pendingReq.requestId
+    );
+
+    if (
+      observedBusyRequestIdRef.current !== pendingReq.requestId &&
+      !hasMatchingResponseForPendingReq
+    ) {
+      return;
+    }
 
     if (processedRefChoicesRequestIdRef.current === pendingReq.requestId) {
       return;
@@ -424,7 +444,6 @@ export function useBenchV2StandardizedReferenceLoader({
     processedRefChoicesRequestIdRef.current = pendingReq.requestId;
 
     const reqProductId = pendingReq.productId;
-    const rawResponse = refChoicesFetcher.data;
     const latestBaselineForProduct = baselineByProductRef.current?.[reqProductId] || null;
     const latestContextSig = buildStandardizedBaselineContextSignature(latestBaselineForProduct);
 
@@ -446,6 +465,7 @@ export function useBenchV2StandardizedReferenceLoader({
           rawResponse: null
         }
       }));
+      observedBusyRequestIdRef.current = null;
       activeRefChoicesRequestRef.current = null;
       setActiveRefChoicesRequest(null);
     };
@@ -787,9 +807,16 @@ export function useBenchV2StandardizedReferenceLoader({
       }
     }));
 
+    observedBusyRequestIdRef.current = null;
     activeRefChoicesRequestRef.current = null;
     setActiveRefChoicesRequest(null);
-  }, [refChoicesFetcher.state, refChoicesFetcher.data, activeProductTitle, baselineByProductRef]);
+  }, [
+    refChoicesFetcher.state,
+    refChoicesFetcher.data,
+    activeRefChoicesRequest,
+    activeProductTitle,
+    baselineByProductRef
+  ]);
 
   const canRetryRefChoicesForCurrentProduct = Boolean(
     isCurrentBaselineReadyForStandardizedLookup &&
