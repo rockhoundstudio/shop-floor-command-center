@@ -95,6 +95,180 @@ export const extractEntryTaxonomyRef = (entry) => {
   return "";
 };
 
+export function extractEntryMatchingLabels(node) {
+  const rawSet = new Set();
+  if (typeof node?.displayName === "string" && node.displayName.trim() !== "") {
+    rawSet.add(node.displayName.trim());
+  }
+  if (Array.isArray(node?.fields)) {
+    for (const f of node.fields) {
+      if (!f || typeof f.key !== "string" || typeof f.value !== "string") continue;
+      const k = f.key.trim().toLowerCase();
+      const v = f.value.trim();
+      if (!v) continue;
+      if (k === "label" || k === "name" || k === "title" || k === "display_name") {
+        if (!/^gid:\/\//i.test(v)) {
+          rawSet.add(v);
+        }
+      }
+    }
+  }
+  return Array.from(rawSet);
+}
+
+export function extractTaxonomyReference(node) {
+  if (!Array.isArray(node?.fields)) return null;
+  for (const f of node.fields) {
+    if (!f || typeof f.key !== "string") continue;
+    if (f.key.trim().toLowerCase() === "taxonomy_reference") {
+      return f.value ?? null;
+    }
+  }
+  return null;
+}
+
+export const isGenericBareStoneToken = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return false;
+  return String(rawVal).trim().toLowerCase() === "stone";
+};
+
+export const isGenericBareStoneProposal = isGenericBareStoneToken;
+
+export const isSettingOrHardwareMediumToken = (rawVal) => {
+  if (rawVal === undefined || rawVal === null) return false;
+  const trimmed = String(rawVal).trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+
+  if (lower === "stone" || lower === "metal" || lower === "none" || lower === "n/a" || lower === "unknown") {
+    return true;
+  }
+
+  if (
+    /\b(plated|plating|electroplated|alloy|sterling|925|fine\s+silver|nickel\s+silver|german\s+silver|tibetan\s+silver|pewter|brass|bronze|stainless|steel|aluminum|aluminium|vermeil|gold[-\s]?filled|silver[-\s]?filled|rose\s+gold|white\s+gold|yellow\s+gold|karat|10k|14k|18k|24k|bezel|bail|pinch\s+bail|glue[-\s]?on|glue[-\s]?in|wire[-\s]?wrap(?:ped)?|craft\s+wire|copper\s+wire|silver\s+wire|gold\s+wire|brass\s+wire|snake\s+chain|chain|cord|pendant\s+setting|metal\s+setting|finding|clasp|loop|rim|frame)\b/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /^(silver|gold|copper|metal)\s+(tone|toned|finish|color|coloured|colored|hardware|setting|finding|mounting|frame|rim|backing|bail|loop|wire|chain)$/i.test(
+      trimmed
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+export const isSettingOrHardwareMediumValue = isSettingOrHardwareMediumToken;
+export const isSettingOrHardwareMediumTokenInDomain = isSettingOrHardwareMediumToken;
+
+const SERVER_FOUND_OBJECT_NEGATIVE_PREFIXES = Object.freeze([
+  "no ",
+  "no—",
+  "no -",
+  "no â€”",
+  "no Ã¢â‚¬â€"
+]);
+
+const SERVER_FOUND_OBJECT_POSITIVE_PREFIXES = Object.freeze([
+  "yes ",
+  "yes—",
+  "yes -",
+  "yes â€”",
+  "yes Ã¢â‚¬â€"
+]);
+
+const CLIENT_FOUND_OBJECT_NEGATIVE_PREFIXES = Object.freeze([
+  "no ",
+  "no—",
+  "no -",
+  "no ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â",
+  "no ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
+]);
+
+const CLIENT_FOUND_OBJECT_POSITIVE_PREFIXES = Object.freeze([
+  "yes ",
+  "yes—",
+  "yes -",
+  "yes ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â",
+  "yes ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
+]);
+
+export function classifyFoundObjectPolarityWithPrefixes(
+  rawVal,
+  negativePrefixes = SERVER_FOUND_OBJECT_NEGATIVE_PREFIXES,
+  positivePrefixes = SERVER_FOUND_OBJECT_POSITIVE_PREFIXES
+) {
+  if (rawVal === undefined || rawVal === null) return "unknown";
+  if (typeof rawVal === "boolean") return rawVal ? "wild_found" : "purchased";
+  const str = String(rawVal).trim();
+  if (!str) return "unknown";
+  const lower = str.toLowerCase();
+  if (
+    lower === "false" ||
+    lower === "no" ||
+    lower === "0" ||
+    negativePrefixes.some((prefix) => lower.startsWith(prefix)) ||
+    /\b(purchased|bought)\b/i.test(lower)
+  ) {
+    return "purchased";
+  }
+  if (
+    lower === "true" ||
+    lower === "yes" ||
+    lower === "1" ||
+    positivePrefixes.some((prefix) => lower.startsWith(prefix)) ||
+    /\bfound in the wild\b/i.test(lower)
+  ) {
+    return "wild_found";
+  }
+  return "unknown";
+}
+
+export function classifyFoundObjectPolarity(rawVal) {
+  return classifyFoundObjectPolarityWithPrefixes(
+    rawVal,
+    SERVER_FOUND_OBJECT_NEGATIVE_PREFIXES,
+    SERVER_FOUND_OBJECT_POSITIVE_PREFIXES
+  );
+}
+
+export function classifyFoundObjectPolarityClient(rawVal) {
+  return classifyFoundObjectPolarityWithPrefixes(
+    rawVal,
+    CLIENT_FOUND_OBJECT_NEGATIVE_PREFIXES,
+    CLIENT_FOUND_OBJECT_POSITIVE_PREFIXES
+  );
+}
+
+export function hasRiverOrFieldCollectionClaim(text) {
+  if (typeof text !== "string" || !text.trim()) return false;
+  return /\b(found at|found in|found on|found along|river[- ]collected|field[- ]collected|collected at|collected from|collected along|pulled from|picked up on the river|spokane river|yakima river)\b/i.test(text);
+}
+
+export const hasRiverOrFieldCollectionClaimClient = hasRiverOrFieldCollectionClaim;
+
+export function buildSafePurchasedSeoTitle(stoneFamily, productFormat = "") {
+  const cleanFam = String(stoneFamily || "").trim();
+  const cleanFmt = String(productFormat || "").trim();
+  if (!cleanFam) return "";
+  const candidateWithFmt =
+    cleanFmt &&
+    !/^(n\/a|none|unknown)$/i.test(cleanFmt) &&
+    !cleanFam.toLowerCase().includes(cleanFmt.toLowerCase())
+      ? `${cleanFam} ${cleanFmt} — Rockhound Studio`
+      : `${cleanFam} — Rockhound Studio`;
+  if (candidateWithFmt.length <= 70) return candidateWithFmt;
+  const fallback = `${cleanFam} — Rockhound Studio`;
+  return fallback.length <= 70 ? fallback : fallback.slice(0, 70).trim();
+}
+
+export const buildSafePurchasedSeoTitleClient = buildSafePurchasedSeoTitle;
+
 export const parseMetaobjectGidArray = (rawVal) => {
   if (rawVal === undefined || rawVal === null || rawVal === "") return [];
   let arr = [];

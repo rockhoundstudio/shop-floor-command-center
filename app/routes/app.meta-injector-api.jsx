@@ -4,7 +4,8 @@ import { action as loaderAction } from "../utils/meta-injector.loader.jsx";
 import { FIELD_CATALOG } from "../utils/meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS,
-  SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+  extractEntryMatchingLabels,
+  extractTaxonomyReference
 } from "../utils/meta-injector.standardized.jsx";
 import {
   BENCH_V2_WRITER_OPT_IN_FIELD,
@@ -16,7 +17,9 @@ import {
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   getFieldContractByDestination,
   isExactProductGid,
-  isExactProductVariantGid
+  isExactProductVariantGid,
+  isExactMetaobjectDefinitionGid,
+  isExactMediaImageGid
 } from "../utils/bench-v2.contract.jsx";
 import {
   evaluateStandardizedCategoryEligibility,
@@ -156,38 +159,6 @@ function isPlainTextProposalRejectedForContract(rawVal, normalizedStr) {
 
 function normalizeCandidateMatchKey(str) {
   return String(str || "").trim().toLowerCase();
-}
-
-function extractEntryMatchingLabels(node) {
-  const rawSet = new Set();
-  if (typeof node?.displayName === "string" && node.displayName.trim() !== "") {
-    rawSet.add(node.displayName.trim());
-  }
-  if (Array.isArray(node?.fields)) {
-    for (const f of node.fields) {
-      if (!f || typeof f.key !== "string" || typeof f.value !== "string") continue;
-      const k = f.key.trim().toLowerCase();
-      const v = f.value.trim();
-      if (!v) continue;
-      if (k === "label" || k === "name" || k === "title" || k === "display_name") {
-        if (!/^gid:\/\//i.test(v)) {
-          rawSet.add(v);
-        }
-      }
-    }
-  }
-  return Array.from(rawSet);
-}
-
-function extractTaxonomyReference(node) {
-  if (!Array.isArray(node?.fields)) return null;
-  for (const f of node.fields) {
-    if (!f || typeof f.key !== "string") continue;
-    if (f.key.trim().toLowerCase() === "taxonomy_reference") {
-      return f.value ?? null;
-    }
-  }
-  return null;
 }
 
 function parseStoredReferenceList(rawVal) {
@@ -725,7 +696,6 @@ export const action = async ({ request }) => {
     if (intent === "resolveStandardizedCandidates") {
       const rawPieceId = body.get("pieceId");
       const rawCandidates = body.get("standardized_candidates");
-      const rawEnumerateDestinations = body.get("enumerate_destinations");
       const rawRequestId = body.get("requestId");
       const pieceId = typeof rawPieceId === "string" ? rawPieceId.trim() : "";
       const requestId = typeof rawRequestId === "string" && rawRequestId.trim() !== "" ? rawRequestId.trim() : null;
@@ -752,16 +722,7 @@ export const action = async ({ request }) => {
         });
       }
 
-      const hasCandidatesPayload =
-        rawCandidates !== null &&
-        rawCandidates !== undefined &&
-        String(rawCandidates).trim() !== "";
-      const hasEnumeratePayload =
-        rawEnumerateDestinations !== null &&
-        rawEnumerateDestinations !== undefined &&
-        String(rawEnumerateDestinations).trim() !== "";
-
-      if (!hasCandidatesPayload && !hasEnumeratePayload) {
+      if (rawCandidates === null || rawCandidates === undefined || String(rawCandidates).trim() === "") {
         return Response.json({
           intent: "resolveStandardizedCandidates",
           readOnly: true,
@@ -769,135 +730,75 @@ export const action = async ({ request }) => {
           success: false,
           pieceId,
           isComplete: false,
-          errors: ["Missing standardized_candidates or enumerate_destinations JSON payload."],
+          errors: ["Missing standardized_candidates JSON payload."],
           resolutions: {},
           currentReferenceLists: {},
           categoryEligibility: {}
         });
       }
 
-      let parsedCandidates = {};
-      if (hasCandidatesPayload) {
-        try {
-          parsedCandidates = typeof rawCandidates === "string" ? JSON.parse(rawCandidates) : rawCandidates;
-        } catch (err) {
-          return Response.json({
-            intent: "resolveStandardizedCandidates",
-            readOnly: true,
-            requestId,
-            success: false,
-            pieceId,
-            isComplete: false,
-            errors: [`Malformed standardized_candidates JSON: ${err.message}`],
-            resolutions: {},
-            currentReferenceLists: {},
-            categoryEligibility: {}
-          });
-        }
-
-        if (!parsedCandidates || typeof parsedCandidates !== "object" || Array.isArray(parsedCandidates)) {
-          return Response.json({
-            intent: "resolveStandardizedCandidates",
-            readOnly: true,
-            requestId,
-            success: false,
-            pieceId,
-            isComplete: false,
-            errors: ["standardized_candidates must be a non-null JSON object."],
-            resolutions: {},
-            currentReferenceLists: {},
-            categoryEligibility: {}
-          });
-        }
+      let parsedCandidates;
+      try {
+        parsedCandidates = typeof rawCandidates === "string" ? JSON.parse(rawCandidates) : rawCandidates;
+      } catch (err) {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
+          success: false,
+          pieceId,
+          isComplete: false,
+          errors: [`Malformed standardized_candidates JSON: ${err.message}`],
+          resolutions: {},
+          currentReferenceLists: {},
+          categoryEligibility: {}
+        });
       }
 
-      let parsedEnumerateList = [];
-      if (hasEnumeratePayload) {
-        try {
-          parsedEnumerateList =
-            typeof rawEnumerateDestinations === "string"
-              ? JSON.parse(rawEnumerateDestinations)
-              : rawEnumerateDestinations;
-        } catch (err) {
-          return Response.json({
-            intent: "resolveStandardizedCandidates",
-            readOnly: true,
-            requestId,
-            success: false,
-            pieceId,
-            isComplete: false,
-            errors: [`Malformed enumerate_destinations JSON: ${err.message}`],
-            resolutions: {},
-            currentReferenceLists: {},
-            categoryEligibility: {}
-          });
-        }
-
-        if (!Array.isArray(parsedEnumerateList)) {
-          return Response.json({
-            intent: "resolveStandardizedCandidates",
-            readOnly: true,
-            requestId,
-            success: false,
-            pieceId,
-            isComplete: false,
-            errors: ["enumerate_destinations must be a JSON array of supported standardized keys or shopify.<key> destinations."],
-            resolutions: {},
-            currentReferenceLists: {},
-            categoryEligibility: {}
-          });
-        }
+      if (!parsedCandidates || typeof parsedCandidates !== "object" || Array.isArray(parsedCandidates)) {
+        return Response.json({
+          intent: "resolveStandardizedCandidates",
+          readOnly: true,
+          requestId,
+          success: false,
+          pieceId,
+          isComplete: false,
+          errors: ["standardized_candidates must be a non-null JSON object."],
+          resolutions: {},
+          currentReferenceLists: {},
+          categoryEligibility: {}
+        });
       }
 
       const inputValidationErrors = [];
       const validatedCandidateEntries = {};
-      const requestedEnumerationKeySet = new Set();
 
-      for (const rawEnumItem of parsedEnumerateList) {
-        if (typeof rawEnumItem !== "string" || rawEnumItem.trim() === "") {
-          inputValidationErrors.push("enumerate_destinations contains an empty or non-string item.");
-          continue;
-        }
-        const trimmedItem = rawEnumItem.trim();
-        const attrKey = trimmedItem.startsWith("shopify.")
-          ? trimmedItem.slice("shopify.".length)
-          : trimmedItem;
-        if (!SUPPORTED_STANDARDIZED_REFERENCE_KEYS.includes(attrKey)) {
-          inputValidationErrors.push(
-            `Disallowed enumerate_destinations key "${trimmedItem}". Supported keys: ${SUPPORTED_STANDARDIZED_REFERENCE_KEYS.join(", ")}.`
-          );
-          continue;
-        }
-        requestedEnumerationKeySet.add(attrKey);
-      }
-
-      for (const [rawKey, val] of Object.entries(parsedCandidates)) {
-        const key = rawKey.startsWith("shopify.") ? rawKey.slice("shopify.".length) : rawKey;
-        if (!SUPPORTED_STANDARDIZED_REFERENCE_KEYS.includes(key)) {
-          inputValidationErrors.push(`Disallowed candidate key "${rawKey}". Supported keys: ${SUPPORTED_STANDARDIZED_REFERENCE_KEYS.join(", ")}.`);
+      for (const [key, val] of Object.entries(parsedCandidates)) {
+        if (!ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
+          inputValidationErrors.push(`Disallowed candidate key "${key}". Allowed keys: ${ALLOWED_STANDARDIZED_CANDIDATE_KEYS.join(", ")}.`);
           continue;
         }
         if (!val || typeof val !== "object" || Array.isArray(val)) {
-          inputValidationErrors.push(`Candidate "${rawKey}" must be an object containing labels and evidence.`);
+          inputValidationErrors.push(`Candidate "${key}" must be an object containing labels and evidence.`);
           continue;
         }
         if (!Array.isArray(val.labels) || val.labels.length === 0) {
-          inputValidationErrors.push(`Candidate "${rawKey}" requires a non-empty string array for "labels".`);
+          inputValidationErrors.push(`Candidate "${key}" requires a non-empty string array for "labels".`);
           continue;
         }
         if (typeof val.evidence !== "string" || val.evidence.trim() === "") {
-          inputValidationErrors.push(`Candidate "${rawKey}" requires a non-empty string for "evidence".`);
+          inputValidationErrors.push(`Candidate "${key}" requires a non-empty string for "evidence".`);
           continue;
         }
 
         const cleanLabels = [];
         for (const rawLabel of val.labels) {
           if (typeof rawLabel !== "string" || rawLabel.trim() === "") {
-            inputValidationErrors.push(`Candidate "${rawKey}" contains an empty or non-string label.`);
+            inputValidationErrors.push(`Candidate "${key}" contains an empty or non-string label.`);
             continue;
           }
           if (isGeneratedIdLabel(rawLabel)) {
-            inputValidationErrors.push(`Candidate "${rawKey}" contains a generated ID or invalid identifier as label: "${rawLabel}".`);
+            inputValidationErrors.push(`Candidate "${key}" contains a generated ID or invalid identifier as label: "${rawLabel}".`);
             continue;
           }
           cleanLabels.push(rawLabel.trim());
@@ -1043,7 +944,7 @@ export const action = async ({ request }) => {
           productCategoryReadComplete
         });
         categoryEligibility[dest] = elig;
-        if (!elig.isComplete && !SUPPORTED_STANDARDIZED_REFERENCE_KEYS.includes(stdMetaKey)) {
+        if (!elig.isComplete && !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(stdMetaKey)) {
           nonCandidateConstraintDiagnostics[dest] = elig.reason;
         }
       }
@@ -1137,7 +1038,7 @@ export const action = async ({ request }) => {
               const node = edge?.node;
               if (!node || !node.id) continue;
               if (!/^gid:\/\/shopify\/Metaobject\/\d+$/.test(node.id)) continue;
-              if (!node.definition?.id || node.definition.id !== defNode.id) continue;
+              if (node.definition?.id && node.definition.id !== defNode.id) continue;
 
               const candidateLabels = extractEntryMatchingLabels(node);
               const taxonomyRef = extractTaxonomyReference(node);
@@ -1148,9 +1049,9 @@ export const action = async ({ request }) => {
                 displayName: node.displayName || (candidateLabels[0] ?? null),
                 matchingLabels: candidateLabels,
                 definition: {
-                  id: node.definition.id,
-                  type: node.definition.type || defNode.type,
-                  name: node.definition.name || defNode.name || null
+                  id: node.definition?.id || defNode.id,
+                  type: node.definition?.type || defNode.type,
+                  name: node.definition?.name || defNode.name || null
                 },
                 taxonomy_reference: taxonomyRef
               });
@@ -1182,7 +1083,7 @@ export const action = async ({ request }) => {
       const resolutions = {};
       const currentReferenceLists = {};
 
-      for (const attrKey of SUPPORTED_STANDARDIZED_REFERENCE_KEYS) {
+      for (const attrKey of ALLOWED_STANDARDIZED_CANDIDATE_KEYS) {
         const destination = `shopify.${attrKey}`;
         const storedMf = productShopifyMetafields[destination] || null;
         const parsedStored = parseStoredReferenceList(storedMf?.value);
@@ -1207,12 +1108,10 @@ export const action = async ({ request }) => {
         };
 
         const candidateInput = validatedCandidateEntries[attrKey] || null;
-        const isRequestedForEnumeration = requestedEnumerationKeySet.has(attrKey);
-        if (!candidateInput && !isRequestedForEnumeration) {
+        if (!candidateInput) {
           continue;
         }
 
-        const candidateLabels = candidateInput ? candidateInput.labels : [];
         const fieldErrors = [];
         let fieldStatus = "incomplete";
         let entryMatchStatus = "incomplete";
@@ -1228,7 +1127,7 @@ export const action = async ({ request }) => {
           fieldComplete = false;
           overallComplete = false;
           fieldErrors.push("Initial product metafields, product category, or PRODUCT metafieldDefinitions read did not complete.");
-          for (const lbl of candidateLabels) {
+          for (const lbl of candidateInput.labels) {
             labelResults.push({
               label: lbl,
               status: "incomplete",
@@ -1241,7 +1140,7 @@ export const action = async ({ request }) => {
           entryMatchStatus = "blocked";
           fieldComplete = true;
           fieldErrors.push(`Missing live PRODUCT metafield definition for ${destination}.`);
-          for (const lbl of candidateLabels) {
+          for (const lbl of candidateInput.labels) {
             labelResults.push({
               label: lbl,
               status: "blocked",
@@ -1254,7 +1153,7 @@ export const action = async ({ request }) => {
           entryMatchStatus = "blocked";
           fieldComplete = true;
           fieldErrors.push(`Wrong live type for ${destination}: expected "list.metaobject_reference", got "${liveDef.type || "none"}".`);
-          for (const lbl of candidateLabels) {
+          for (const lbl of candidateInput.labels) {
             labelResults.push({
               label: lbl,
               status: "blocked",
@@ -1264,13 +1163,13 @@ export const action = async ({ request }) => {
           }
         } else if (
           !liveDef.restrictedMetaobjectDefinitionId ||
-          !/^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/.test(liveDef.restrictedMetaobjectDefinitionId)
+          !isExactMetaobjectDefinitionGid(liveDef.restrictedMetaobjectDefinitionId)
         ) {
           fieldStatus = "blocked";
           entryMatchStatus = "blocked";
           fieldComplete = true;
           fieldErrors.push(`Missing or invalid metaobject_definition_id restriction on ${destination}.`);
-          for (const lbl of candidateLabels) {
+          for (const lbl of candidateInput.labels) {
             labelResults.push({
               label: lbl,
               status: "blocked",
@@ -1289,7 +1188,7 @@ export const action = async ({ request }) => {
             entryMatchStatus = "blocked";
             fieldComplete = true;
             fieldErrors.push(enumState.error || `Restricted metaobject definition ${liveDef.restrictedMetaobjectDefinitionId} could not be resolved.`);
-            for (const lbl of candidateLabels) {
+            for (const lbl of candidateInput.labels) {
               labelResults.push({
                 label: lbl,
                 status: "blocked",
@@ -1304,7 +1203,7 @@ export const action = async ({ request }) => {
             overallComplete = false;
             if (enumState.error) fieldErrors.push(enumState.error);
 
-            for (const lbl of candidateLabels) {
+            for (const lbl of candidateInput.labels) {
               const normTarget = normalizeCandidateMatchKey(lbl);
               const partialMatches = enumeratedEntries.filter(entry =>
                 entry.matchingLabels.some(mLbl => normalizeCandidateMatchKey(mLbl) === normTarget)
@@ -1323,7 +1222,7 @@ export const action = async ({ request }) => {
               });
             }
           } else {
-            for (const lbl of candidateLabels) {
+            for (const lbl of candidateInput.labels) {
               const normTarget = normalizeCandidateMatchKey(lbl);
               const exactMatches = enumeratedEntries.filter(entry =>
                 entry.matchingLabels.some(mLbl => normalizeCandidateMatchKey(mLbl) === normTarget)
@@ -1356,19 +1255,15 @@ export const action = async ({ request }) => {
               }
             }
 
-            if (candidateLabels.length === 0) {
-              entryMatchStatus = "enumerated";
+            const statuses = labelResults.map(r => r.status);
+            if (statuses.every(s => s === "matched")) {
+              entryMatchStatus = "matched";
+            } else if (statuses.some(s => s === "ambiguous")) {
+              entryMatchStatus = "ambiguous";
+            } else if (statuses.some(s => s === "missing_entry")) {
+              entryMatchStatus = "missing_entry";
             } else {
-              const statuses = labelResults.map(r => r.status);
-              if (statuses.every(s => s === "matched")) {
-                entryMatchStatus = "matched";
-              } else if (statuses.some(s => s === "ambiguous")) {
-                entryMatchStatus = "ambiguous";
-              } else if (statuses.some(s => s === "missing_entry")) {
-                entryMatchStatus = "missing_entry";
-              } else {
-                entryMatchStatus = "incomplete";
-              }
+              entryMatchStatus = "incomplete";
             }
 
             if (!catElig.isComplete) {
@@ -1399,16 +1294,10 @@ export const action = async ({ request }) => {
           isComplete: fieldComplete,
           isCategoryEligible: catElig.isEligible === true,
           categoryEligibility: catElig,
-          restrictedMetaobjectDefinitionId:
-            resolvedMetaobjectDefinition?.id ||
-            liveDef?.restrictedMetaobjectDefinitionId ||
-            null,
-          candidate: candidateInput
-            ? {
-                labels: candidateInput.labels,
-                evidence: candidateInput.evidence
-              }
-            : null,
+          candidate: {
+            labels: candidateInput.labels,
+            evidence: candidateInput.evidence
+          },
           currentAssignment: currentReferenceLists[destination],
           metafieldDefinition: liveDef
             ? {
@@ -2174,7 +2063,7 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        if ((isBenchV2OptIn || ns === "shopify") && !defsReadComplete) {
+        if (isBenchV2OptIn && !defsReadComplete) {
             blockedFields[fullKey] = `Live PRODUCT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`;
             continue;
         }
@@ -2184,7 +2073,7 @@ export const action = async ({ request }) => {
           : (currentMetafields[canonicalDestinationKey] ?? null);
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
 
-        if (ns === "shopify" && !SUPPORTED_STANDARDIZED_REFERENCE_KEYS.includes(key)) {
+        if (ns === "shopify" && !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
             if (!currentVal && valStr === "") {
                 unchanged.push(fullKey);
             } else if (currentVal === valStr) {
@@ -2210,7 +2099,7 @@ export const action = async ({ request }) => {
           def?.error ||
           null;
 
-        if ((isBenchV2OptIn || ns === "shopify") && destinationDefErr) {
+        if (isBenchV2OptIn && destinationDefErr) {
             blockedFields[fullKey] = `Definition or constraint error on ${canonicalDestinationKey}: ${destinationDefErr}`;
             continue;
         }
@@ -2257,17 +2146,6 @@ export const action = async ({ request }) => {
             }
         }
 
-        if (ns === "shopify") {
-            if (!def?.type) {
-                blockedFields[fullKey] = `Missing live PRODUCT metafield definition for ${canonicalDestinationKey}; standardized reference attributes require a live PRODUCT definition.`;
-                continue;
-            }
-            if (def.type !== "list.metaobject_reference") {
-                blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: live PRODUCT definition is ${def.type}, expected list.metaobject_reference.`;
-                continue;
-            }
-        }
-
         const observedShopifyType = def?.type || storedType || null;
         const intendedContractWriteType = !observedShopifyType
           ? (isBenchV2OptIn ? benchV2ReviewedContractType : reviewedContractType)
@@ -2293,7 +2171,7 @@ export const action = async ({ request }) => {
 
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
             const catElig = evaluateStandardizedCategoryEligibility({
-                destination: canonicalDestinationKey,
+                destination: fullKey,
                 liveDef: def,
                 defsReadComplete,
                 productCategory,
@@ -2378,54 +2256,34 @@ export const action = async ({ request }) => {
           if (resolvedType.includes("list.")) {
              try {
                 const parsed = JSON.parse(resolvedValue);
-                if (!Array.isArray(parsed) || parsed.length === 0) throw new Error();
+                if (!Array.isArray(parsed)) throw new Error();
 
-                const seenIds = new Set();
                 for (const item of parsed) {
-                    if (typeof item !== "string" || !/^gid:\/\/shopify\/Metaobject\/\d+$/.test(item.trim())) {
+                    if (!String(item).startsWith("gid://shopify/Metaobject/")) {
                         throw new Error(`Invalid item: ${item}`);
                     }
-                    const trimmedId = item.trim();
-                    if (seenIds.has(trimmedId)) {
-                        throw new Error(`Duplicate item: ${trimmedId}`);
-                    }
-                    seenIds.add(trimmedId);
-                    idsToVerify.push(trimmedId);
+                    idsToVerify.push(String(item));
                 }
-                resolvedValue = JSON.stringify(idsToVerify);
+                resolvedValue = JSON.stringify(parsed);
              } catch (e) {
-                if (!isBenchV2OptIn && /^gid:\/\/shopify\/Metaobject\/\d+$/.test(resolvedValue)) {
+                if (resolvedValue.startsWith("gid://shopify/Metaobject/")) {
                     idsToVerify.push(resolvedValue);
                     resolvedValue = JSON.stringify([resolvedValue]);
                 } else {
-                    blockedFields[fullKey] = `Requires valid non-empty JSON array of unique Metaobject GIDs, got invalid value instead.`;
+                    blockedFields[fullKey] = `Requires valid JSON array of metaobject reference IDs, got text instead.`;
                     continue;
                 }
              }
           } else {
-             if (!/^gid:\/\/shopify\/Metaobject\/\d+$/.test(String(resolvedValue))) {
+             if (!String(resolvedValue).startsWith("gid://shopify/Metaobject/")) {
                 blockedFields[fullKey] = `Requires metaobject reference ID, got plain text.`;
                 continue;
              }
              idsToVerify.push(String(resolvedValue));
           }
 
-          if (currentVal !== null && currentVal !== undefined && String(currentVal).trim() !== "") {
-             const parsedExisting = parseStoredReferenceList(currentVal);
-             if (!parsedExisting.valid) {
-                 blockedFields[fullKey] = `Existing stored reference list on ${canonicalDestinationKey} could not be parsed safely (${parsedExisting.error}); refusing to overwrite.`;
-                 continue;
-             }
-             const proposedIdSet = new Set(idsToVerify);
-             const droppedExisting = parsedExisting.ids.find((existingId) => !proposedIdSet.has(existingId));
-             if (droppedExisting) {
-                 blockedFields[fullKey] = `Proposal for ${canonicalDestinationKey} is missing existing assigned Metaobject ${droppedExisting}; existing reference assignments are preserved and never silently removed.`;
-                 continue;
-             }
-          }
-
-          const requiredDefId = def?.requiredDefinitionId || def?.restrictedMetaobjectDefinitionId;
-          if (!requiredDefId || !/^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/.test(requiredDefId)) {
+          const requiredDefId = def?.requiredDefinitionId;
+          if (!requiredDefId) {
              blockedFields[fullKey] = "Destination field lacks a required metaobject definition ID restriction.";
              continue;
           }
@@ -2449,9 +2307,6 @@ export const action = async ({ request }) => {
                          }
                       `, { variables: { id: moId } });
                       const moJson = await moRes.json();
-                      if (moJson.errors?.length) {
-                          throw new Error(moJson.errors.map(e => e.message).join("; "));
-                      }
                       const actualDefId = moJson?.data?.metaobject?.definition?.id;
 
                       if (!actualDefId) {
@@ -3195,7 +3050,7 @@ export const action = async ({ request }) => {
          let expStr = String(m.value).trim();
          let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
 
-         if ((isBenchV2OptIn || m.namespace === "shopify") && actualProdType !== m.type) {
+         if (isBenchV2OptIn && actualProdType !== m.type) {
              readBackVerified = false;
              unresolvedChanges[dotKey] = {
                  owner: "PRODUCT",

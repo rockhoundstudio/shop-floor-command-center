@@ -22,6 +22,7 @@ import {
 const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 const EXACT_PRODUCT_VARIANT_GID_REGEX = /^gid:\/\/shopify\/ProductVariant\/\d+$/;
 const EXACT_METAOBJECT_DEF_GID_REGEX = /^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/;
+const EXACT_MEDIA_IMAGE_GID_REGEX = /^gid:\/\/shopify\/MediaImage\/\d+$/;
 
 export function isExactProductGid(value) {
   return typeof value === "string" && EXACT_PRODUCT_GID_REGEX.test(value);
@@ -33,6 +34,10 @@ export function isExactProductVariantGid(value) {
 
 export function isExactMetaobjectDefinitionGid(value) {
   return typeof value === "string" && EXACT_METAOBJECT_DEF_GID_REGEX.test(value);
+}
+
+export function isExactMediaImageGid(value) {
+  return typeof value === "string" && EXACT_MEDIA_IMAGE_GID_REGEX.test(value);
 }
 
 /**
