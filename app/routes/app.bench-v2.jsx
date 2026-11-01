@@ -8,10 +8,10 @@
 // read-only compatibility custom.geological_era], and Channel Attributes
 // [PRODUCT custom.google_product_category + single-variant PRODUCTVARIANT
 // mm-google-shopping.age_group, condition, gender]), Drawer 10 (18 retained
-// shopify.* standardized reference attributes with read-only choice loading,
-// category constraint eligibility, verified restricted Metaobject definition
-// membership, and exact-value approval), plus read-only Drawers 9 and 11
-// (Parked & Protected inventory), with Sidekick live bench snapshot sync.
+// shopify.* standardized reference attributes with automatic read-only choice
+// loading, category constraint eligibility, verified restricted Metaobject
+// definition membership, and exact-value approval), plus read-only Drawers 9
+// and 11 (Parked & Protected inventory), with Sidekick live bench snapshot sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -46,16 +46,15 @@ import {
   evaluateBenchV2FieldRow
 } from "../utils/bench-v2.contract.jsx";
 import {
-  SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
-  isExactMetaobjectGid,
-  extractEntryGid,
-  extractEntryLabel,
-  extractEntryDefinitionId
+  isExactMetaobjectGid
 } from "../utils/meta-injector.standardized.jsx";
 import {
-  REGISTRY_BY_OWNER_IDENTITY,
-  FIELD_CATALOG
-} from "../utils/meta-injector.constants.jsx";
+  useBenchV2StandardizedReferenceLoader
+} from "../utils/bench-v2.reference-loader.jsx";
+import {
+  generateBenchSessionId,
+  useBenchV2LiveTelemetryPublisher
+} from "../utils/bench-v2.telemetry-sync.jsx";
 
 export { checkExistingWriterStringFidelity };
 
@@ -75,333 +74,12 @@ export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
   { label: "Source: Manual", value: "Manual" }
 ]);
 
-const CATALOG_META_BY_OWNER_IDENTITY = Object.freeze(
-  (Array.isArray(FIELD_CATALOG) ? FIELD_CATALOG : []).reduce((acc, entry) => {
-    if (entry && entry.registryOwner && entry.registryIdentity) {
-      acc[`${entry.registryOwner}:${entry.registryIdentity}`] = entry;
-    }
-    return acc;
-  }, {})
-);
-
-const TELEMETRY_ENDPOINT_PATH = "/api/meta-injector-telemetry";
-const TELEMETRY_LIVE_BENCH_MODE = "live_bench_state";
-const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024;
-const TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
-const TELEMETRY_MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
-
 function getProposalValueString(rawEntry) {
   return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
     ? rawEntry.value
     : typeof rawEntry === "string"
       ? rawEntry
       : "";
-}
-
-function measureUtf8BytesClient(str) {
-  if (typeof str !== "string" || str.length === 0) return 0;
-  try {
-    if (typeof TextEncoder !== "undefined") {
-      return new TextEncoder().encode(str).byteLength;
-    }
-  } catch {
-    // Fallback below
-  }
-  let bytes = 0;
-  for (let i = 0; i < str.length; i += 1) {
-    const code = str.charCodeAt(i);
-    if (code < 0x80) bytes += 1;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) {
-      bytes += 4;
-      i += 1;
-    } else bytes += 3;
-  }
-  return bytes;
-}
-
-function generateBenchSessionId() {
-  let randPart = "";
-  try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      randPart = crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, "");
-    }
-  } catch {
-    // Fallback below
-  }
-  if (!randPart) {
-    randPart = `${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
-  }
-  const candidate = `bv2_${Date.now()}_${randPart}`.replace(/[^A-Za-z0-9._:-]/g, "");
-  return candidate.slice(0, 96);
-}
-
-function resolveActualEventOrdering(aiScanReport, saveReport, refChoicesReport = null) {
-  const candidates = [];
-
-  if (aiScanReport && typeof aiScanReport.completedAt === "string") {
-    const ms = Date.parse(aiScanReport.completedAt);
-    if (Number.isFinite(ms)) {
-      candidates.push({
-        ms,
-        runIdentity: aiScanReport.requestId || null,
-        runTimestamp: aiScanReport.completedAt,
-        latestEventKind: "ai_scan"
-      });
-    }
-  }
-
-  if (saveReport && typeof saveReport.completedAt === "string") {
-    const ms = Date.parse(saveReport.completedAt);
-    if (Number.isFinite(ms)) {
-      candidates.push({
-        ms,
-        runIdentity: saveReport.submissionId || null,
-        runTimestamp: saveReport.completedAt,
-        latestEventKind: "save_attempt"
-      });
-    }
-  }
-
-  if (refChoicesReport && typeof refChoicesReport.completedAt === "string") {
-    const ms = Date.parse(refChoicesReport.completedAt);
-    if (Number.isFinite(ms)) {
-      candidates.push({
-        ms,
-        runIdentity: refChoicesReport.requestId || null,
-        runTimestamp: refChoicesReport.completedAt,
-        latestEventKind: "reference_choices_load"
-      });
-    }
-  }
-
-  if (candidates.length === 0) {
-    return {
-      runIdentity: null,
-      runTimestamp: null,
-      latestEventKind: null
-    };
-  }
-
-  candidates.sort((a, b) => b.ms - a.ms);
-  return {
-    runIdentity: candidates[0].runIdentity,
-    runTimestamp: candidates[0].runTimestamp,
-    latestEventKind: candidates[0].latestEventKind
-  };
-}
-
-function buildStandardizedBaselineContextSignature(baselineSnap) {
-  if (!baselineSnap || typeof baselineSnap !== "object") return "no_baseline";
-  const productId =
-    typeof baselineSnap.productId === "string" && baselineSnap.productId.trim() !== ""
-      ? baselineSnap.productId.trim()
-      : "no_product";
-  const hasCatObj =
-    baselineSnap.productCategory && typeof baselineSnap.productCategory === "object";
-  const catState =
-    baselineSnap.productCategory === undefined
-      ? "cat_missing"
-      : baselineSnap.productCategory === null
-        ? "cat_null"
-        : "cat_object";
-  const catId =
-    hasCatObj && typeof baselineSnap.productCategory.id === "string"
-      ? baselineSnap.productCategory.id
-      : "";
-  const catFullName =
-    hasCatObj && typeof baselineSnap.productCategory.fullName === "string"
-      ? baselineSnap.productCategory.fullName
-      : "";
-  const mfComplete =
-    baselineSnap.metafieldsReadComplete === true
-      ? "complete"
-      : baselineSnap.metafieldsReadComplete === false
-        ? "incomplete"
-        : "unknown";
-  const defsComplete =
-    baselineSnap.defsReadComplete === true
-      ? "complete"
-      : baselineSnap.defsReadComplete === false
-        ? "incomplete"
-        : "unknown";
-  const catComplete =
-    baselineSnap.productCategoryReadComplete === true
-      ? "complete"
-      : baselineSnap.productCategoryReadComplete === false
-        ? "incomplete"
-        : "unknown";
-  const mfReadErr =
-    typeof baselineSnap.metafieldsReadError === "string"
-      ? baselineSnap.metafieldsReadError
-      : "";
-  const defReadErrs = Array.isArray(baselineSnap.defReadErrors)
-    ? baselineSnap.defReadErrors.map((e) => String(e ?? "")).join(";")
-    : "no_def_err_array";
-  const topErrs = Array.isArray(baselineSnap.errors)
-    ? baselineSnap.errors.map((e) => String(e ?? "")).join(";")
-    : "no_top_err_array";
-
-  const hasLiveDefsMap = Boolean(
-    baselineSnap.liveDefinitions &&
-      typeof baselineSnap.liveDefinitions === "object" &&
-      !Array.isArray(baselineSnap.liveDefinitions)
-  );
-  const hasEligMap = Boolean(
-    baselineSnap.categoryEligibilityByDestination &&
-      typeof baselineSnap.categoryEligibilityByDestination === "object" &&
-      !Array.isArray(baselineSnap.categoryEligibilityByDestination)
-  );
-  const hasConstraintErrMap = Boolean(
-    baselineSnap.constraintErrorsByDestination &&
-      typeof baselineSnap.constraintErrorsByDestination === "object" &&
-      !Array.isArray(baselineSnap.constraintErrorsByDestination)
-  );
-  const hasMfMap = Boolean(
-    baselineSnap.currentMetafields &&
-      typeof baselineSnap.currentMetafields === "object" &&
-      !Array.isArray(baselineSnap.currentMetafields)
-  );
-  const hasMfTypesMap = Boolean(
-    baselineSnap.currentMetafieldTypes &&
-      typeof baselineSnap.currentMetafieldTypes === "object" &&
-      !Array.isArray(baselineSnap.currentMetafieldTypes)
-  );
-
-  const perDestParts = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => {
-    const dest = `shopify.${k}`;
-    const hasDef =
-      hasLiveDefsMap &&
-      Object.prototype.hasOwnProperty.call(baselineSnap.liveDefinitions, dest) &&
-      baselineSnap.liveDefinitions[dest] !== undefined &&
-      baselineSnap.liveDefinitions[dest] !== null;
-    const def = hasDef ? baselineSnap.liveDefinitions[dest] : null;
-    const defConstraints =
-      def && def.constraints && typeof def.constraints === "object"
-        ? def.constraints
-        : null;
-    const constraintVals = Array.isArray(defConstraints?.values)
-      ? defConstraints.values.map((v) => String(v ?? "")).join(",")
-      : "no_vals";
-
-    const hasElig =
-      hasEligMap &&
-      Object.prototype.hasOwnProperty.call(
-        baselineSnap.categoryEligibilityByDestination,
-        dest
-      ) &&
-      baselineSnap.categoryEligibilityByDestination[dest] !== undefined &&
-      baselineSnap.categoryEligibilityByDestination[dest] !== null;
-    const elig = hasElig ? baselineSnap.categoryEligibilityByDestination[dest] : null;
-
-    const constraintErr =
-      hasConstraintErrMap &&
-      Object.prototype.hasOwnProperty.call(
-        baselineSnap.constraintErrorsByDestination,
-        dest
-      )
-        ? String(baselineSnap.constraintErrorsByDestination[dest] ?? "")
-        : "";
-
-    const hasStoredMf =
-      hasMfMap &&
-      Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafields, dest) &&
-      baselineSnap.currentMetafields[dest] !== undefined;
-    const rawStored = hasStoredMf ? baselineSnap.currentMetafields[dest] : undefined;
-    const storedPresence = !hasMfMap
-      ? "mf_map_missing"
-      : !hasStoredMf
-        ? "absent"
-        : rawStored === null
-          ? "null"
-          : "present";
-    const storedValStr =
-      rawStored === undefined || rawStored === null ? "" : String(rawStored);
-    const storedType =
-      hasMfTypesMap &&
-      Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafieldTypes, dest) &&
-      baselineSnap.currentMetafieldTypes[dest] !== undefined &&
-      baselineSnap.currentMetafieldTypes[dest] !== null
-        ? String(baselineSnap.currentMetafieldTypes[dest])
-        : "";
-
-    return JSON.stringify([
-      dest,
-      hasLiveDefsMap ? (hasDef ? "def_present" : "def_absent") : "defs_map_missing",
-      def?.id || "",
-      def?.type || "",
-      def?.restrictedMetaobjectDefinitionId || def?.requiredDefinitionId || "",
-      defConstraints
-        ? `${String(defConstraints.hasConstraints)}:${defConstraints.key || ""}:${String(defConstraints.isComplete)}:${defConstraints.error || ""}:${constraintVals}`
-        : "no_constraints_obj",
-      hasEligMap ? (hasElig ? "elig_present" : "elig_absent") : "elig_map_missing",
-      elig
-        ? `${String(elig.isComplete)}:${String(elig.isEligible)}:${elig.status || ""}:${elig.matchedConstraintValue || ""}:${elig.reason || ""}`
-        : "no_elig_obj",
-      constraintErr,
-      storedPresence,
-      storedType,
-      storedValStr
-    ]);
-  }).join("|");
-
-  return `${productId}::${catState}:${catId}:${catFullName}::${mfComplete}::${defsComplete}::${catComplete}::${mfReadErr}::${defReadErrs}::${topErrs}::${perDestParts}`;
-}
-
-function resolveFieldRegistryAndApplicabilityMeta(contract) {
-  const owner = contract.owner || "PRODUCT";
-  const destKey = contract.destinationKey;
-  const compositeKey = `${owner}:${destKey}`;
-
-  const regEntry = REGISTRY_BY_OWNER_IDENTITY?.[compositeKey] || null;
-  const catEntry = CATALOG_META_BY_OWNER_IDENTITY?.[compositeKey] || null;
-
-  let registryRole = regEntry?.role || catEntry?.registryRole || null;
-  if (!registryRole) {
-    if (contract.batchStage === "PROTECTED_READ_ONLY") {
-      registryRole = "PROTECTED_DATA";
-    } else if (contract.batchStage === "PARKED_EXCLUDED_READ_ONLY") {
-      registryRole = "EXCLUDED_INPUT";
-    } else if (contract.batchStage === "READ_ONLY_COMPATIBILITY") {
-      registryRole = "COMPAT_REP";
-    } else if (
-      contract.drawerId === "manual_measurements" &&
-      contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD"
-    ) {
-      registryRole = "APPROVED_MEASUREMENT_ADDITION";
-    } else {
-      registryRole = "PRIMARY_CANDIDATE_DESTINATION";
-    }
-  }
-
-  const isProtectedAppData =
-    registryRole === "PROTECTED_DATA" ||
-    contract.batchStage === "PROTECTED_READ_ONLY" ||
-    contract.writeCapability === "PROTECTED_NO_WRITE";
-
-  const isParkedExcluded =
-    !isProtectedAppData &&
-    (registryRole === "EXCLUDED_INPUT" ||
-      contract.batchStage === "PARKED_EXCLUDED_READ_ONLY" ||
-      contract.writeCapability === "PARKED_EXCLUDED_NO_WRITE");
-
-  const applicability =
-    typeof catEntry?.applicability === "string" && catEntry.applicability.trim() !== ""
-      ? catEntry.applicability.trim()
-      : isProtectedAppData
-        ? "protected_read_only"
-        : isParkedExcluded
-          ? "parked_excluded"
-          : "not_evaluated";
-
-  return {
-    registryOwner: owner,
-    registryIdentity: destKey,
-    registryRole,
-    isProtectedAppData,
-    isParkedExcluded,
-    applicability
-  };
 }
 
 const GET_LIGHTWEIGHT_PRODUCT_PAGE_QUERY = `
@@ -647,7 +325,7 @@ function cleanFieldHeading(rawLabel) {
     .trim();
 }
 
-function getShortPlainNotice(row) {
+function getShortPlainNotice(row, isRefChoicesBusy = false) {
   const {
     contract,
     baselineObservation: obs,
@@ -799,7 +477,9 @@ function getShortPlainNotice(row) {
     if (!referenceEvidence || !referenceEvidence.evidenceLoaded) {
       return {
         tone: "muted",
-        text: `Eligible on this product (Def: ${obs.restrictedMetaobjectDefinitionId}) — click "Load Reference Choices" in Drawer 10 to verify allowed entries before approving.`
+        text: isRefChoicesBusy
+          ? `Loading verified Metaobject reference choices for ${obs.restrictedMetaobjectDefinitionId}...`
+          : `Eligible on this product (Def: ${obs.restrictedMetaobjectDefinitionId}) — reference choices load automatically when the product baseline is ready.`
       };
     }
     if (!referenceEvidence.isComplete) {
@@ -807,7 +487,7 @@ function getShortPlainNotice(row) {
         tone: "error",
         text:
           referenceEvidence.error ||
-          "Reference entry enumeration failed or is incomplete — click 'Load Reference Choices' to retry."
+          "Reference entry enumeration failed or is incomplete — use Retry Reference Choices if needed."
       };
     }
     if (referenceEvidence.entriesByGid.size === 0) {
@@ -1160,7 +840,6 @@ export default function BenchV2Route() {
   const writerFetcher = useFetcher();
   const aiScanFetcher = useFetcher();
   const pickerFetcher = useFetcher();
-  const refChoicesFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawUrlProductId = searchParams.get("productId");
@@ -1249,12 +928,8 @@ export default function BenchV2Route() {
   const processedAiScanRequestIdRef = useRef(null);
   const activeAiScanRequestRef = useRef(null);
 
-  // 9B. Explicit Read-Only Standardized Reference Choices Tracking & State
-  const [activeRefChoicesRequest, setActiveRefChoicesRequest] = useState(null);
-  const [refChoicesStateByProduct, setRefChoicesStateByProduct] = useState({});
+  // 9B. Staged Vision Candidates State (Populated by AI Scan, read by Reference Loader & Telemetry)
   const [stagedVisionCandidatesByProduct, setStagedVisionCandidatesByProduct] = useState({});
-  const processedRefChoicesRequestIdRef = useRef(null);
-  const activeRefChoicesRequestRef = useRef(null);
 
   // 10. Presentation-Only State: All drawers initially collapsed + View-Only Drawer Filter
   const [openDrawersById, setOpenDrawersById] = useState(() =>
@@ -1270,32 +945,16 @@ export default function BenchV2Route() {
   const blurClearTimersRef = useRef(new Map());
   const isMountedRef = useRef(true);
 
-  // 12. Read-Only Sidekick Live Snapshot Publication State
+  // 12. Shared Bench Session Identity (Owned by Bench, shared by Reference Loader & Telemetry)
   const benchSessionIdRef = useRef(null);
   if (!benchSessionIdRef.current) {
     benchSessionIdRef.current = generateBenchSessionId();
   }
-  const benchRevisionRef = useRef(0);
-  const lastEnqueuedFingerprintRef = useRef(null);
-  const latestQueuedSnapshotSpecRef = useRef(null);
-  const isTelemetrySendInFlightRef = useRef(false);
-  const [telemetrySyncStatus, setTelemetrySyncStatus] = useState(() => ({
-    state: "idle",
-    benchSessionId: benchSessionIdRef.current,
-    benchRevision: 0,
-    reportId: null,
-    productId: null,
-    clientStateChangedAt: null,
-    serverReceivedAt: null,
-    errorCode: null,
-    message: "Waiting for initial bench state sync."
-  }));
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      latestQueuedSnapshotSpecRef.current = null;
       for (const timerId of blurClearTimersRef.current.values()) {
         clearTimeout(timerId);
       }
@@ -1411,10 +1070,6 @@ export default function BenchV2Route() {
     activeAiScanRequestRef.current = activeAiScanRequest;
   }, [activeAiScanRequest]);
 
-  useEffect(() => {
-    activeRefChoicesRequestRef.current = activeRefChoicesRequest;
-  }, [activeRefChoicesRequest]);
-
   const baselineByProductRef = useRef(baselineByProduct);
   useEffect(() => {
     baselineByProductRef.current = baselineByProduct;
@@ -1434,6 +1089,11 @@ export default function BenchV2Route() {
   useEffect(() => {
     keepOriginalByProductRef.current = keepOriginalByProduct;
   }, [keepOriginalByProduct]);
+
+  const stagedVisionCandidatesByProductRef = useRef(stagedVisionCandidatesByProduct);
+  useEffect(() => {
+    stagedVisionCandidatesByProductRef.current = stagedVisionCandidatesByProduct;
+  }, [stagedVisionCandidatesByProduct]);
 
   useEffect(() => {
     const snap = loaderData?.baselineSnapshot;
@@ -1482,37 +1142,38 @@ export default function BenchV2Route() {
         ? loaderData.baselineSnapshot
         : null;
 
-  const currentRefChoicesRecord = refChoicesStateByProduct[activeProductId] || null;
-  const currentBaselineContextSig = React.useMemo(
-    () => buildStandardizedBaselineContextSignature(rawCurrentBaseline),
-    [rawCurrentBaseline]
-  );
+  const isWriterBusy = writerFetcher.state !== "idle" || Boolean(activeSaveSubmission);
+  const isAiScanBusy = aiScanFetcher.state !== "idle" || Boolean(activeAiScanRequest);
+  const isBaselineReloading = revalidator.state !== "idle";
+  const isPickerLoading = pickerFetcher.state !== "idle";
 
-  // Merge verified reference evidence into currentBaseline ONLY when bound to the
-  // current bench session, current productId, current category, and current baseline context.
-  const isCurrentRefChoicesBoundAndFresh = Boolean(
-    rawCurrentBaseline &&
-      currentRefChoicesRecord &&
-      currentRefChoicesRecord.benchSessionId === benchSessionIdRef.current &&
-      currentRefChoicesRecord.productId === activeProductId &&
-      currentRefChoicesRecord.baselineContextSig === currentBaselineContextSig &&
-      (currentRefChoicesRecord.productCategoryId || null) ===
-        (rawCurrentBaseline.productCategory?.id || null)
-  );
+  const activeProductKnownEntry = knownProductsById[activeProductId] || null;
+  const activeProductTitle =
+    rawCurrentBaseline?.productTitle ||
+    activeProductKnownEntry?.title ||
+    (activeProductId === CANYON_RED_PRODUCT_GID ? "Canyon Red" : activeProductId);
 
-  const currentBaseline = React.useMemo(() => {
-    if (!rawCurrentBaseline) return null;
-    if (!isCurrentRefChoicesBoundAndFresh || !currentRefChoicesRecord) {
-      return rawCurrentBaseline;
-    }
-    return {
-      ...rawCurrentBaseline,
-      verifiedReferenceEntriesByDestination:
-        currentRefChoicesRecord.verifiedReferenceEntriesByDestination || {},
-      standardizedReferenceResolutions:
-        currentRefChoicesRecord.rawResponse || null
-    };
-  }, [rawCurrentBaseline, isCurrentRefChoicesBoundAndFresh, currentRefChoicesRecord]);
+  const {
+    currentBaseline,
+    currentRefChoicesRecord,
+    isCurrentRefChoicesBoundAndFresh,
+    isRefChoicesBusy,
+    canRetryRefChoicesForCurrentProduct,
+    handleLoadStandardizedReferenceChoices,
+    dismissCurrentRefChoicesRecord
+  } = useBenchV2StandardizedReferenceLoader({
+    benchSessionId: benchSessionIdRef.current,
+    activeProductId,
+    activeProductTitle,
+    isSwitchingSelectedProduct,
+    rawCurrentBaseline,
+    baselineByProductRef,
+    stagedVisionCandidatesByProductRef,
+    isWriterBusy,
+    isAiScanBusy,
+    isBaselineReloading,
+    setClientPrevalidationBanner
+  });
 
   const currentProposedMap = proposedByProduct[activeProductId] || {};
   const currentAiAlternativesMap = aiAlternativesByProduct[activeProductId] || {};
@@ -1525,16 +1186,9 @@ export default function BenchV2Route() {
       ? currentAiScanReport.proposalsByDestination
       : {};
 
-  const isWriterBusy = writerFetcher.state !== "idle" || Boolean(activeSaveSubmission);
-  const isAiScanBusy = aiScanFetcher.state !== "idle" || Boolean(activeAiScanRequest);
-  const isRefChoicesBusy =
-    refChoicesFetcher.state !== "idle" || Boolean(activeRefChoicesRequest);
-  const isBaselineReloading = revalidator.state !== "idle";
-  const isPickerLoading = pickerFetcher.state !== "idle";
   const isAnyOperationBusy =
     isWriterBusy || isAiScanBusy || isRefChoicesBusy || isBaselineReloading;
 
-  const activeProductKnownEntry = knownProductsById[activeProductId] || null;
   const activeProductPieceName =
     (typeof currentBaseline?.currentMetafields?.["custom.piece_name"] === "string" &&
       currentBaseline.currentMetafields["custom.piece_name"].trim() !== ""
@@ -1542,11 +1196,6 @@ export default function BenchV2Route() {
       : null) ||
     activeProductKnownEntry?.pieceName ||
     null;
-
-  const activeProductTitle =
-    currentBaseline?.productTitle ||
-    activeProductKnownEntry?.title ||
-    (activeProductId === CANYON_RED_PRODUCT_GID ? "Canyon Red" : activeProductId);
 
   const activeProductHeadline =
     activeProductPieceName && activeProductPieceName !== activeProductTitle
@@ -1671,442 +1320,6 @@ export default function BenchV2Route() {
     }
     setSearchParams(nextParams);
   };
-
-  // ==========================================================================
-  // EXPLICIT READ-ONLY STANDARDIZED REFERENCE CHOICES LOADER
-  // ==========================================================================
-  const handleLoadStandardizedReferenceChoices = () => {
-    setClientPrevalidationBanner(null);
-
-    if (isAnyOperationBusy) {
-      setClientPrevalidationBanner({
-        tone: "warning",
-        title: "Operation already in progress",
-        reasons: [
-          "Wait for the current operation to complete before loading standardized reference choices."
-        ]
-      });
-      return;
-    }
-
-    if (!rawCurrentBaseline || rawCurrentBaseline.productId !== activeProductId) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: "Cannot load reference choices: Product baseline not loaded",
-        reasons: [`Reload ${activeProductTitle} so its baseline and definitions are available.`]
-      });
-      return;
-    }
-
-    if (
-      rawCurrentBaseline.metafieldsReadComplete !== true ||
-      rawCurrentBaseline.defsReadComplete !== true ||
-      rawCurrentBaseline.productCategoryReadComplete === false
-    ) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: "Cannot load reference choices: Baseline read incomplete",
-        reasons: [
-          "Product metafields, product category, or live PRODUCT definitions did not finish loading. Click Reload Product first."
-        ]
-      });
-      return;
-    }
-
-    const requestId = `bench_v2_refchoices_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const enumerateList = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => `shopify.${k}`);
-    const stagedCandidatesForProduct = stagedVisionCandidatesByProduct[activeProductId] || {};
-
-    setActiveRefChoicesRequest({
-      requestId,
-      benchSessionId: benchSessionIdRef.current,
-      productId: activeProductId,
-      baselineContextSig: buildStandardizedBaselineContextSignature(rawCurrentBaseline),
-      productCategoryId: rawCurrentBaseline.productCategory?.id || null,
-      startedAt: new Date().toISOString()
-    });
-
-    const formData = new FormData();
-    formData.append("intent", "resolveStandardizedCandidates");
-    formData.append("pieceId", activeProductId);
-    formData.append("requestId", requestId);
-    formData.append("enumerate_destinations", JSON.stringify(enumerateList));
-    formData.append("standardized_candidates", JSON.stringify(stagedCandidatesForProduct));
-
-    refChoicesFetcher.submit(formData, {
-      method: "POST",
-      action: "/app/meta-injector-api"
-    });
-  };
-
-  useEffect(() => {
-    if (refChoicesFetcher.state !== "idle") return;
-    const pendingReq = activeRefChoicesRequestRef.current;
-    if (!pendingReq) return;
-
-    if (processedRefChoicesRequestIdRef.current === pendingReq.requestId) {
-      return;
-    }
-    processedRefChoicesRequestIdRef.current = pendingReq.requestId;
-
-    const reqProductId = pendingReq.productId;
-    const rawResponse = refChoicesFetcher.data;
-    const latestBaselineForProduct = baselineByProductRef.current[reqProductId] || null;
-    const latestContextSig = buildStandardizedBaselineContextSignature(latestBaselineForProduct);
-
-    const recordFailedOrStaleRefChoices = (stateTag, summary, errorsList = []) => {
-      setRefChoicesStateByProduct((prev) => ({
-        ...prev,
-        [reqProductId]: {
-          requestId: pendingReq.requestId,
-          benchSessionId: pendingReq.benchSessionId,
-          productId: reqProductId,
-          baselineContextSig: pendingReq.baselineContextSig,
-          productCategoryId: pendingReq.productCategoryId,
-          completedAt: new Date().toISOString(),
-          ok: false,
-          state: stateTag,
-          summary,
-          errors: errorsList,
-          verifiedReferenceEntriesByDestination: {},
-          rawResponse: null
-        }
-      }));
-      setActiveRefChoicesRequest(null);
-    };
-
-    if (!rawResponse || typeof rawResponse !== "object") {
-      recordFailedOrStaleRefChoices(
-        "failed_or_incomplete",
-        "Reference choices load failed: no structured response returned by /app/meta-injector-api.",
-        ["No structured response returned by /app/meta-injector-api."]
-      );
-      return;
-    }
-
-    if (
-      rawResponse.intent !== "resolveStandardizedCandidates" ||
-      rawResponse.readOnly !== true ||
-      rawResponse.requestId !== pendingReq.requestId ||
-      rawResponse.pieceId !== reqProductId ||
-      pendingReq.benchSessionId !== benchSessionIdRef.current
-    ) {
-      recordFailedOrStaleRefChoices(
-        "discarded_stale",
-        `Ignored mismatched or stale reference choices response (expected product ${reqProductId} / request ${pendingReq.requestId}, got product ${String(
-          rawResponse.pieceId
-        )} / request ${String(rawResponse.requestId)}).`,
-        ["Mismatched requestId, pieceId, or session."]
-      );
-      return;
-    }
-
-    const responseCategoryId = rawResponse.productCategory?.id || null;
-    if (
-      !latestBaselineForProduct ||
-      latestContextSig !== pendingReq.baselineContextSig ||
-      (latestBaselineForProduct.productCategory?.id || null) !== responseCategoryId
-    ) {
-      recordFailedOrStaleRefChoices(
-        "discarded_stale",
-        "Discarded stale reference choices response because the product baseline or category changed while the request was in flight. Click 'Load Reference Choices' again.",
-        ["Baseline or product category changed during reference enumeration."]
-      );
-      return;
-    }
-
-    const topErrors = Array.isArray(rawResponse.errors)
-      ? rawResponse.errors.filter((e) => typeof e === "string" && e.trim() !== "")
-      : [];
-    if (
-      typeof rawResponse.error === "string" &&
-      rawResponse.error.trim() !== "" &&
-      !topErrors.includes(rawResponse.error.trim())
-    ) {
-      topErrors.unshift(rawResponse.error.trim());
-    }
-
-    const hasResolutionsMap = Boolean(
-      rawResponse.resolutions &&
-        typeof rawResponse.resolutions === "object" &&
-        !Array.isArray(rawResponse.resolutions)
-    );
-    const hasCurrentRefListsMap = Boolean(
-      rawResponse.currentReferenceLists &&
-        typeof rawResponse.currentReferenceLists === "object" &&
-        !Array.isArray(rawResponse.currentReferenceLists)
-    );
-    const hasCategoryEligibilityMap = Boolean(
-      rawResponse.categoryEligibility &&
-        typeof rawResponse.categoryEligibility === "object" &&
-        !Array.isArray(rawResponse.categoryEligibility)
-    );
-
-    const unscopedTopErrors = topErrors.filter((errText) => {
-      const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
-      if (!bracketMatch) return true;
-      const scopedDest = bracketMatch[1].trim();
-      return !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(scopedDest);
-    });
-
-    const allDestRefListsReadComplete =
-      hasCurrentRefListsMap &&
-      SUPPORTED_STANDARDIZED_REFERENCE_KEYS.every((stdKey) => {
-        const destKey = `shopify.${stdKey}`;
-        const refListEntry = rawResponse.currentReferenceLists[destKey];
-        return Boolean(
-          refListEntry &&
-            typeof refListEntry === "object" &&
-            refListEntry.readComplete === true &&
-            refListEntry.parseValid === true
-        );
-      });
-
-    if (
-      rawResponse.defsReadComplete !== true ||
-      !hasResolutionsMap ||
-      !hasCurrentRefListsMap ||
-      !hasCategoryEligibilityMap ||
-      !allDestRefListsReadComplete ||
-      unscopedTopErrors.length > 0
-    ) {
-      const globalFailureReasons =
-        unscopedTopErrors.length > 0
-          ? unscopedTopErrors
-          : topErrors.length > 0
-            ? topErrors
-            : [
-                rawResponse.defsReadComplete !== true
-                  ? "Live PRODUCT metafield definitions read did not complete."
-                  : !allDestRefListsReadComplete
-                    ? "Product standardized metafield reference list read or parse did not complete."
-                    : "Top-level resolveStandardizedCandidates prerequisite evidence was missing or incomplete."
-              ];
-
-      recordFailedOrStaleRefChoices(
-        "failed_or_incomplete",
-        globalFailureReasons[0] ||
-          "Reference choices enumeration failed global prerequisite checks. Click 'Load Reference Choices' to retry.",
-        globalFailureReasons
-      );
-      return;
-    }
-
-    const verifiedMapByDest = {};
-    let eligibleWithChoicesCount = 0;
-    let eligibleEmptyChoicesCount = 0;
-    let categoryIneligibleCount = 0;
-    let incompleteOrBlockedCount = 0;
-
-    for (const stdKey of SUPPORTED_STANDARDIZED_REFERENCE_KEYS) {
-      const destKey = `shopify.${stdKey}`;
-      const resObj = rawResponse.resolutions[destKey];
-      const refListEntry = rawResponse.currentReferenceLists[destKey];
-      const catEligEntry =
-        resObj?.categoryEligibility || rawResponse.categoryEligibility[destKey] || null;
-      const baselineDef = latestBaselineForProduct.liveDefinitions?.[destKey] || null;
-      const expectedDefId = baselineDef?.restrictedMetaobjectDefinitionId || null;
-
-      const scopedTopErrorsForDest = topErrors.filter((errText) => {
-        const bracketMatch = /^\[([^\]]+)\]/.exec(errText.trim());
-        return Boolean(bracketMatch && bracketMatch[1].trim() === destKey);
-      });
-
-      if (!resObj || typeof resObj !== "object") {
-        incompleteOrBlockedCount += 1;
-        verifiedMapByDest[destKey] = {
-          destination: destKey,
-          status: "incomplete",
-          isComplete: false,
-          isCategoryEligible: false,
-          restrictedMetaobjectDefinitionId: expectedDefId,
-          availableEntries: [],
-          errors:
-            scopedTopErrorsForDest.length > 0
-              ? scopedTopErrorsForDest
-              : [`Missing resolution entry for ${destKey}.`]
-        };
-        continue;
-      }
-
-      const resolvedDefId =
-        resObj.restrictedMetaobjectDefinitionId ||
-        resObj.restrictedMetaobjectDefinition?.id ||
-        resObj.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
-        null;
-
-      const defMatchesBaseline = Boolean(
-        isExactMetaobjectDefinitionGid(resolvedDefId) &&
-          isExactMetaobjectDefinitionGid(expectedDefId) &&
-          resolvedDefId === expectedDefId &&
-          resObj.metafieldDefinition?.type === "list.metaobject_reference" &&
-          baselineDef?.type === "list.metaobject_reference"
-      );
-
-      const hasContinuation = Boolean(
-        resObj.continuation &&
-          typeof resObj.continuation === "object" &&
-          resObj.continuation.hasNextPage === true
-      );
-
-      const isCatEligComplete = Boolean(
-        catEligEntry &&
-          typeof catEligEntry === "object" &&
-          catEligEntry.isComplete === true
-      );
-      const isCatEligible = Boolean(
-        isCatEligComplete &&
-          catEligEntry.isEligible === true &&
-          resObj.isCategoryEligible === true &&
-          resObj.status !== "category_ineligible"
-      );
-
-      const isRefListCompleteAndValid = Boolean(
-        refListEntry &&
-          typeof refListEntry === "object" &&
-          refListEntry.readComplete === true &&
-          refListEntry.parseValid === true
-      );
-
-      const rawFieldErrors = Array.isArray(resObj.errors)
-        ? resObj.errors.filter((e) => typeof e === "string" && e.trim() !== "")
-        : [];
-      for (const scopedErr of scopedTopErrorsForDest) {
-        if (!rawFieldErrors.includes(scopedErr)) {
-          rawFieldErrors.push(scopedErr);
-        }
-      }
-
-      const isCompleteCategoryIneligible = Boolean(
-        resObj.isComplete === true &&
-          !hasContinuation &&
-          defMatchesBaseline &&
-          isRefListCompleteAndValid &&
-          isCatEligComplete &&
-          (resObj.status === "category_ineligible" ||
-            resObj.isCategoryEligible === false ||
-            catEligEntry.isEligible === false)
-      );
-
-      const isFieldEligibleAndComplete = Boolean(
-        resObj.isComplete === true &&
-          !hasContinuation &&
-          defMatchesBaseline &&
-          isRefListCompleteAndValid &&
-          isCatEligible &&
-          resObj.status !== "incomplete" &&
-          resObj.status !== "blocked" &&
-          rawFieldErrors.length === 0
-      );
-
-      const rawAvailable = Array.isArray(resObj.availableEntries)
-        ? resObj.availableEntries
-        : [];
-      const verifiedAvailable = [];
-      if (isFieldEligibleAndComplete) {
-        for (const item of rawAvailable) {
-          if (!item || typeof item !== "object") continue;
-          const gid = extractEntryGid(item);
-          const entryDefId = extractEntryDefinitionId(item);
-          if (!isExactMetaobjectGid(gid)) continue;
-          if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
-          verifiedAvailable.push({
-            id: gid,
-            displayName: extractEntryLabel(item) || gid,
-            definition: {
-              id: entryDefId,
-              type:
-                item.definition?.type ||
-                resObj.restrictedMetaobjectDefinition?.type ||
-                null,
-              name:
-                item.definition?.name ||
-                resObj.restrictedMetaobjectDefinition?.name ||
-                null
-            },
-            taxonomy_reference: item.taxonomy_reference ?? null
-          });
-        }
-      }
-
-      if (isCompleteCategoryIneligible) {
-        categoryIneligibleCount += 1;
-      } else if (!isFieldEligibleAndComplete) {
-        incompleteOrBlockedCount += 1;
-      } else if (verifiedAvailable.length === 0) {
-        eligibleEmptyChoicesCount += 1;
-      } else {
-        eligibleWithChoicesCount += 1;
-      }
-
-      const mergedFieldErrors = [...rawFieldErrors];
-      if (!defMatchesBaseline) {
-        mergedFieldErrors.push(
-          `Restricted MetaobjectDefinition mismatch or invalid ID on ${destKey}.`
-        );
-      }
-      if (!isRefListCompleteAndValid) {
-        mergedFieldErrors.push(
-          refListEntry?.parseError ||
-            `Stored reference list read or parse was incomplete on ${destKey}.`
-        );
-      }
-      if (!isCatEligComplete && catEligEntry?.reason && !mergedFieldErrors.includes(catEligEntry.reason)) {
-        mergedFieldErrors.push(catEligEntry.reason);
-      }
-
-      verifiedMapByDest[destKey] = {
-        ...resObj,
-        restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
-        isComplete: isFieldEligibleAndComplete,
-        availableEntries: isFieldEligibleAndComplete ? verifiedAvailable : [],
-        errors: mergedFieldErrors
-      };
-    }
-
-    const overallState =
-      incompleteOrBlockedCount > 0 ? "partial_or_blocked" : "choices_loaded";
-
-    const summaryText = `Reference choices loaded for ${activeProductTitle}: ${eligibleWithChoicesCount} eligible attribute${
-      eligibleWithChoicesCount === 1 ? "" : "s"
-    } with verified choices${
-      eligibleEmptyChoicesCount > 0
-        ? `, ${eligibleEmptyChoicesCount} eligible with 0 entries in Shopify`
-        : ""
-    }${
-      categoryIneligibleCount > 0
-        ? `, ${categoryIneligibleCount} ineligible for category`
-        : ""
-    }${
-      incompleteOrBlockedCount > 0
-        ? `, ${incompleteOrBlockedCount} incomplete or blocked`
-        : ""
-    }.`;
-
-    setRefChoicesStateByProduct((prev) => ({
-      ...prev,
-      [reqProductId]: {
-        requestId: pendingReq.requestId,
-        benchSessionId: pendingReq.benchSessionId,
-        productId: reqProductId,
-        baselineContextSig: pendingReq.baselineContextSig,
-        productCategoryId: responseCategoryId,
-        completedAt: new Date().toISOString(),
-        ok: incompleteOrBlockedCount === 0,
-        state: overallState,
-        summary: summaryText,
-        eligibleWithChoicesCount,
-        eligibleEmptyChoicesCount,
-        categoryIneligibleCount,
-        incompleteOrBlockedCount,
-        errors: topErrors,
-        verifiedReferenceEntriesByDestination: verifiedMapByDest,
-        rawResponse
-      }
-    }));
-
-    setActiveRefChoicesRequest(null);
-  }, [refChoicesFetcher.state, refChoicesFetcher.data, activeProductTitle]);
 
   const handleExplicitAiScanProduct = () => {
     setClientPrevalidationBanner(null);
@@ -3197,9 +2410,25 @@ export default function BenchV2Route() {
               activeSaveReportForCurrentProduct.unconfirmedDestinations.includes(destKey)))
       );
 
-      const effectiveConnectionStatus = baseEval.connectionStatus;
+      let effectiveConnectionStatus = baseEval.connectionStatus;
       let effectiveReviewStatus = baseEval.reviewStatus;
       let effectiveStatusReason = baseEval.statusReason;
+
+      if (
+        fieldContract.namespace === "shopify" &&
+        fieldContract.isWritableInBatch1 &&
+        baseEval.typeAndCompleteness?.ready === true &&
+        (!baseEval.referenceEvidence || !baseEval.referenceEvidence.evidenceLoaded)
+      ) {
+        effectiveConnectionStatus = isRefChoicesBusy
+          ? `Connected (Standardized Reference Eligible — Loading Verified ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId} Choices...)`
+          : `Connected (Standardized Reference Eligible — Reference Choices Load Automatically for ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId})`;
+        if (!baseEval.hasProposalKey) {
+          effectiveStatusReason = isRefChoicesBusy
+            ? `Loading verified Metaobject entries for ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId}...`
+            : `Verified Metaobject entries for ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId} load automatically when the product baseline is ready.`;
+        }
+      }
 
       if (
         fieldContract.isWritableInBatch1 &&
@@ -3299,1017 +2528,41 @@ export default function BenchV2Route() {
   // ==========================================================================
   // SIDEKICK LIVE BENCH SNAPSHOT BUILDER & SINGLE-FLIGHT PUBLISHER
   // ==========================================================================
-  const drainTelemetryPublishQueue = useCallback(async () => {
-    if (isTelemetrySendInFlightRef.current) return;
-    isTelemetrySendInFlightRef.current = true;
-
-    try {
-      while (latestQueuedSnapshotSpecRef.current && isMountedRef.current) {
-        const spec = latestQueuedSnapshotSpecRef.current;
-        latestQueuedSnapshotSpecRef.current = null;
-
-        let nextRevision = Math.max(1, benchRevisionRef.current + 1);
-        benchRevisionRef.current = nextRevision;
-
-        const attemptPublishWithRevision = async (revisionToUse) => {
-          const fullSnapshotObj = {
-            ...spec.snapshotBodyWithoutRevision,
-            benchSessionId: spec.benchSessionId,
-            benchRevision: revisionToUse,
-            selectionState: spec.selectionState,
-            productId: spec.productId,
-            baselineLoadedAt: spec.baselineLoadedAt,
-            clientStateChangedAt: spec.clientStateChangedAt
-          };
-
-          const fullText = JSON.stringify(fullSnapshotObj);
-          const fullTextCodeUnits = fullText.length;
-          const fullTextUtf8Bytes = measureUtf8BytesClient(fullText);
-
-          if (
-            fullTextCodeUnits > TELEMETRY_MAX_FULL_TEXT_CODE_UNITS ||
-            fullTextUtf8Bytes > TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES
-          ) {
-            return {
-              localOversize: true,
-              message: `Snapshot payload (${fullTextUtf8Bytes} UTF-8 bytes / ${fullTextCodeUnits} chars) exceeds cache limit (${TELEMETRY_MAX_FULL_TEXT_CODE_UNITS} chars / ${TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES} bytes); refused to clip or truncate.`
-            };
-          }
-
-          const postEnvelope = {
-            packet: {
-              productId: spec.productId,
-              productTitle: spec.productTitle,
-              mode: TELEMETRY_LIVE_BENCH_MODE,
-              sectionKey: TELEMETRY_LIVE_BENCH_MODE,
-              sectionLabel: "LIVE BENCH FIELD STATE",
-              runIdentity: spec.runIdentity,
-              runTimestamp: spec.runTimestamp,
-              capturedAt: spec.clientStateChangedAt,
-              benchSessionId: spec.benchSessionId,
-              benchRevision: revisionToUse,
-              selectionState: spec.selectionState,
-              baselineLoadedAt: spec.baselineLoadedAt,
-              fullText
-            },
-            uiAudit: null,
-            liveState: {
-              mode: TELEMETRY_LIVE_BENCH_MODE,
-              benchSessionId: spec.benchSessionId,
-              benchRevision: revisionToUse,
-              selectionState: spec.selectionState,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              baselineLoadedAt: spec.baselineLoadedAt
-            }
-          };
-
-          const serializedEnvelope = JSON.stringify(postEnvelope);
-          const envelopeBytes = measureUtf8BytesClient(serializedEnvelope);
-          if (envelopeBytes > TELEMETRY_MAX_POST_BODY_BYTES) {
-            return {
-              localOversize: true,
-              message: `POST body (${envelopeBytes} bytes) exceeds ${TELEMETRY_MAX_POST_BODY_BYTES}-byte endpoint limit; refused to clip.`
-            };
-          }
-
-          const response = await fetch(TELEMETRY_ENDPOINT_PATH, {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json"
-            },
-            body: serializedEnvelope
-          });
-
-          const contentType = response.headers.get("content-type") || "";
-          let parsedJson = null;
-          if (contentType.toLowerCase().includes("application/json")) {
-            try {
-              parsedJson = await response.json();
-            } catch {
-              parsedJson = null;
-            }
-          }
-
-          return {
-            localOversize: false,
-            httpStatus: response.status,
-            redirected: response.redirected,
-            parsedJson
-          };
-        };
-
-        if (isMountedRef.current) {
-          setTelemetrySyncStatus((prev) => ({
-            ...prev,
-            state: "syncing",
-            benchRevision: nextRevision,
-            productId: spec.productId,
-            clientStateChangedAt: spec.clientStateChangedAt,
-            errorCode: null,
-            message: `Publishing revision ${nextRevision} to Sidekick cache...`
-          }));
-        }
-
-        try {
-          let result = await attemptPublishWithRevision(nextRevision);
-
-          if (
-            !result.localOversize &&
-            result.httpStatus === 409 &&
-            result.parsedJson?.code === "stale_bench_revision" &&
-            typeof result.parsedJson?.highestRevision === "number" &&
-            Number.isSafeInteger(result.parsedJson.highestRevision) &&
-            !latestQueuedSnapshotSpecRef.current &&
-            isMountedRef.current
-          ) {
-            nextRevision = result.parsedJson.highestRevision + 1;
-            benchRevisionRef.current = nextRevision;
-            result = await attemptPublishWithRevision(nextRevision);
-          }
-
-          if (!isMountedRef.current) break;
-
-          if (result.localOversize) {
-            setTelemetrySyncStatus({
-              state: "error",
-              benchSessionId: spec.benchSessionId,
-              benchRevision: nextRevision,
-              reportId: null,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              serverReceivedAt: null,
-              errorCode: "payload_too_large_unclipped",
-              message: result.message
-            });
-            continue;
-          }
-
-          const { httpStatus, redirected, parsedJson } = result;
-          if ((httpStatus === 200 || httpStatus === 201) && parsedJson?.ok === true) {
-            const reportMeta = parsedJson.report || null;
-            const sessionMeta = parsedJson.liveSession || null;
-            setTelemetrySyncStatus({
-              state: "stored",
-              benchSessionId: spec.benchSessionId,
-              benchRevision: nextRevision,
-              reportId: reportMeta?.reportId || sessionMeta?.activeReportId || null,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              serverReceivedAt:
-                reportMeta?.serverReceivedAt ||
-                reportMeta?.storedAt ||
-                sessionMeta?.serverReceivedAt ||
-                null,
-              errorCode: null,
-              message: `Revision ${nextRevision} stored in process memory cache (volatile across server restarts or separate workers).`
-            });
-          } else {
-            const errCode =
-              parsedJson?.code ||
-              (redirected || httpStatus === 401 || httpStatus === 403
-                ? "auth_or_origin_rejected"
-                : `http_${httpStatus}`);
-            const errMsg =
-              parsedJson?.message ||
-              (redirected
-                ? "Telemetry POST was redirected (session authentication required)."
-                : `Telemetry POST returned HTTP ${httpStatus}.`);
-            setTelemetrySyncStatus({
-              state: "error",
-              benchSessionId: spec.benchSessionId,
-              benchRevision: nextRevision,
-              reportId: null,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              serverReceivedAt: null,
-              errorCode: errCode,
-              message: errMsg
-            });
-          }
-        } catch (networkErr) {
-          if (!isMountedRef.current) break;
-          setTelemetrySyncStatus({
-            state: "error",
-            benchSessionId: spec.benchSessionId,
-            benchRevision: nextRevision,
-            reportId: null,
-            productId: spec.productId,
-            clientStateChangedAt: spec.clientStateChangedAt,
-            serverReceivedAt: null,
-            errorCode: "network_error",
-            message: `Telemetry sync request failed: ${networkErr?.message || "Network error"}`
-          });
-        }
-      }
-    } finally {
-      isTelemetrySendInFlightRef.current = false;
-      if (latestQueuedSnapshotSpecRef.current && isMountedRef.current) {
-        drainTelemetryPublishQueue();
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isSwitchingSelectedProduct) {
-      return;
-    }
-
-    if (!isExactProductGid(activeProductId)) {
-      return;
-    }
-
-    const hasMatchedBaseline = Boolean(
-      currentBaseline && currentBaseline.productId === activeProductId
-    );
-    const isManifestFullyLoaded = Boolean(
-      hasMatchedBaseline &&
-        currentBaseline.metafieldsReadComplete === true &&
-        currentBaseline.defsReadComplete === true
-    );
-    const baselineLoadedAt =
-      hasMatchedBaseline &&
-      typeof currentBaseline.loadedAt === "string" &&
-      currentBaseline.loadedAt.trim() !== ""
-        ? currentBaseline.loadedAt.trim()
-        : null;
-
-    const baselineState = !hasMatchedBaseline
-      ? "not_loaded"
-      : isManifestFullyLoaded
-        ? "complete"
-        : "incomplete_read";
-
-    const baselineEventKind = isBaselineReloading
-      ? "reloading"
-      : isWriterBusy
-        ? "saving"
-        : isAiScanBusy
-          ? "ai_scanning"
-          : isRefChoicesBusy
-            ? "loading_reference_choices"
-            : "idle";
-
-    const orderedEvents = resolveActualEventOrdering(
-      currentAiScanReport,
-      activeSaveReportForCurrentProduct,
-      currentRefChoicesRecord
-    );
-
-    const fieldsByKey = {};
-    const sectionOrder = [];
-
-    for (let dIdx = 0; dIdx < evaluatedDrawerGroups.length; dIdx += 1) {
-      const drawer = evaluatedDrawerGroups[dIdx];
-      const sectionTitle = PLAIN_DRAWER_TITLES[drawer.drawerId] || drawer.heading;
-      const drawerFieldKeys = [];
-
-      for (let rIdx = 0; rIdx < drawer.evaluatedRows.length; rIdx += 1) {
-        const row = drawer.evaluatedRows[rIdx];
-        const {
-          contract,
-          baselineObservation: obs,
-          typeAndCompleteness,
-          referenceEvidence,
-          baselineDisplayValue,
-          hasProposalKey,
-          proposedValue,
-          proposedDisplayValue,
-          proposalSource,
-          proposalOrigin,
-          heldAiAlternative,
-          scanProposalMeta,
-          validation,
-          isApproved,
-          isKeepOriginal,
-          fidelityCheck,
-          hasSaveErrorOrConflict,
-          effectiveConnectionStatus,
-          effectiveReviewStatus,
-          effectiveStatusReason,
-          plainLabel,
-          readableSaved,
-          canSelectKeepOriginal
-        } = row;
-
-        const destKey = contract.destinationKey;
-        drawerFieldKeys.push(destKey);
-
-        const regMeta = resolveFieldRegistryAndApplicabilityMeta(contract);
-        const isMediaCapabilityDescriptor = destKey === "native_image_alt";
-        const isShopifyReference = contract.namespace === "shopify";
-        const usesMeaningDisplay = Boolean(
-          contract.usesYesNoMeaningDisplay || isShopifyReference
-        );
-
-        const rawBaselineExists =
-          obs.evidenceAvailable &&
-          obs.presence === "present" &&
-          obs.rawValue !== undefined &&
-          obs.rawValue !== null &&
-          String(obs.rawValue) !== "";
-
-        const canKeepOriginal = canSelectKeepOriginal;
-
-        const isExplicitlyApprovedValid = Boolean(
-          isApproved && fidelityCheck.faithful
-        );
-
-        const isActualBlockedProposal = Boolean(
-          hasProposalKey &&
-            (!validation?.valid || !fidelityCheck.faithful)
-        );
-
-        const hasTechnicalBlock = Boolean(
-          !obs.evidenceAvailable ||
-            obs.metafieldsCompleteState !== "complete" ||
-            obs.defsCompleteState !== "complete" ||
-            Boolean(obs.destinationDefError) ||
-            (contract.isWritableInBatch1 && typeAndCompleteness?.ready !== true)
-        );
-
-        const hasContractOrOwnerHold = Boolean(!contract.isWritableInBatch1);
-
-        let mappedFieldStatus = "Unchanged";
-        if (!obs.evidenceAvailable) {
-          if (obs.presence === "unknown_incomplete_read") {
-            mappedFieldStatus = "Incomplete Read";
-          } else if (
-            obs.presence === "multiple_variants_hold" ||
-            obs.presence === "zero_variants_hold"
-          ) {
-            mappedFieldStatus = "Held (Variant Target)";
-          } else {
-            mappedFieldStatus = "Baseline Not Loaded";
-          }
-        } else if (hasSaveErrorOrConflict) {
-          const isBlockedInSave = Boolean(
-            activeSaveReportForCurrentProduct?.blockedFields &&
-              Object.prototype.hasOwnProperty.call(
-                activeSaveReportForCurrentProduct.blockedFields,
-                destKey
-              )
-          );
-          mappedFieldStatus = isBlockedInSave ? "API Error / Blocked" : "Save Conflict";
-        } else if (isKeepOriginal) {
-          mappedFieldStatus = "Keep original (suggestion rejected)";
-        } else if (
-          isApproved &&
-          (!fidelityCheck.faithful || !validation?.valid)
-        ) {
-          mappedFieldStatus = "Approved, blocked";
-        } else if (isExplicitlyApprovedValid) {
-          mappedFieldStatus = "Approved, not saved";
-        } else if (isActualBlockedProposal) {
-          mappedFieldStatus =
-            validation?.code === "exceeds_max_length"
-              ? "Over limit"
-              : "API Error / Blocked";
-        } else if (hasProposalKey && !validation?.isUnchangedFromStored) {
-          mappedFieldStatus = "Proposed";
-        } else if (
-          !regMeta.isParkedExcluded &&
-          !regMeta.isProtectedAppData &&
-          obs.evidenceAvailable &&
-          (obs.presence === "absent" ||
-            obs.presence === "null" ||
-            obs.presence === "empty_string") &&
-          (destKey === "native_title" || destKey === "native_price")
-        ) {
-          mappedFieldStatus = "Required missing";
-        }
-
-        const proposalStatus = !hasProposalKey
-          ? "none"
-          : isKeepOriginal
-            ? "rejected_keep_original"
-            : isActualBlockedProposal
-              ? "blocked"
-              : validation?.isUnchangedFromStored
-                ? "unchanged"
-                : "proposed";
-
-        const contentNeedsReview = Boolean(
-          !regMeta.isParkedExcluded &&
-            !regMeta.isProtectedAppData &&
-            !isKeepOriginal &&
-            ((hasProposalKey &&
-              !isExplicitlyApprovedValid &&
-              !validation?.isUnchangedFromStored) ||
-              Boolean(heldAiAlternative) ||
-              hasSaveErrorOrConflict)
-        );
-
-        const reasonsList = [];
-        if (effectiveStatusReason) reasonsList.push(effectiveStatusReason);
-        if (hasProposalKey && validation && !validation.valid && validation.reason) {
-          if (!reasonsList.includes(validation.reason)) {
-            reasonsList.push(validation.reason);
-          }
-        }
-        if (hasProposalKey && !fidelityCheck.faithful && fidelityCheck.reason) {
-          if (!reasonsList.includes(fidelityCheck.reason)) {
-            reasonsList.push(fidelityCheck.reason);
-          }
-        }
-
-        const saveConflictEntry =
-          activeSaveReportForCurrentProduct?.conflicts?.[destKey] ||
-          activeSaveReportForCurrentProduct?.unresolvedChanges?.[destKey] ||
-          null;
-
-        const combinedConflictData =
-          heldAiAlternative && saveConflictEntry
-            ? {
-                heldAiAlternative,
-                saveConflict: saveConflictEntry
-              }
-            : heldAiAlternative
-              ? {
-                  kind: "held_ai_alternative",
-                  ...heldAiAlternative
-                }
-              : saveConflictEntry || null;
-
-        const rawValueToStore = obs.rawValue !== undefined ? obs.rawValue : null;
-        const readableBaselineStr =
-          typeof baselineDisplayValue === "string" && baselineDisplayValue !== ""
-            ? baselineDisplayValue
-            : readableSaved;
-
-        const rawStoredBaselineObj = {
-          evidenceAvailable: obs.evidenceAvailable,
-          exists: rawBaselineExists,
-          presence: obs.presence,
-          value: rawValueToStore,
-          ...(obs.variantId ? { variantId: obs.variantId } : {}),
-          ...(obs.variantTargetStatus
-            ? { variantTargetStatus: obs.variantTargetStatus }
-            : {}),
-          ...(obs.storedType ? { storedType: obs.storedType } : {}),
-          ...(obs.liveDefType ? { liveDefType: obs.liveDefType } : {}),
-          ...(obs.restrictedMetaobjectDefinitionId
-            ? { restrictedMetaobjectDefinitionId: obs.restrictedMetaobjectDefinitionId }
-            : {}),
-          ...(obs.metafieldsCompleteState !== "complete"
-            ? { metafieldsCompleteState: obs.metafieldsCompleteState }
-            : {}),
-          ...(obs.defsCompleteState !== "complete"
-            ? { defsCompleteState: obs.defsCompleteState }
-            : {}),
-          ...(obs.destinationDefError
-            ? { destinationDefError: obs.destinationDefError }
-            : {})
-        };
-
-        const evaluatedBaselineObj = {
-          currentExists: rawBaselineExists,
-          ...(readableBaselineStr !== rawValueToStore
-            ? { displayValue: readableBaselineStr }
-            : {}),
-          ...(usesMeaningDisplay ? { usesYesNoMeaningDisplay: true } : {}),
-          ...(isMediaCapabilityDescriptor
-            ? { isDisplayOnlyPlaceholderOrNa: true }
-            : {})
-        };
-
-        const effectiveSource =
-          hasProposalKey && proposalSource && proposalSource !== "None"
-            ? proposalSource
-            : scanProposalMeta?.source || null;
-
-        const workingStateObj = {
-          proposalExists: hasProposalKey,
-          isProposed: Boolean(
-            hasProposalKey && !isKeepOriginal && !validation?.isUnchangedFromStored
-          ),
-          proposedValue: hasProposalKey ? proposedValue : null,
-          ...(hasProposalKey &&
-          proposedDisplayValue &&
-          proposedDisplayValue !== proposedValue
-            ? { proposedDisplayValue }
-            : {}),
-          ...(proposalStatus !== "none" ? { proposalStatus } : {}),
-          ...(effectiveSource ? { source: effectiveSource } : {}),
-          ...(proposalOrigin !== "None" ? { origin: proposalOrigin } : {}),
-          ...(hasProposalKey && proposalOrigin === "Manual"
-            ? { isManualEdit: true }
-            : {}),
-          ...(isExplicitlyApprovedValid ? { isApproved: true } : {}),
-          ...(currentApprovalsMap[destKey]
-            ? { approvalRecord: currentApprovalsMap[destKey] }
-            : {}),
-          ...(isKeepOriginal ? { isKeepOriginal: true } : {}),
-          ...(currentKeepOriginalMap[destKey]
-            ? { keepOriginalDecision: currentKeepOriginalMap[destKey] }
-            : {}),
-          ...(canKeepOriginal ? { canKeepOriginal: true } : {}),
-          ...(contentNeedsReview ? { contentNeedsReview: true } : {}),
-          ...(heldAiAlternative ? { heldAiAlternative } : {}),
-          ...(scanProposalMeta ? { lastAiScanOutcome: scanProposalMeta } : {})
-        };
-
-        const isVariantOwner =
-          contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
-        const isVariantHold =
-          isVariantOwner &&
-          (!contract.isWritableInBatch1 || !obs.evidenceAvailable);
-        const isExplicitStorageHold =
-          contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD";
-        const isChannelFlagHold =
-          contract.destinationKey === "mm-google-shopping.custom_product";
-
-        const statusAndHoldsObj = {
-          fieldStatus: mappedFieldStatus,
-          connectionStatus: effectiveConnectionStatus,
-          ...(effectiveReviewStatus !== "Unchanged"
-            ? { reviewStatus: effectiveReviewStatus }
-            : {}),
-          applicability: regMeta.applicability,
-          writeCapability: contract.writeCapability,
-          batchStage: contract.batchStage,
-          expectedType: contract.expectedType,
-          ...(Array.isArray(contract.allowedTypes) &&
-          (contract.allowedTypes.length > 1 ||
-            contract.allowedTypes[0] !== contract.expectedType)
-            ? { allowedTypes: contract.allowedTypes }
-            : {}),
-          ...(contract.reviewedExactContractType
-            ? { reviewedExactContractType: contract.reviewedExactContractType }
-            : {}),
-          ...(typeAndCompleteness?.typeEvidenceSource
-            ? { typeEvidenceSource: typeAndCompleteness.typeEvidenceSource }
-            : {}),
-          ...(typeAndCompleteness?.verifiedActualType
-            ? { verifiedActualType: typeAndCompleteness.verifiedActualType }
-            : {}),
-          ...(isShopifyReference
-            ? {
-                restrictedMetaobjectDefinitionId:
-                  obs.restrictedMetaobjectDefinitionId || null,
-                categoryEligibilityStatus: obs.categoryEligibility?.status || null,
-                referenceChoicesLoaded: Boolean(referenceEvidence?.evidenceLoaded),
-                referenceChoicesVerifiedComplete: Boolean(referenceEvidence?.isComplete),
-                verifiedReferenceChoiceCount: referenceEvidence?.isComplete
-                  ? referenceEvidence.entriesByGid.size
-                  : 0
-              }
-            : {}),
-          ...(contract.maxLength !== null ? { maxLength: contract.maxLength } : {}),
-          ...(contract.canonicalTarget
-            ? { canonicalTarget: contract.canonicalTarget }
-            : {}),
-          ...(regMeta.isParkedExcluded ? { isParkedExcluded: true } : {}),
-          ...(regMeta.isProtectedAppData ? { isProtectedAppData: true } : {}),
-          ...(isMediaCapabilityDescriptor
-            ? { isImageAltCapabilityPlaceholder: true }
-            : {}),
-          ...(isActualBlockedProposal ? { isActualBlockedProposal: true } : {}),
-          ...(hasTechnicalBlock ? { hasTechnicalBlock: true } : {}),
-          ...(hasContractOrOwnerHold ? { hasContractOrOwnerHold: true } : {}),
-          ...(isExplicitStorageHold ? { hasExplicitStorageHold: true } : {}),
-          ...(isVariantHold ? { isVariantMetafieldHold: true } : {}),
-          ...(!contract.isWritableInBatch1 ? { isPendingReadOnly: true } : {}),
-          ...(isChannelFlagHold ? { isChannelFlagReadOnly: true } : {}),
-          ...(reasonsList.length > 0 ? { reasons: reasonsList } : {})
-        };
-
-        const wasSubmittedInLastRepair = Boolean(
-          activeSaveReportForCurrentProduct?.submittedDestinations?.includes(destKey)
-        );
-        const verifiedInLastRepair = Boolean(
-          activeSaveReportForCurrentProduct?.verifiedDestinations?.includes(destKey)
-        );
-        const blockedInLastRepair =
-          activeSaveReportForCurrentProduct?.blockedFields?.[destKey] || null;
-        const unconfirmedInLastRepair = Boolean(
-          activeSaveReportForCurrentProduct?.unconfirmedDestinations?.includes(destKey)
-        );
-
-        const hasAnySaveOrConflictEvidence = Boolean(
-          combinedConflictData ||
-            wasSubmittedInLastRepair ||
-            verifiedInLastRepair ||
-            blockedInLastRepair ||
-            unconfirmedInLastRepair
-        );
-
-        const fieldEntry = {
-          key: destKey,
-          section: sectionTitle,
-          drawerId: contract.drawerId,
-          label: plainLabel || contract.label,
-          registryOwner: regMeta.registryOwner,
-          ...(obs.variantId ? { variantId: obs.variantId } : {}),
-          ...(regMeta.registryIdentity !== destKey
-            ? { registryIdentity: regMeta.registryIdentity }
-            : {}),
-          registryRole: regMeta.registryRole,
-          ...(regMeta.isParkedExcluded ? { isParkedExcluded: true } : {}),
-          ...(regMeta.isProtectedAppData ? { isProtectedAppData: true } : {}),
-          ...(isManualOnlyNoAiDestination(destKey, contract)
-            ? { isManualOnlyNoAi: true }
-            : {}),
-          rawStoredBaseline: rawStoredBaselineObj,
-          evaluatedBaseline: evaluatedBaselineObj,
-          workingState: workingStateObj,
-          statusAndHolds: statusAndHoldsObj,
-          ...(hasAnySaveOrConflictEvidence
-            ? {
-                conflictsAndSaveEvidence: {
-                  ...(combinedConflictData ? { conflictData: combinedConflictData } : {}),
-                  ...(wasSubmittedInLastRepair ? { wasSubmittedInLastRepair: true } : {}),
-                  ...(verifiedInLastRepair ? { verifiedInLastRepair: true } : {}),
-                  ...(blockedInLastRepair ? { blockedInLastRepair } : {}),
-                  ...(unconfirmedInLastRepair ? { unconfirmedInLastRepair: true } : {})
-                }
-              }
-            : {})
-        };
-
-        fieldsByKey[destKey] = fieldEntry;
-
-        if (
-          isMediaCapabilityDescriptor &&
-          hasMatchedBaseline &&
-          Array.isArray(currentBaseline?.nativeTargets?.media?.edges)
-        ) {
-          const mediaComplete =
-            currentBaseline.nativeTargets?.isComplete === true &&
-            !currentBaseline.nativeTargets?.loadError &&
-            !(
-              Array.isArray(currentBaseline.nativeTargets?.unverifiedFields) &&
-              currentBaseline.nativeTargets.unverifiedFields.includes("media")
-            );
-          const mediaEdges = currentBaseline.nativeTargets.media.edges;
-
-          for (let mIdx = 0; mIdx < mediaEdges.length; mIdx += 1) {
-            const mediaNode = mediaEdges[mIdx]?.node;
-            if (!mediaNode || typeof mediaNode.id !== "string" || !mediaNode.id.trim()) {
-              continue;
-            }
-            const mediaGid = mediaNode.id.trim();
-            const mediaKey = `native_image_alts_${mediaGid}`;
-            const rawAlt =
-              typeof mediaNode.alt === "string" ? mediaNode.alt : "";
-            const hasAltText = rawAlt.trim() !== "";
-
-            drawerFieldKeys.push(mediaKey);
-            fieldsByKey[mediaKey] = {
-              key: mediaKey,
-              mediaImageGid: mediaGid,
-              photoIndex: mIdx + 1,
-              section: sectionTitle,
-              drawerId: contract.drawerId,
-              label: `Photo ${mIdx + 1} Alt Text (${mediaGid})`,
-              registryOwner: "MEDIAIMAGE",
-              registryIdentity: "native_image_alt",
-              registryRole: "PRIMARY_CANDIDATE_DESTINATION",
-              rawStoredBaseline: {
-                evidenceAvailable: mediaComplete,
-                exists: mediaComplete && hasAltText,
-                presence: !mediaComplete
-                  ? "unknown_incomplete_read"
-                  : hasAltText
-                    ? "present"
-                    : "empty_string",
-                value: mediaComplete ? rawAlt : null,
-                storedType: "native_media_alt",
-                liveDefType: "native_media_alt"
-              },
-              evaluatedBaseline: {
-                currentExists: mediaComplete && hasAltText,
-                ...(!mediaComplete
-                  ? { displayValue: "Read incomplete" }
-                  : !hasAltText
-                    ? { displayValue: "Not set" }
-                    : {})
-              },
-              workingState: {
-                proposalExists: false,
-                isProposed: false,
-                proposedValue: null
-              },
-              statusAndHolds: {
-                fieldStatus: !mediaComplete ? "Incomplete Read" : "Unchanged",
-                connectionStatus: "Read-Only Descriptor (FUTURE_BATCH_3_DESCRIPTOR)",
-                applicability: "all_products",
-                writeCapability: contract.writeCapability,
-                batchStage: contract.batchStage,
-                expectedType: "single_line_text_field",
-                maxLength: 125,
-                ...(!mediaComplete ? { hasTechnicalBlock: true } : {}),
-                hasContractOrOwnerHold: true,
-                isPendingReadOnly: true,
-                reasons: [
-                  "Per-image media alt writes are scheduled for Future Batch 3; read-only in Batch 1."
-                ]
-              }
-            };
-          }
-        }
-      }
-
-      sectionOrder.push({
-        sectionTitle,
-        drawerId: drawer.drawerId,
-        fieldKeys: drawerFieldKeys
-      });
-    }
-
-    const manualEditedKeys = allEvaluatedRows
-      .filter((r) => r.hasProposalKey && r.proposalOrigin === "Manual")
-      .map((r) => r.contract.destinationKey);
-
-    const explicitlyApprovedKeys = validApprovedRows.map(
-      (r) => r.contract.destinationKey
-    );
-
-    const keepOriginalKeys = keepOriginalRows.map(
-      (r) => r.contract.destinationKey
-    );
-
-    const drawer10Group = evaluatedDrawerGroups.find(
-      (d) => d.drawerId === "standardized_attributes"
-    );
-    const drawer10Rows = drawer10Group ? drawer10Group.evaluatedRows : [];
-    const eligibleStandardizedDestKeys = drawer10Rows
-      .filter((r) => r.typeAndCompleteness?.ready === true)
-      .map((r) => r.contract.destinationKey);
-    const blockedStandardizedDestKeys = drawer10Rows
-      .filter((r) => r.typeAndCompleteness?.ready !== true)
-      .map((r) => r.contract.destinationKey);
-    const verifiedChoiceReadyDestKeys = drawer10Rows
-      .filter(
-        (r) =>
-          r.typeAndCompleteness?.ready === true &&
-          r.referenceEvidence?.isComplete === true &&
-          r.referenceEvidence.entriesByGid.size > 0
-      )
-      .map((r) => r.contract.destinationKey);
-    const emptyChoiceEligibleDestKeys = drawer10Rows
-      .filter(
-        (r) =>
-          r.typeAndCompleteness?.ready === true &&
-          r.referenceEvidence?.isComplete === true &&
-          r.referenceEvidence.entriesByGid.size === 0
-      )
-      .map((r) => r.contract.destinationKey);
-    const incompleteChoiceDestKeys = drawer10Rows
-      .filter(
-        (r) =>
-          (r.typeAndCompleteness?.ready === true &&
-            r.referenceEvidence?.evidenceLoaded === true &&
-            r.referenceEvidence?.isComplete !== true) ||
-          r.typeAndCompleteness?.code === "category_eligibility_incomplete" ||
-          r.baselineObservation?.categoryEligibility?.isComplete === false ||
-          (isCurrentRefChoicesBoundAndFresh &&
-            currentRefChoicesRecord?.verifiedReferenceEntriesByDestination?.[
-              r.contract.destinationKey
-            ]?.status === "incomplete")
-      )
-      .map((r) => r.contract.destinationKey);
-
-    const currentVisionCandidates =
-      stagedVisionCandidatesByProduct[activeProductId] || {};
-
-    let standardizedReadinessState = "choices_not_loaded";
-    let standardizedReadinessReason =
-      `18 retained shopify.* reference attributes connected (${eligibleStandardizedDestKeys.length} category/definition-eligible on product, ${blockedStandardizedDestKeys.length} blocked by category/definition). Click "Load Reference Choices" in Drawer 10 to verify allowed Metaobject entries before approving.`;
-
-    if (isRefChoicesBusy) {
-      standardizedReadinessState = "loading_reference_choices";
-      standardizedReadinessReason =
-        "Loading and verifying Metaobject reference choices from Shopify...";
-    } else if (currentRefChoicesRecord && !isCurrentRefChoicesBoundAndFresh) {
-      standardizedReadinessState = "stale_reference_choices_discarded";
-      standardizedReadinessReason =
-        "Previously loaded reference choices were invalidated because the product baseline or category changed. Click 'Load Reference Choices' in Drawer 10 to re-verify.";
-    } else if (isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord) {
-      if (currentRefChoicesRecord.state === "failed_or_incomplete") {
-        standardizedReadinessState = "failed_or_incomplete";
-        standardizedReadinessReason =
-          currentRefChoicesRecord.summary ||
-          "Reference choices load was incomplete or reported errors.";
-      } else if (!currentRefChoicesRecord.ok || incompleteChoiceDestKeys.length > 0) {
-        standardizedReadinessState =
-          verifiedChoiceReadyDestKeys.length > 0
-            ? "partial_verified_choices_loaded"
-            : "failed_or_incomplete";
-        standardizedReadinessReason =
-          currentRefChoicesRecord.summary ||
-          "Reference choices load completed with partial or incomplete attributes.";
-      } else if (verifiedChoiceReadyDestKeys.length > 0) {
-        standardizedReadinessState = "verified_choices_loaded";
-        standardizedReadinessReason = currentRefChoicesRecord.summary;
-      } else {
-        standardizedReadinessState = "no_verified_choices_available";
-        standardizedReadinessReason = currentRefChoicesRecord.summary;
-      }
-    }
-
-    const saveVerificationEvidence = {
-      hasRepairAttemptInSession: Boolean(activeSaveReportForCurrentProduct),
-      lastRepairSubmissionId: activeSaveReportForCurrentProduct?.submissionId || null,
-      lastRepairVariantTargetId: activeSaveReportForCurrentProduct?.variantTargetId || null,
-      lastRepairCompletedAt: activeSaveReportForCurrentProduct?.completedAt || null,
-      lastRepairOverallOutcome: activeSaveReportForCurrentProduct?.overallOutcome || null,
-      lastRepairStatus: activeSaveReportForCurrentProduct?.writerStatus || null,
-      lastRepairMessage: activeSaveReportForCurrentProduct?.message || null,
-      lastRepairSuccess: activeSaveReportForCurrentProduct
-        ? activeSaveReportForCurrentProduct.overallOutcome ===
-          "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
-        : null,
-      readBackVerified:
-        activeSaveReportForCurrentProduct?.readBackVerified !== undefined
-          ? activeSaveReportForCurrentProduct.readBackVerified
-          : null,
-      verifiedDestinations: Array.isArray(
-        activeSaveReportForCurrentProduct?.verifiedDestinations
-      )
-        ? activeSaveReportForCurrentProduct.verifiedDestinations
-        : [],
-      attemptedDestinations: Array.isArray(
-        activeSaveReportForCurrentProduct?.submittedDestinations
-      )
-        ? activeSaveReportForCurrentProduct.submittedDestinations
-        : [],
-      unconfirmedDestinations: Array.isArray(
-        activeSaveReportForCurrentProduct?.unconfirmedDestinations
-      )
-        ? activeSaveReportForCurrentProduct.unconfirmedDestinations
-        : [],
-      skippedKeys: Array.isArray(activeSaveReportForCurrentProduct?.skippedKeys)
-        ? activeSaveReportForCurrentProduct.skippedKeys
-        : [],
-      unsupportedKeys: Array.isArray(activeSaveReportForCurrentProduct?.unsupportedKeys)
-        ? activeSaveReportForCurrentProduct.unsupportedKeys
-        : [],
-      unchanged: Array.isArray(activeSaveReportForCurrentProduct?.unchanged)
-        ? activeSaveReportForCurrentProduct.unchanged
-        : [],
-      blockedFields:
-        activeSaveReportForCurrentProduct?.blockedFields &&
-        typeof activeSaveReportForCurrentProduct.blockedFields === "object"
-          ? activeSaveReportForCurrentProduct.blockedFields
-          : {},
-      conflicts:
-        activeSaveReportForCurrentProduct?.conflicts &&
-        typeof activeSaveReportForCurrentProduct.conflicts === "object"
-          ? activeSaveReportForCurrentProduct.conflicts
-          : {},
-      unresolvedChanges:
-        activeSaveReportForCurrentProduct?.unresolvedChanges &&
-        typeof activeSaveReportForCurrentProduct.unresolvedChanges === "object"
-          ? activeSaveReportForCurrentProduct.unresolvedChanges
-          : {},
-      errors: Array.isArray(activeSaveReportForCurrentProduct?.errors)
-        ? activeSaveReportForCurrentProduct.errors
-        : []
-    };
-
-    const snapshotBodyWithoutRevision = {
-      schemaVersion: 1,
-      stateKind: TELEMETRY_LIVE_BENCH_MODE,
-      productTitle: activeProductHeadline,
-      pieceName: activeProductPieceName,
-      rawShopifyProductTitle: activeProductTitle,
-      manifestLoaded: isManifestFullyLoaded,
-      baselineState,
-      baselineEventKind,
-      productQueueStatus: null,
-      dataAuthorityNote:
-        "rawStoredBaseline reflects the last Shopify Admin GraphQL baseline read at baselineLoadedAt (not a fresh live Shopify query on snapshot read). workingState reflects unsaved browser drafts, exact approvals, and Keep Original decisions at clientStateChangedAt.",
-      runIdentity: orderedEvents.runIdentity,
-      runTimestamp: orderedEvents.runTimestamp,
-      latestEventKind: orderedEvents.latestEventKind,
-      systemStatus: {
-        contractVersion: BENCH_V2_CONTRACT_VERSION,
-        activeFilter,
-        openDrawerIds: Object.entries(openDrawersById)
-          .filter(([, isOpen]) => Boolean(isOpen))
-          .map(([id]) => id),
-        isWriterBusy,
-        isAiScanBusy,
-        isRefChoicesBusy,
-        isBaselineReloading,
-        isPickerLoading,
-        hasBaselineErrors,
-        metafieldsReadComplete: currentBaseline?.metafieldsReadComplete ?? null,
-        defsReadComplete: currentBaseline?.defsReadComplete ?? null,
-        variantsReadComplete: currentBaseline?.variantsReadComplete ?? null,
-        primaryVariantId: currentBaseline?.primaryVariantId ?? null,
-        variantCount: currentBaseline?.variantCount ?? null,
-        variantTargetStatus: currentBaseline?.variantTargetStatus ?? null,
-        variantMetafieldsReadComplete:
-          currentBaseline?.variantMetafieldsReadComplete ?? null,
-        variantDefsReadComplete: currentBaseline?.variantDefsReadComplete ?? null,
-        nativeTargetsComplete: currentBaseline?.nativeTargets?.isComplete ?? null,
-        selectionError: loaderData?.selectionError || null,
-        loadError: loaderData?.loadError || null,
-        baselineErrors: Array.isArray(currentBaseline?.errors)
-          ? currentBaseline.errors
-          : [],
-        variantMetafieldsReadError:
-          currentBaseline?.variantMetafieldsReadError || null,
-        variantDefReadErrors: Array.isArray(currentBaseline?.variantDefReadErrors)
-          ? currentBaseline.variantDefReadErrors
-          : [],
-        clientPrevalidationBanner: clientPrevalidationBanner || null
-      },
-      diagnosticsStats: {
-        totalContractFields: allEvaluatedRows.length,
-        totalFieldsInSnapshotMap: Object.keys(fieldsByKey).length,
-        visibleFilteredRowCount: totalVisibleFilteredRowCount,
-        stagedDraftCount: stagedProposalRows.length,
-        approvedToSaveCount: validApprovedRows.length,
-        keepOriginalCount: keepOriginalRows.length,
-        heldAiAlternativesCount,
-        mediaPhotoCount: activeProductMediaItems.length,
-        lastAiScanSummary: currentAiScanReport
-          ? {
-              requestId: currentAiScanReport.requestId,
-              completedAt: currentAiScanReport.completedAt,
-              ok: currentAiScanReport.ok,
-              summary: currentAiScanReport.summary,
-              receivedCount: currentAiScanReport.receivedCount,
-              stagedCount: currentAiScanReport.stagedCount,
-              heldConflictCount: currentAiScanReport.heldConflictCount,
-              unchangedSkippedCount: currentAiScanReport.unchangedSkippedCount,
-              rejectedInvalidCount: currentAiScanReport.rejectedInvalidCount,
-              ignoredManualOnlyCount: currentAiScanReport.ignoredManualOnlyCount,
-              diagnostics: currentAiScanReport.diagnostics || {},
-              details: Array.isArray(currentAiScanReport.details)
-                ? currentAiScanReport.details
-                : [],
-              proposalsByDestination:
-                currentAiScanReport.proposalsByDestination || {}
-            }
-          : null
-      },
-      manualEditedKeys,
-      explicitlyApprovedKeys,
-      keepOriginalKeys,
-      standardizedReferenceState: {
-        readinessState: standardizedReadinessState,
-        readinessReason: standardizedReadinessReason,
-        stagedCandidateCount: Object.keys(currentVisionCandidates).length,
-        stagedCandidates: currentVisionCandidates,
-        eligibleDestinationKeys: eligibleStandardizedDestKeys,
-        verifiedChoiceReadyDestinationKeys: verifiedChoiceReadyDestKeys,
-        emptyChoiceEligibleDestinationKeys: emptyChoiceEligibleDestKeys,
-        incompleteChoiceDestinationKeys: incompleteChoiceDestKeys,
-        blockedDestinationKeys: blockedStandardizedDestKeys,
-        lastMatchRequestId: isCurrentRefChoicesBoundAndFresh
-          ? currentRefChoicesRecord?.requestId || null
-          : null,
-        lastMatchedAt: isCurrentRefChoicesBoundAndFresh
-          ? currentRefChoicesRecord?.completedAt || null
-          : null,
-        lastMatchSuccess: isCurrentRefChoicesBoundAndFresh
-          ? Boolean(currentRefChoicesRecord?.ok)
-          : null,
-        lastMatchIsComplete: isCurrentRefChoicesBoundAndFresh
-          ? Boolean(currentRefChoicesRecord?.rawResponse?.isComplete)
-          : null,
-        productCategory: currentBaseline?.productCategory || null
-      },
-      saveVerificationEvidence,
-      sectionOrder,
-      fieldsByKey
-    };
-
-    const fingerprintObj = {
-      benchSessionId: benchSessionIdRef.current,
-      selectionState: "selected",
-      productId: activeProductId,
-      baselineLoadedAt,
-      snapshotBodyWithoutRevision
-    };
-
-    const contentFingerprint = JSON.stringify(fingerprintObj);
-    if (contentFingerprint === lastEnqueuedFingerprintRef.current) {
-      return;
-    }
-
-    lastEnqueuedFingerprintRef.current = contentFingerprint;
-    const clientStateChangedAt = new Date().toISOString();
-
-    latestQueuedSnapshotSpecRef.current = {
-      benchSessionId: benchSessionIdRef.current,
-      selectionState: "selected",
-      productId: activeProductId,
-      productTitle: activeProductHeadline,
-      baselineLoadedAt,
-      clientStateChangedAt,
-      runIdentity: orderedEvents.runIdentity,
-      runTimestamp: orderedEvents.runTimestamp,
-      snapshotBodyWithoutRevision
-    };
-
-    drainTelemetryPublishQueue();
+  const { telemetrySyncStatus } = useBenchV2LiveTelemetryPublisher({
+    benchSessionId: benchSessionIdRef.current,
+    isSwitchingSelectedProduct,
+    activeProductId,
+    activeProductHeadline,
+    activeProductPieceName,
+    activeProductTitle,
+    currentBaseline,
+    evaluatedDrawerGroups,
+    allEvaluatedRows,
+    totalVisibleFilteredRowCount,
+    stagedProposalRows,
+    validApprovedRows,
+    keepOriginalRows,
+    heldAiAlternativesCount,
+    activeProductMediaItems,
+    currentApprovalsMap,
+    currentKeepOriginalMap,
+    currentAiScanReport,
+    activeSaveReportForCurrentProduct,
+    currentRefChoicesRecord,
+    isCurrentRefChoicesBoundAndFresh,
+    stagedVisionCandidatesByProduct,
+    activeFilter,
+    openDrawersById,
+    isWriterBusy,
+    isAiScanBusy,
+    isRefChoicesBusy,
+    isBaselineReloading,
+    isPickerLoading,
+    hasBaselineErrors,
+    selectionError: loaderData?.selectionError || null,
+    loadError: loaderData?.loadError || null,
+    clientPrevalidationBanner,
+    plainDrawerTitles: PLAIN_DRAWER_TITLES
   });
 
   const handleExplicitSaveApprovedChanges = () => {
@@ -4630,28 +2883,26 @@ export default function BenchV2Route() {
                 {isAiScanBusy ? "Scanning Photos with Gemini..." : "AI Scan Product"}
               </button>
 
-              <button
-                type="button"
-                onClick={handleLoadStandardizedReferenceChoices}
-                disabled={isAnyOperationBusy || !currentBaseline}
-                style={{
-                  padding: "10px 18px",
-                  fontSize: "16px",
-                  fontWeight: 700,
-                  backgroundColor:
-                    isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
-                  color: isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
-                  border: "2px solid #115e59",
-                  borderRadius: "8px",
-                  cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
-                }}
-              >
-                {isRefChoicesBusy
-                  ? "Loading Reference Choices..."
-                  : isCurrentRefChoicesBoundAndFresh
-                    ? "Reload Reference Choices"
-                    : "Load Reference Choices"}
-              </button>
+              {canRetryRefChoicesForCurrentProduct && (
+                <button
+                  type="button"
+                  onClick={handleLoadStandardizedReferenceChoices}
+                  disabled={isAnyOperationBusy || !currentBaseline}
+                  style={{
+                    padding: "10px 18px",
+                    fontSize: "16px",
+                    fontWeight: 700,
+                    backgroundColor:
+                      isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
+                    color: isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                    border: "2px solid #115e59",
+                    borderRadius: "8px",
+                    cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                  }}
+                >
+                  Retry Reference Choices
+                </button>
+              )}
 
               <button
                 type="button"
@@ -5211,8 +3462,8 @@ export default function BenchV2Route() {
             <code>shopify.*</code> reference attributes (including{" "}
             <code>shopify.jewelry-type</code>, <code>shopify.geological-era</code>,{" "}
             <code>shopify.material</code>, and <code>shopify.color-pattern</code>) are connected
-            with read-only reference choice loading, product category constraint eligibility, and
-            verified Metaobject definition membership.
+            with automatic read-only reference choice loading, product category constraint
+            eligibility, and verified Metaobject definition membership.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
@@ -5321,18 +3572,20 @@ export default function BenchV2Route() {
         )}
 
         {/* HONEST STANDARDIZED REFERENCE CHOICES STATUS BANNER */}
-        {currentRefChoicesRecord && (
+        {(isRefChoicesBusy || currentRefChoicesRecord) && (
           <div
             role="region"
             aria-label="Standardized Reference Choices Status"
             style={getBannerBoxStyle(
-              !isCurrentRefChoicesBoundAndFresh
-                ? "warning"
-                : currentRefChoicesRecord.ok
-                  ? "info"
-                  : currentRefChoicesRecord.eligibleWithChoicesCount > 0
-                    ? "warning"
-                    : "error",
+              isRefChoicesBusy
+                ? "info"
+                : !isCurrentRefChoicesBoundAndFresh
+                  ? "warning"
+                  : currentRefChoicesRecord.ok
+                    ? "info"
+                    : currentRefChoicesRecord.eligibleWithChoicesCount > 0
+                      ? "warning"
+                      : "error",
               "16px 20px"
             )}
           >
@@ -5346,35 +3599,58 @@ export default function BenchV2Route() {
             >
               <div>
                 <div style={{ fontSize: "17px", fontWeight: 700 }}>
-                  {!isCurrentRefChoicesBoundAndFresh
-                    ? "Reference Choices Out of Date (Baseline Changed)"
-                    : currentRefChoicesRecord.ok
-                      ? "Standardized Reference Choices Loaded"
-                      : currentRefChoicesRecord.eligibleWithChoicesCount > 0
-                        ? "Standardized Reference Choices Partially Loaded (Some Attributes Held)"
-                        : "Standardized Reference Choices Warning"}
+                  {isRefChoicesBusy
+                    ? "Loading Standardized Reference Choices..."
+                    : !isCurrentRefChoicesBoundAndFresh
+                      ? "Reference Choices Out of Date (Baseline Changed)"
+                      : currentRefChoicesRecord.ok
+                        ? "Standardized Reference Choices Loaded"
+                        : currentRefChoicesRecord.eligibleWithChoicesCount > 0
+                          ? "Standardized Reference Choices Partially Loaded (Some Attributes Held)"
+                          : "Standardized Reference Choices Warning"}
                 </div>
                 <div style={{ marginTop: "4px", fontSize: "15px", color: "#0f172a" }}>
-                  {!isCurrentRefChoicesBoundAndFresh
-                    ? "Product baseline or category changed since reference choices were loaded. Click 'Load Reference Choices' to re-verify allowed Metaobject entries."
-                    : currentRefChoicesRecord.summary}
+                  {isRefChoicesBusy
+                    ? `Querying live Shopify Metaobject definitions and verifying allowed reference entries for ${activeProductTitle}...`
+                    : !isCurrentRefChoicesBoundAndFresh
+                      ? "Product baseline or category changed since reference choices were loaded."
+                      : currentRefChoicesRecord.summary}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setRefChoicesStateByProduct((prev) => {
-                    const next = { ...prev };
-                    delete next[activeProductId];
-                    return next;
-                  })
-                }
-                style={DISMISS_BTN_STYLE}
-              >
-                Dismiss
-              </button>
+              {!isRefChoicesBusy && currentRefChoicesRecord && (
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  {canRetryRefChoicesForCurrentProduct && (
+                    <button
+                      type="button"
+                      onClick={handleLoadStandardizedReferenceChoices}
+                      disabled={isAnyOperationBusy || !currentBaseline}
+                      style={{
+                        padding: "4px 12px",
+                        fontSize: "14px",
+                        fontWeight: 700,
+                        backgroundColor: "#0f766e",
+                        color: "#ffffff",
+                        border: "1px solid #115e59",
+                        borderRadius: "6px",
+                        cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                      }}
+                    >
+                      Retry Reference Choices
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={dismissCurrentRefChoicesRecord}
+                    style={DISMISS_BTN_STYLE}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
             </div>
-            {Array.isArray(currentRefChoicesRecord.errors) &&
+            {!isRefChoicesBusy &&
+              currentRefChoicesRecord &&
+              Array.isArray(currentRefChoicesRecord.errors) &&
               currentRefChoicesRecord.errors.length > 0 && (
                 <ul style={{ margin: "8px 0 0 0", paddingLeft: "20px", fontSize: "14px" }}>
                   {currentRefChoicesRecord.errors.map((errText, idx) => (
@@ -5716,34 +3992,31 @@ export default function BenchV2Route() {
                   </div>
 
                   <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                    {drawer.drawerId === "standardized_attributes" && (
-                      <button
-                        type="button"
-                        onClick={handleLoadStandardizedReferenceChoices}
-                        disabled={isAnyOperationBusy || !currentBaseline}
-                        style={{
-                          padding: "8px 14px",
-                          fontSize: "15px",
-                          fontWeight: 700,
-                          backgroundColor:
-                            isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
-                          color:
-                            isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
-                          border: "2px solid #115e59",
-                          borderRadius: "8px",
-                          cursor:
-                            isAnyOperationBusy || !currentBaseline
-                              ? "not-allowed"
-                              : "pointer"
-                        }}
-                      >
-                        {isRefChoicesBusy
-                          ? "Loading Choices..."
-                          : isCurrentRefChoicesBoundAndFresh
-                            ? "Reload Reference Choices"
-                            : "Load Reference Choices"}
-                      </button>
-                    )}
+                    {drawer.drawerId === "standardized_attributes" &&
+                      canRetryRefChoicesForCurrentProduct && (
+                        <button
+                          type="button"
+                          onClick={handleLoadStandardizedReferenceChoices}
+                          disabled={isAnyOperationBusy || !currentBaseline}
+                          style={{
+                            padding: "8px 14px",
+                            fontSize: "15px",
+                            fontWeight: 700,
+                            backgroundColor:
+                              isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
+                            color:
+                              isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                            border: "2px solid #115e59",
+                            borderRadius: "8px",
+                            cursor:
+                              isAnyOperationBusy || !currentBaseline
+                                ? "not-allowed"
+                                : "pointer"
+                          }}
+                        >
+                          Retry Reference Choices
+                        </button>
+                      )}
 
                     <button
                       type="button"
@@ -5768,7 +4041,7 @@ export default function BenchV2Route() {
                 {/* DRAWER BODY — VISIBLE FIELDS IN DRAWER */}
                 {isOpen && (
                   <div style={{ padding: "18px 20px", backgroundColor: "#f8fafc" }}>
-                    {/* DRAWER 10 REFERENCE CHOICES CONTROL BAR */}
+                    {/* DRAWER 10 REFERENCE CHOICES STATUS BAR */}
                     {drawer.drawerId === "standardized_attributes" && (
                       <div
                         style={{
@@ -5789,37 +4062,37 @@ export default function BenchV2Route() {
                             Standardized Reference Verification (Drawer 10)
                           </div>
                           <div style={{ fontSize: "14px", color: "#334155", marginTop: "4px" }}>
-                            {isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord
-                              ? currentRefChoicesRecord.summary
-                              : "Click 'Load Reference Choices' to query live Shopify Metaobject definitions and verify allowed entries for this product's category before approving."}
+                            {isRefChoicesBusy
+                              ? "Loading and verifying Metaobject reference choices from Shopify..."
+                              : isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord
+                                ? currentRefChoicesRecord.summary
+                                : "Reference choices load automatically when the product baseline is ready."}
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={handleLoadStandardizedReferenceChoices}
-                          disabled={isAnyOperationBusy || !currentBaseline}
-                          style={{
-                            padding: "9px 16px",
-                            fontSize: "15px",
-                            fontWeight: 700,
-                            backgroundColor:
-                              isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
-                            color:
-                              isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
-                            border: "2px solid #115e59",
-                            borderRadius: "8px",
-                            cursor:
-                              isAnyOperationBusy || !currentBaseline
-                                ? "not-allowed"
-                                : "pointer"
-                          }}
-                        >
-                          {isRefChoicesBusy
-                            ? "Loading Reference Choices..."
-                            : isCurrentRefChoicesBoundAndFresh
-                              ? "Reload Reference Choices"
-                              : "Load Reference Choices"}
-                        </button>
+                        {canRetryRefChoicesForCurrentProduct && (
+                          <button
+                            type="button"
+                            onClick={handleLoadStandardizedReferenceChoices}
+                            disabled={isAnyOperationBusy || !currentBaseline}
+                            style={{
+                              padding: "9px 16px",
+                              fontSize: "15px",
+                              fontWeight: 700,
+                              backgroundColor:
+                                isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
+                              color:
+                                isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                              border: "2px solid #115e59",
+                              borderRadius: "8px",
+                              cursor:
+                                isAnyOperationBusy || !currentBaseline
+                                  ? "not-allowed"
+                                  : "pointer"
+                            }}
+                          >
+                            Retry Reference Choices
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -5963,7 +4236,7 @@ export default function BenchV2Route() {
                             Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
                             fidelityCheck.faithful;
 
-                          const shortNotice = getShortPlainNotice(row);
+                          const shortNotice = getShortPlainNotice(row, isRefChoicesBusy);
 
                           let inputPlaceholder = "Type proposed value...";
                           if (!canEditDraftInBatch1) {
