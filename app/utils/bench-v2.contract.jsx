@@ -1574,17 +1574,7 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       ? baselineSnapshot.standardizedReferenceResolutions
       : null;
 
-  const resolutionEntry =
-    directMap ||
-    (topResEnvelope &&
-    topResEnvelope.pieceId === productGid &&
-    topResEnvelope.readOnly === true &&
-    topResEnvelope.resolutions &&
-    typeof topResEnvelope.resolutions === "object"
-      ? topResEnvelope.resolutions[destinationKey]
-      : null);
-
-  if (!resolutionEntry || typeof resolutionEntry !== "object") {
+  if (!directMap && !topResEnvelope) {
     return {
       evidenceLoaded: false,
       isComplete: false,
@@ -1594,23 +1584,111 @@ export function inspectVerifiedReferenceEvidenceForDestination(
     };
   }
 
-  if (
-    topResEnvelope &&
-    (topResEnvelope.pieceId !== productGid ||
+  if (topResEnvelope) {
+    const topRawErrors = Array.isArray(topResEnvelope.errors)
+      ? topResEnvelope.errors.filter((e) => typeof e === "string" && e.trim() !== "")
+      : [];
+    if (
+      typeof topResEnvelope.error === "string" &&
+      topResEnvelope.error.trim() !== "" &&
+      !topRawErrors.includes(topResEnvelope.error.trim())
+    ) {
+      topRawErrors.unshift(topResEnvelope.error.trim());
+    }
+
+    const hasResolutionsMap = Boolean(
+      topResEnvelope.resolutions &&
+        typeof topResEnvelope.resolutions === "object" &&
+        !Array.isArray(topResEnvelope.resolutions)
+    );
+    const hasCurrentRefListsMap = Boolean(
+      topResEnvelope.currentReferenceLists &&
+        typeof topResEnvelope.currentReferenceLists === "object" &&
+        !Array.isArray(topResEnvelope.currentReferenceLists)
+    );
+    const hasCategoryEligibilityMap = Boolean(
+      topResEnvelope.categoryEligibility &&
+        typeof topResEnvelope.categoryEligibility === "object" &&
+        !Array.isArray(topResEnvelope.categoryEligibility)
+    );
+
+    const allDestRefListsReadComplete =
+      hasCurrentRefListsMap &&
+      SUPPORTED_STANDARDIZED_REFERENCE_KEYS.every((stdKey) => {
+        const dest = `shopify.${stdKey}`;
+        const refListEntry = topResEnvelope.currentReferenceLists[dest];
+        return Boolean(
+          refListEntry &&
+            typeof refListEntry === "object" &&
+            refListEntry.readComplete === true &&
+            refListEntry.parseValid === true
+        );
+      });
+
+    const unscopedOrMatchingTopErrors = topRawErrors.filter((errText) => {
+      const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
+      if (!bracketMatch) return true;
+      const scopedDest = bracketMatch[1].trim();
+      if (!BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(scopedDest)) {
+        return true;
+      }
+      return scopedDest === destinationKey;
+    });
+
+    const baselineCatId = baselineSnapshot.productCategory?.id || null;
+    const responseCatId = topResEnvelope.productCategory?.id || null;
+    const categoryMatchesBaseline =
+      topResEnvelope.productCategory === undefined || baselineCatId === responseCatId;
+
+    if (
+      topResEnvelope.intent !== "resolveStandardizedCandidates" ||
+      topResEnvelope.pieceId !== productGid ||
       topResEnvelope.readOnly !== true ||
-      topResEnvelope.success !== true ||
-      topResEnvelope.isComplete !== true)
-  ) {
-    const topErr =
-      Array.isArray(topResEnvelope.errors) && topResEnvelope.errors.length > 0
-        ? topResEnvelope.errors.join("; ")
-        : "Top-level standardized reference resolution is incomplete or failed.";
+      topResEnvelope.defsReadComplete !== true ||
+      !hasResolutionsMap ||
+      !hasCurrentRefListsMap ||
+      !hasCategoryEligibilityMap ||
+      !allDestRefListsReadComplete ||
+      !categoryMatchesBaseline ||
+      unscopedOrMatchingTopErrors.length > 0
+    ) {
+      const topErr =
+        unscopedOrMatchingTopErrors[0] ||
+        topRawErrors[0] ||
+        (!categoryMatchesBaseline
+          ? "Product category changed since reference resolution was loaded."
+          : topResEnvelope.defsReadComplete !== true
+            ? "Live PRODUCT metafield definitions read did not complete."
+            : !allDestRefListsReadComplete
+              ? "Product standardized reference list read or parse did not complete."
+              : "Top-level standardized reference resolution failed prerequisite or identity checks.");
+      return {
+        evidenceLoaded: true,
+        isComplete: false,
+        restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
+        entriesByGid: new Map(),
+        error: topErr
+      };
+    }
+  }
+
+  const resolutionEntry =
+    directMap ||
+    (topResEnvelope &&
+    topResEnvelope.resolutions &&
+    typeof topResEnvelope.resolutions === "object"
+      ? topResEnvelope.resolutions[destinationKey]
+      : null);
+
+  if (!resolutionEntry || typeof resolutionEntry !== "object") {
     return {
-      evidenceLoaded: true,
+      evidenceLoaded: Boolean(topResEnvelope),
       isComplete: false,
       restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
       entriesByGid: new Map(),
-      error: topErr
+      error: topResEnvelope
+        ? `Missing resolution entry for "${destinationKey}" in standardized reference response.`
+        : `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Load Reference Choices" in Drawer 10 to verify allowed entries.`
     };
   }
 
@@ -1618,7 +1696,6 @@ export function inspectVerifiedReferenceEvidenceForDestination(
     resolutionEntry.restrictedMetaobjectDefinitionId ||
     resolutionEntry.restrictedMetaobjectDefinition?.id ||
     resolutionEntry.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
-    expectedRestrictedDefId ||
     null;
 
   if (!isExactMetaobjectDefinitionGid(resolvedDefId)) {
@@ -1627,7 +1704,9 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       isComplete: false,
       restrictedMetaobjectDefinitionId: null,
       entriesByGid: new Map(),
-      error: `Missing or invalid restricted MetaobjectDefinition GID on "${destinationKey}".`
+      error:
+        (Array.isArray(resolutionEntry.errors) && resolutionEntry.errors[0]) ||
+        `Missing or invalid restricted MetaobjectDefinition GID on "${destinationKey}".`
     };
   }
 
@@ -1642,6 +1721,53 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       restrictedMetaobjectDefinitionId: resolvedDefId,
       entriesByGid: new Map(),
       error: `Restricted MetaobjectDefinition mismatch on "${destinationKey}": baseline expects "${expectedRestrictedDefId}" but resolution reported "${resolvedDefId}".`
+    };
+  }
+
+  const catEligObj =
+    resolutionEntry.categoryEligibility ||
+    topResEnvelope?.categoryEligibility?.[destinationKey] ||
+    baselineSnapshot.categoryEligibilityByDestination?.[destinationKey] ||
+    null;
+
+  if (
+    !catEligObj ||
+    typeof catEligObj !== "object" ||
+    catEligObj.isComplete !== true ||
+    catEligObj.isEligible !== true ||
+    resolutionEntry.isCategoryEligible === false ||
+    resolutionEntry.status === "category_ineligible"
+  ) {
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: resolvedDefId,
+      entriesByGid: new Map(),
+      error:
+        catEligObj?.reason ||
+        (Array.isArray(resolutionEntry.errors) && resolutionEntry.errors[0]) ||
+        `Category eligibility is not verified for "${destinationKey}".`
+    };
+  }
+
+  const refAssignmentObj =
+    resolutionEntry.currentAssignment ||
+    topResEnvelope?.currentReferenceLists?.[destinationKey] ||
+    null;
+
+  if (
+    refAssignmentObj &&
+    typeof refAssignmentObj === "object" &&
+    (refAssignmentObj.readComplete !== true || refAssignmentObj.parseValid !== true)
+  ) {
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: resolvedDefId,
+      entriesByGid: new Map(),
+      error:
+        refAssignmentObj.parseError ||
+        `Stored reference list read or parse was incomplete for "${destinationKey}".`
     };
   }
 

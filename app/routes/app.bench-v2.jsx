@@ -1818,21 +1818,76 @@ export default function BenchV2Route() {
     const topErrors = Array.isArray(rawResponse.errors)
       ? rawResponse.errors.filter((e) => typeof e === "string" && e.trim() !== "")
       : [];
+    if (
+      typeof rawResponse.error === "string" &&
+      rawResponse.error.trim() !== "" &&
+      !topErrors.includes(rawResponse.error.trim())
+    ) {
+      topErrors.unshift(rawResponse.error.trim());
+    }
+
+    const hasResolutionsMap = Boolean(
+      rawResponse.resolutions &&
+        typeof rawResponse.resolutions === "object" &&
+        !Array.isArray(rawResponse.resolutions)
+    );
+    const hasCurrentRefListsMap = Boolean(
+      rawResponse.currentReferenceLists &&
+        typeof rawResponse.currentReferenceLists === "object" &&
+        !Array.isArray(rawResponse.currentReferenceLists)
+    );
+    const hasCategoryEligibilityMap = Boolean(
+      rawResponse.categoryEligibility &&
+        typeof rawResponse.categoryEligibility === "object" &&
+        !Array.isArray(rawResponse.categoryEligibility)
+    );
+
+    const unscopedTopErrors = topErrors.filter((errText) => {
+      const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
+      if (!bracketMatch) return true;
+      const scopedDest = bracketMatch[1].trim();
+      return !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(scopedDest);
+    });
+
+    const allDestRefListsReadComplete =
+      hasCurrentRefListsMap &&
+      SUPPORTED_STANDARDIZED_REFERENCE_KEYS.every((stdKey) => {
+        const destKey = `shopify.${stdKey}`;
+        const refListEntry = rawResponse.currentReferenceLists[destKey];
+        return Boolean(
+          refListEntry &&
+            typeof refListEntry === "object" &&
+            refListEntry.readComplete === true &&
+            refListEntry.parseValid === true
+        );
+      });
 
     if (
-      rawResponse.success !== true ||
-      rawResponse.isComplete !== true ||
       rawResponse.defsReadComplete !== true ||
-      !rawResponse.resolutions ||
-      typeof rawResponse.resolutions !== "object"
+      !hasResolutionsMap ||
+      !hasCurrentRefListsMap ||
+      !hasCategoryEligibilityMap ||
+      !allDestRefListsReadComplete ||
+      unscopedTopErrors.length > 0
     ) {
+      const globalFailureReasons =
+        unscopedTopErrors.length > 0
+          ? unscopedTopErrors
+          : topErrors.length > 0
+            ? topErrors
+            : [
+                rawResponse.defsReadComplete !== true
+                  ? "Live PRODUCT metafield definitions read did not complete."
+                  : !allDestRefListsReadComplete
+                    ? "Product standardized metafield reference list read or parse did not complete."
+                    : "Top-level resolveStandardizedCandidates prerequisite evidence was missing or incomplete."
+              ];
+
       recordFailedOrStaleRefChoices(
         "failed_or_incomplete",
-        topErrors[0] ||
-          "Reference choices enumeration did not complete cleanly. Click 'Load Reference Choices' to retry.",
-        topErrors.length > 0
-          ? topErrors
-          : ["Top-level resolveStandardizedCandidates response was incomplete."]
+        globalFailureReasons[0] ||
+          "Reference choices enumeration failed global prerequisite checks. Click 'Load Reference Choices' to retry.",
+        globalFailureReasons
       );
       return;
     }
@@ -1846,8 +1901,16 @@ export default function BenchV2Route() {
     for (const stdKey of SUPPORTED_STANDARDIZED_REFERENCE_KEYS) {
       const destKey = `shopify.${stdKey}`;
       const resObj = rawResponse.resolutions[destKey];
+      const refListEntry = rawResponse.currentReferenceLists[destKey];
+      const catEligEntry =
+        resObj?.categoryEligibility || rawResponse.categoryEligibility[destKey] || null;
       const baselineDef = latestBaselineForProduct.liveDefinitions?.[destKey] || null;
       const expectedDefId = baselineDef?.restrictedMetaobjectDefinitionId || null;
+
+      const scopedTopErrorsForDest = topErrors.filter((errText) => {
+        const bracketMatch = /^\[([^\]]+)\]/.exec(errText.trim());
+        return Boolean(bracketMatch && bracketMatch[1].trim() === destKey);
+      });
 
       if (!resObj || typeof resObj !== "object") {
         incompleteOrBlockedCount += 1;
@@ -1858,7 +1921,10 @@ export default function BenchV2Route() {
           isCategoryEligible: false,
           restrictedMetaobjectDefinitionId: expectedDefId,
           availableEntries: [],
-          errors: [`Missing resolution entry for ${destKey}.`]
+          errors:
+            scopedTopErrorsForDest.length > 0
+              ? scopedTopErrorsForDest
+              : [`Missing resolution entry for ${destKey}.`]
         };
         continue;
       }
@@ -1871,30 +1937,11 @@ export default function BenchV2Route() {
 
       const defMatchesBaseline = Boolean(
         isExactMetaobjectDefinitionGid(resolvedDefId) &&
-          (!expectedDefId || resolvedDefId === expectedDefId)
+          isExactMetaobjectDefinitionGid(expectedDefId) &&
+          resolvedDefId === expectedDefId &&
+          resObj.metafieldDefinition?.type === "list.metaobject_reference" &&
+          baselineDef?.type === "list.metaobject_reference"
       );
-
-      const rawAvailable = Array.isArray(resObj.availableEntries)
-        ? resObj.availableEntries
-        : [];
-      const verifiedAvailable = [];
-      for (const item of rawAvailable) {
-        if (!item || typeof item !== "object") continue;
-        const gid = extractEntryGid(item);
-        const entryDefId = extractEntryDefinitionId(item);
-        if (!isExactMetaobjectGid(gid)) continue;
-        if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
-        verifiedAvailable.push({
-          id: gid,
-          displayName: extractEntryLabel(item) || gid,
-          definition: {
-            id: entryDefId,
-            type: item.definition?.type || resObj.restrictedMetaobjectDefinition?.type || null,
-            name: item.definition?.name || resObj.restrictedMetaobjectDefinition?.name || null
-          },
-          taxonomy_reference: item.taxonomy_reference ?? null
-        });
-      }
 
       const hasContinuation = Boolean(
         resObj.continuation &&
@@ -1902,15 +1949,89 @@ export default function BenchV2Route() {
           resObj.continuation.hasNextPage === true
       );
 
-      const isFieldComplete = Boolean(
-        resObj.isComplete === true && !hasContinuation && defMatchesBaseline
+      const isCatEligComplete = Boolean(
+        catEligEntry &&
+          typeof catEligEntry === "object" &&
+          catEligEntry.isComplete === true
+      );
+      const isCatEligible = Boolean(
+        isCatEligComplete &&
+          catEligEntry.isEligible === true &&
+          resObj.isCategoryEligible === true &&
+          resObj.status !== "category_ineligible"
       );
 
-      if (!isFieldComplete) {
-        incompleteOrBlockedCount += 1;
-      } else if (resObj.status === "category_ineligible" || resObj.isCategoryEligible !== true) {
+      const isRefListCompleteAndValid = Boolean(
+        refListEntry &&
+          typeof refListEntry === "object" &&
+          refListEntry.readComplete === true &&
+          refListEntry.parseValid === true
+      );
+
+      const rawFieldErrors = Array.isArray(resObj.errors)
+        ? resObj.errors.filter((e) => typeof e === "string" && e.trim() !== "")
+        : [];
+      for (const scopedErr of scopedTopErrorsForDest) {
+        if (!rawFieldErrors.includes(scopedErr)) {
+          rawFieldErrors.push(scopedErr);
+        }
+      }
+
+      const isCompleteCategoryIneligible = Boolean(
+        resObj.isComplete === true &&
+          !hasContinuation &&
+          defMatchesBaseline &&
+          isRefListCompleteAndValid &&
+          isCatEligComplete &&
+          (resObj.status === "category_ineligible" ||
+            resObj.isCategoryEligible === false ||
+            catEligEntry.isEligible === false)
+      );
+
+      const isFieldEligibleAndComplete = Boolean(
+        resObj.isComplete === true &&
+          !hasContinuation &&
+          defMatchesBaseline &&
+          isRefListCompleteAndValid &&
+          isCatEligible &&
+          resObj.status !== "incomplete" &&
+          resObj.status !== "blocked" &&
+          rawFieldErrors.length === 0
+      );
+
+      const rawAvailable = Array.isArray(resObj.availableEntries)
+        ? resObj.availableEntries
+        : [];
+      const verifiedAvailable = [];
+      if (isFieldEligibleAndComplete) {
+        for (const item of rawAvailable) {
+          if (!item || typeof item !== "object") continue;
+          const gid = extractEntryGid(item);
+          const entryDefId = extractEntryDefinitionId(item);
+          if (!isExactMetaobjectGid(gid)) continue;
+          if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
+          verifiedAvailable.push({
+            id: gid,
+            displayName: extractEntryLabel(item) || gid,
+            definition: {
+              id: entryDefId,
+              type:
+                item.definition?.type ||
+                resObj.restrictedMetaobjectDefinition?.type ||
+                null,
+              name:
+                item.definition?.name ||
+                resObj.restrictedMetaobjectDefinition?.name ||
+                null
+            },
+            taxonomy_reference: item.taxonomy_reference ?? null
+          });
+        }
+      }
+
+      if (isCompleteCategoryIneligible) {
         categoryIneligibleCount += 1;
-      } else if (resObj.status === "blocked") {
+      } else if (!isFieldEligibleAndComplete) {
         incompleteOrBlockedCount += 1;
       } else if (verifiedAvailable.length === 0) {
         eligibleEmptyChoicesCount += 1;
@@ -1918,19 +2039,28 @@ export default function BenchV2Route() {
         eligibleWithChoicesCount += 1;
       }
 
+      const mergedFieldErrors = [...rawFieldErrors];
+      if (!defMatchesBaseline) {
+        mergedFieldErrors.push(
+          `Restricted MetaobjectDefinition mismatch or invalid ID on ${destKey}.`
+        );
+      }
+      if (!isRefListCompleteAndValid) {
+        mergedFieldErrors.push(
+          refListEntry?.parseError ||
+            `Stored reference list read or parse was incomplete on ${destKey}.`
+        );
+      }
+      if (!isCatEligComplete && catEligEntry?.reason && !mergedFieldErrors.includes(catEligEntry.reason)) {
+        mergedFieldErrors.push(catEligEntry.reason);
+      }
+
       verifiedMapByDest[destKey] = {
         ...resObj,
         restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
-        isComplete: isFieldComplete,
-        availableEntries: verifiedAvailable,
-        errors: !defMatchesBaseline
-          ? [
-              ...(Array.isArray(resObj.errors) ? resObj.errors : []),
-              `Restricted MetaobjectDefinition mismatch or invalid ID on ${destKey}.`
-            ]
-          : Array.isArray(resObj.errors)
-            ? resObj.errors
-            : []
+        isComplete: isFieldEligibleAndComplete,
+        availableEntries: isFieldEligibleAndComplete ? verifiedAvailable : [],
+        errors: mergedFieldErrors
       };
     }
 
@@ -3930,9 +4060,15 @@ export default function BenchV2Route() {
     const incompleteChoiceDestKeys = drawer10Rows
       .filter(
         (r) =>
-          r.typeAndCompleteness?.ready === true &&
-          r.referenceEvidence?.evidenceLoaded === true &&
-          r.referenceEvidence?.isComplete !== true
+          (r.typeAndCompleteness?.ready === true &&
+            r.referenceEvidence?.evidenceLoaded === true &&
+            r.referenceEvidence?.isComplete !== true) ||
+          r.typeAndCompleteness?.code === "category_eligibility_incomplete" ||
+          r.baselineObservation?.categoryEligibility?.isComplete === false ||
+          (isCurrentRefChoicesBoundAndFresh &&
+            currentRefChoicesRecord?.verifiedReferenceEntriesByDestination?.[
+              r.contract.destinationKey
+            ]?.status === "incomplete")
       )
       .map((r) => r.contract.destinationKey);
 
@@ -3952,11 +4088,19 @@ export default function BenchV2Route() {
       standardizedReadinessReason =
         "Previously loaded reference choices were invalidated because the product baseline or category changed. Click 'Load Reference Choices' in Drawer 10 to re-verify.";
     } else if (isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord) {
-      if (!currentRefChoicesRecord.ok || incompleteChoiceDestKeys.length > 0) {
+      if (currentRefChoicesRecord.state === "failed_or_incomplete") {
         standardizedReadinessState = "failed_or_incomplete";
         standardizedReadinessReason =
           currentRefChoicesRecord.summary ||
           "Reference choices load was incomplete or reported errors.";
+      } else if (!currentRefChoicesRecord.ok || incompleteChoiceDestKeys.length > 0) {
+        standardizedReadinessState =
+          verifiedChoiceReadyDestKeys.length > 0
+            ? "partial_verified_choices_loaded"
+            : "failed_or_incomplete";
+        standardizedReadinessReason =
+          currentRefChoicesRecord.summary ||
+          "Reference choices load completed with partial or incomplete attributes.";
       } else if (verifiedChoiceReadyDestKeys.length > 0) {
         standardizedReadinessState = "verified_choices_loaded";
         standardizedReadinessReason = currentRefChoicesRecord.summary;
@@ -5186,7 +5330,9 @@ export default function BenchV2Route() {
                 ? "warning"
                 : currentRefChoicesRecord.ok
                   ? "info"
-                  : "error",
+                  : currentRefChoicesRecord.eligibleWithChoicesCount > 0
+                    ? "warning"
+                    : "error",
               "16px 20px"
             )}
           >
@@ -5204,7 +5350,9 @@ export default function BenchV2Route() {
                     ? "Reference Choices Out of Date (Baseline Changed)"
                     : currentRefChoicesRecord.ok
                       ? "Standardized Reference Choices Loaded"
-                      : "Standardized Reference Choices Warning"}
+                      : currentRefChoicesRecord.eligibleWithChoicesCount > 0
+                        ? "Standardized Reference Choices Partially Loaded (Some Attributes Held)"
+                        : "Standardized Reference Choices Warning"}
                 </div>
                 <div style={{ marginTop: "4px", fontSize: "15px", color: "#0f172a" }}>
                   {!isCurrentRefChoicesBoundAndFresh
