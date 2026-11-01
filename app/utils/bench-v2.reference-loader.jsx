@@ -3,9 +3,11 @@
 // File: app/utils/bench-v2.reference-loader.jsx
 //
 // Extracted from app/routes/app.bench-v2.jsx (Step 1 of bounded extraction).
-// Contains factual baseline context signature & attempt-key helpers plus the
-// client-safe useBenchV2StandardizedReferenceLoader hook for automatic
-// once-per-factual-context and explicit retry read-only standardized
+// Contains factual baseline context signature & attempt-key helpers,
+// authoritative destination-policy resolution, pure response evaluation,
+// the reusable client-safe useStandardizedReferenceChoiceLoader hook, and the
+// backward-compatible useBenchV2StandardizedReferenceLoader wrapper for
+// automatic once-per-factual-context and explicit retry read-only standardized
 // reference choice loading, freshness/identity verification, and per-destination
 // evidence merging.
 // ==========================================================================
@@ -25,7 +27,101 @@ import {
   extractEntryDefinitionId
 } from "./meta-injector.standardized.jsx";
 
-export function buildStandardizedBaselineContextSignature(baselineSnap) {
+const DEFAULT_REFERENCE_CHOICES_ACTION_PATH = "/app/meta-injector-api";
+const DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX = "bench_v2_refchoices";
+
+const AUTHORITATIVE_SUPPORTED_BARE_KEY_SET = new Set(
+  SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+);
+
+/**
+ * Resolves and validates requested standardized reference keys against the
+ * authoritative supported destination policy.
+ * - Omitted/null/undefined defaults to the full authoritative 18-key set.
+ * - Provided arrays may only narrow the authoritative set; any empty or
+ *   unsupported key is rejected (`ok: false`) and never broadens permissions.
+ */
+export function resolveSupportedDestinationKeys(requestedKeys = null) {
+  if (requestedKeys === undefined || requestedKeys === null) {
+    const bareKeys = [...SUPPORTED_STANDARDIZED_REFERENCE_KEYS];
+    const destinationKeys = bareKeys.map((k) => `shopify.${k}`);
+    return {
+      ok: true,
+      bareKeys,
+      destinationKeys,
+      destinationSet: new Set(destinationKeys),
+      rejectedKeys: [],
+      error: null
+    };
+  }
+
+  if (!Array.isArray(requestedKeys) || requestedKeys.length === 0) {
+    return {
+      ok: false,
+      bareKeys: [],
+      destinationKeys: [],
+      destinationSet: new Set(),
+      rejectedKeys: [],
+      error:
+        "Requested standardized reference destinations must be a non-empty array of supported shopify.* keys."
+    };
+  }
+
+  const requestedBareSet = new Set();
+  const rejectedKeys = [];
+
+  for (const rawItem of requestedKeys) {
+    if (typeof rawItem !== "string" || rawItem.trim() === "") {
+      rejectedKeys.push(String(rawItem));
+      continue;
+    }
+    const trimmed = rawItem.trim();
+    const bareKey = trimmed.startsWith("shopify.") ? trimmed.slice(8) : trimmed;
+    const destKey = `shopify.${bareKey}`;
+
+    if (
+      !AUTHORITATIVE_SUPPORTED_BARE_KEY_SET.has(bareKey) ||
+      !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(destKey)
+    ) {
+      rejectedKeys.push(trimmed);
+      continue;
+    }
+    requestedBareSet.add(bareKey);
+  }
+
+  if (rejectedKeys.length > 0 || requestedBareSet.size === 0) {
+    return {
+      ok: false,
+      bareKeys: [],
+      destinationKeys: [],
+      destinationSet: new Set(),
+      rejectedKeys,
+      error:
+        rejectedKeys.length > 0
+          ? `Rejected unsupported standardized reference destination(s): ${rejectedKeys.join(", ")}.`
+          : "No supported standardized reference destinations remained after filtering."
+    };
+  }
+
+  const orderedBareKeys = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.filter((k) =>
+    requestedBareSet.has(k)
+  );
+  const orderedDestinationKeys = orderedBareKeys.map((k) => `shopify.${k}`);
+
+  return {
+    ok: true,
+    bareKeys: orderedBareKeys,
+    destinationKeys: orderedDestinationKeys,
+    destinationSet: new Set(orderedDestinationKeys),
+    rejectedKeys: [],
+    error: null
+  };
+}
+
+export function buildStandardizedBaselineContextSignature(
+  baselineSnap,
+  supportedBareKeys = SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+) {
   if (!baselineSnap || typeof baselineSnap !== "object") return "no_baseline";
   const productId =
     typeof baselineSnap.productId === "string" && baselineSnap.productId.trim() !== ""
@@ -102,82 +198,89 @@ export function buildStandardizedBaselineContextSignature(baselineSnap) {
       !Array.isArray(baselineSnap.currentMetafieldTypes)
   );
 
-  const perDestParts = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => {
-    const dest = `shopify.${k}`;
-    const hasDef =
-      hasLiveDefsMap &&
-      Object.prototype.hasOwnProperty.call(baselineSnap.liveDefinitions, dest) &&
-      baselineSnap.liveDefinitions[dest] !== undefined &&
-      baselineSnap.liveDefinitions[dest] !== null;
-    const def = hasDef ? baselineSnap.liveDefinitions[dest] : null;
-    const defConstraints =
-      def && def.constraints && typeof def.constraints === "object"
-        ? def.constraints
-        : null;
-    const constraintVals = Array.isArray(defConstraints?.values)
-      ? defConstraints.values.map((v) => String(v ?? "")).join(",")
-      : "no_vals";
+  const keysToInspect =
+    Array.isArray(supportedBareKeys) && supportedBareKeys.length > 0
+      ? supportedBareKeys.filter((k) => AUTHORITATIVE_SUPPORTED_BARE_KEY_SET.has(k))
+      : SUPPORTED_STANDARDIZED_REFERENCE_KEYS;
 
-    const hasElig =
-      hasEligMap &&
-      Object.prototype.hasOwnProperty.call(
-        baselineSnap.categoryEligibilityByDestination,
-        dest
-      ) &&
-      baselineSnap.categoryEligibilityByDestination[dest] !== undefined &&
-      baselineSnap.categoryEligibilityByDestination[dest] !== null;
-    const elig = hasElig ? baselineSnap.categoryEligibilityByDestination[dest] : null;
+  const perDestParts = keysToInspect
+    .map((k) => {
+      const dest = `shopify.${k}`;
+      const hasDef =
+        hasLiveDefsMap &&
+        Object.prototype.hasOwnProperty.call(baselineSnap.liveDefinitions, dest) &&
+        baselineSnap.liveDefinitions[dest] !== undefined &&
+        baselineSnap.liveDefinitions[dest] !== null;
+      const def = hasDef ? baselineSnap.liveDefinitions[dest] : null;
+      const defConstraints =
+        def && def.constraints && typeof def.constraints === "object"
+          ? def.constraints
+          : null;
+      const constraintVals = Array.isArray(defConstraints?.values)
+        ? defConstraints.values.map((v) => String(v ?? "")).join(",")
+        : "no_vals";
 
-    const constraintErr =
-      hasConstraintErrMap &&
-      Object.prototype.hasOwnProperty.call(
-        baselineSnap.constraintErrorsByDestination,
-        dest
-      )
-        ? String(baselineSnap.constraintErrorsByDestination[dest] ?? "")
-        : "";
+      const hasElig =
+        hasEligMap &&
+        Object.prototype.hasOwnProperty.call(
+          baselineSnap.categoryEligibilityByDestination,
+          dest
+        ) &&
+        baselineSnap.categoryEligibilityByDestination[dest] !== undefined &&
+        baselineSnap.categoryEligibilityByDestination[dest] !== null;
+      const elig = hasElig ? baselineSnap.categoryEligibilityByDestination[dest] : null;
 
-    const hasStoredMf =
-      hasMfMap &&
-      Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafields, dest) &&
-      baselineSnap.currentMetafields[dest] !== undefined;
-    const rawStored = hasStoredMf ? baselineSnap.currentMetafields[dest] : undefined;
-    const storedPresence = !hasMfMap
-      ? "mf_map_missing"
-      : !hasStoredMf
-        ? "absent"
-        : rawStored === null
-          ? "null"
-          : "present";
-    const storedValStr =
-      rawStored === undefined || rawStored === null ? "" : String(rawStored);
-    const storedType =
-      hasMfTypesMap &&
-      Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafieldTypes, dest) &&
-      baselineSnap.currentMetafieldTypes[dest] !== undefined &&
-      baselineSnap.currentMetafieldTypes[dest] !== null
-        ? String(baselineSnap.currentMetafieldTypes[dest])
-        : "";
+      const constraintErr =
+        hasConstraintErrMap &&
+        Object.prototype.hasOwnProperty.call(
+          baselineSnap.constraintErrorsByDestination,
+          dest
+        )
+          ? String(baselineSnap.constraintErrorsByDestination[dest] ?? "")
+          : "";
 
-    return JSON.stringify([
-      dest,
-      hasLiveDefsMap ? (hasDef ? "def_present" : "def_absent") : "defs_map_missing",
-      def?.id || "",
-      def?.type || "",
-      def?.restrictedMetaobjectDefinitionId || def?.requiredDefinitionId || "",
-      defConstraints
-        ? `${String(defConstraints.hasConstraints)}:${defConstraints.key || ""}:${String(defConstraints.isComplete)}:${defConstraints.error || ""}:${constraintVals}`
-        : "no_constraints_obj",
-      hasEligMap ? (hasElig ? "elig_present" : "elig_absent") : "elig_map_missing",
-      elig
-        ? `${String(elig.isComplete)}:${String(elig.isEligible)}:${elig.status || ""}:${elig.matchedConstraintValue || ""}:${elig.reason || ""}`
-        : "no_elig_obj",
-      constraintErr,
-      storedPresence,
-      storedType,
-      storedValStr
-    ]);
-  }).join("|");
+      const hasStoredMf =
+        hasMfMap &&
+        Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafields, dest) &&
+        baselineSnap.currentMetafields[dest] !== undefined;
+      const rawStored = hasStoredMf ? baselineSnap.currentMetafields[dest] : undefined;
+      const storedPresence = !hasMfMap
+        ? "mf_map_missing"
+        : !hasStoredMf
+          ? "absent"
+          : rawStored === null
+            ? "null"
+            : "present";
+      const storedValStr =
+        rawStored === undefined || rawStored === null ? "" : String(rawStored);
+      const storedType =
+        hasMfTypesMap &&
+        Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafieldTypes, dest) &&
+        baselineSnap.currentMetafieldTypes[dest] !== undefined &&
+        baselineSnap.currentMetafieldTypes[dest] !== null
+          ? String(baselineSnap.currentMetafieldTypes[dest])
+          : "";
+
+      return JSON.stringify([
+        dest,
+        hasLiveDefsMap ? (hasDef ? "def_present" : "def_absent") : "defs_map_missing",
+        def?.id || "",
+        def?.type || "",
+        def?.restrictedMetaobjectDefinitionId || def?.requiredDefinitionId || "",
+        defConstraints
+          ? `${String(defConstraints.hasConstraints)}:${defConstraints.key || ""}:${String(defConstraints.isComplete)}:${defConstraints.error || ""}:${constraintVals}`
+          : "no_constraints_obj",
+        hasEligMap ? (hasElig ? "elig_present" : "elig_absent") : "elig_map_missing",
+        elig
+          ? `${String(elig.isComplete)}:${String(elig.isEligible)}:${elig.status || ""}:${elig.matchedConstraintValue || ""}:${elig.reason || ""}`
+          : "no_elig_obj",
+        constraintErr,
+        storedPresence,
+        storedType,
+        storedValStr
+      ]);
+    })
+    .join("|");
 
   return `${productId}::${catState}:${catId}:${catFullName}::${mfComplete}::${defsComplete}::${catComplete}::${mfReadErr}::${defReadErrs}::${topErrs}::${perDestParts}`;
 }
@@ -190,18 +293,442 @@ export function buildAutoRefChoicesAttemptKey(
   return `${String(benchSessionId || "")}::${String(productId || "")}::${String(baselineContextSig || "")}`;
 }
 
-export function useBenchV2StandardizedReferenceLoader({
-  benchSessionId,
-  activeProductId,
-  activeProductTitle,
-  isSwitchingSelectedProduct,
-  rawCurrentBaseline,
-  baselineByProductRef,
-  stagedVisionCandidatesByProductRef,
-  isWriterBusy,
-  isAiScanBusy,
-  isBaselineReloading,
-  setClientPrevalidationBanner
+/**
+ * Pure, deterministic evaluator for a completed `resolveStandardizedCandidates`
+ * response. Enforces all mandatory request/session/product/category/baseline
+ * freshness checks, global prerequisite checks, unscoped vs. scoped `[shopify.*]`
+ * error partitioning, and per-destination restricted MetaobjectDefinition &
+ * entry membership verification.
+ */
+export function evaluateStandardizedReferenceChoicesResponse({
+  rawResponse,
+  pendingReq,
+  currentSessionId,
+  latestBaseline,
+  latestContextSig,
+  productTitle,
+  supportedKeys = null,
+  actionPath = DEFAULT_REFERENCE_CHOICES_ACTION_PATH,
+  completedAt = null
+}) {
+  const reqId = pendingReq?.requestId || null;
+  const reqSessionId =
+    pendingReq?.sessionId ?? pendingReq?.benchSessionId ?? null;
+  const reqProductId = pendingReq?.productId || null;
+  const reqBaselineContextSig = pendingReq?.baselineContextSig || null;
+  const reqCategoryId = pendingReq?.productCategoryId ?? null;
+  const finishedAt = completedAt || new Date().toISOString();
+
+  const makeFailureRecord = (stateTag, summary, errorsList = []) => ({
+    requestId: reqId,
+    sessionId: reqSessionId,
+    benchSessionId: reqSessionId,
+    productId: reqProductId,
+    baselineContextSig: reqBaselineContextSig,
+    productCategoryId: reqCategoryId,
+    completedAt: finishedAt,
+    ok: false,
+    state: stateTag,
+    summary,
+    errors: errorsList,
+    verifiedReferenceEntriesByDestination: {},
+    rawResponse: null
+  });
+
+  const policyResolution = resolveSupportedDestinationKeys(
+    supportedKeys ?? pendingReq?.requestedDestinations ?? null
+  );
+  if (!policyResolution.ok) {
+    return makeFailureRecord(
+      "failed_or_incomplete",
+      policyResolution.error,
+      [policyResolution.error]
+    );
+  }
+
+  const activeBareKeys = policyResolution.bareKeys;
+  const activeDestinationSet = policyResolution.destinationSet;
+
+  if (!rawResponse || typeof rawResponse !== "object") {
+    return makeFailureRecord(
+      "failed_or_incomplete",
+      `Reference choices load failed: no structured response returned by ${actionPath}.`,
+      [`No structured response returned by ${actionPath}.`]
+    );
+  }
+
+  if (
+    rawResponse.intent !== "resolveStandardizedCandidates" ||
+    rawResponse.readOnly !== true ||
+    rawResponse.requestId !== reqId ||
+    rawResponse.pieceId !== reqProductId ||
+    reqSessionId !== currentSessionId
+  ) {
+    return makeFailureRecord(
+      "discarded_stale",
+      `Ignored mismatched or stale reference choices response (expected product ${reqProductId} / request ${reqId}, got product ${String(
+        rawResponse.pieceId
+      )} / request ${String(rawResponse.requestId)}).`,
+      ["Mismatched requestId, pieceId, or session."]
+    );
+  }
+
+  const responseCategoryId = rawResponse.productCategory?.id || null;
+  if (
+    !latestBaseline ||
+    latestBaseline.productId !== reqProductId ||
+    latestContextSig !== reqBaselineContextSig ||
+    (latestBaseline.productCategory?.id || null) !== responseCategoryId
+  ) {
+    return makeFailureRecord(
+      "discarded_stale",
+      "Discarded stale reference choices response because the product baseline or category changed while the request was in flight.",
+      ["Baseline or product category changed during reference enumeration."]
+    );
+  }
+
+  const topErrors = Array.isArray(rawResponse.errors)
+    ? rawResponse.errors.filter((e) => typeof e === "string" && e.trim() !== "")
+    : [];
+  if (
+    typeof rawResponse.error === "string" &&
+    rawResponse.error.trim() !== "" &&
+    !topErrors.includes(rawResponse.error.trim())
+  ) {
+    topErrors.unshift(rawResponse.error.trim());
+  }
+
+  const hasResolutionsMap = Boolean(
+    rawResponse.resolutions &&
+      typeof rawResponse.resolutions === "object" &&
+      !Array.isArray(rawResponse.resolutions)
+  );
+  const hasCurrentRefListsMap = Boolean(
+    rawResponse.currentReferenceLists &&
+      typeof rawResponse.currentReferenceLists === "object" &&
+      !Array.isArray(rawResponse.currentReferenceLists)
+  );
+  const hasCategoryEligibilityMap = Boolean(
+    rawResponse.categoryEligibility &&
+      typeof rawResponse.categoryEligibility === "object" &&
+      !Array.isArray(rawResponse.categoryEligibility)
+  );
+
+  const unscopedTopErrors = topErrors.filter((errText) => {
+    const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
+    if (!bracketMatch) return true;
+    const scopedDest = bracketMatch[1].trim();
+    return (
+      !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(scopedDest) ||
+      !activeDestinationSet.has(scopedDest)
+    );
+  });
+
+  const allDestRefListsReadComplete =
+    hasCurrentRefListsMap &&
+    activeBareKeys.every((stdKey) => {
+      const destKey = `shopify.${stdKey}`;
+      const refListEntry = rawResponse.currentReferenceLists[destKey];
+      return Boolean(
+        refListEntry &&
+          typeof refListEntry === "object" &&
+          refListEntry.readComplete === true &&
+          refListEntry.parseValid === true
+      );
+    });
+
+  if (
+    rawResponse.defsReadComplete !== true ||
+    !hasResolutionsMap ||
+    !hasCurrentRefListsMap ||
+    !hasCategoryEligibilityMap ||
+    !allDestRefListsReadComplete ||
+    unscopedTopErrors.length > 0
+  ) {
+    const globalFailureReasons =
+      unscopedTopErrors.length > 0
+        ? unscopedTopErrors
+        : topErrors.length > 0
+          ? topErrors
+          : [
+              rawResponse.defsReadComplete !== true
+                ? "Live PRODUCT metafield definitions read did not complete."
+                : !allDestRefListsReadComplete
+                  ? "Product standardized metafield reference list read or parse did not complete."
+                  : "Top-level resolveStandardizedCandidates prerequisite evidence was missing or incomplete."
+            ];
+
+    return makeFailureRecord(
+      "failed_or_incomplete",
+      globalFailureReasons[0] ||
+        "Reference choices enumeration failed global prerequisite checks.",
+      globalFailureReasons
+    );
+  }
+
+  const verifiedMapByDest = {};
+  let eligibleWithChoicesCount = 0;
+  let eligibleEmptyChoicesCount = 0;
+  let categoryIneligibleCount = 0;
+  let incompleteOrBlockedCount = 0;
+
+  for (const stdKey of activeBareKeys) {
+    const destKey = `shopify.${stdKey}`;
+    const resObj = rawResponse.resolutions[destKey];
+    const refListEntry = rawResponse.currentReferenceLists[destKey];
+    const catEligEntry =
+      resObj?.categoryEligibility || rawResponse.categoryEligibility[destKey] || null;
+    const baselineDef = latestBaseline.liveDefinitions?.[destKey] || null;
+    const expectedDefId = baselineDef?.restrictedMetaobjectDefinitionId || null;
+
+    const scopedTopErrorsForDest = topErrors.filter((errText) => {
+      const bracketMatch = /^\[([^\]]+)\]/.exec(errText.trim());
+      return Boolean(bracketMatch && bracketMatch[1].trim() === destKey);
+    });
+
+    if (!resObj || typeof resObj !== "object") {
+      incompleteOrBlockedCount += 1;
+      verifiedMapByDest[destKey] = {
+        destination: destKey,
+        status: "incomplete",
+        isComplete: false,
+        isCategoryEligible: false,
+        restrictedMetaobjectDefinitionId: expectedDefId,
+        availableEntries: [],
+        errors:
+          scopedTopErrorsForDest.length > 0
+            ? scopedTopErrorsForDest
+            : [`Missing resolution entry for ${destKey}.`]
+      };
+      continue;
+    }
+
+    const resolvedDefId =
+      resObj.restrictedMetaobjectDefinitionId ||
+      resObj.restrictedMetaobjectDefinition?.id ||
+      resObj.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
+      null;
+
+    const defMatchesBaseline = Boolean(
+      isExactMetaobjectDefinitionGid(resolvedDefId) &&
+        isExactMetaobjectDefinitionGid(expectedDefId) &&
+        resolvedDefId === expectedDefId &&
+        resObj.metafieldDefinition?.type === "list.metaobject_reference" &&
+        baselineDef?.type === "list.metaobject_reference"
+    );
+
+    const hasContinuation = Boolean(
+      resObj.continuation &&
+        typeof resObj.continuation === "object" &&
+        resObj.continuation.hasNextPage === true
+    );
+
+    const isCatEligComplete = Boolean(
+      catEligEntry &&
+        typeof catEligEntry === "object" &&
+        catEligEntry.isComplete === true
+    );
+    const isCatEligible = Boolean(
+      isCatEligComplete &&
+        catEligEntry.isEligible === true &&
+        resObj.isCategoryEligible === true &&
+        resObj.status !== "category_ineligible"
+    );
+
+    const isRefListCompleteAndValid = Boolean(
+      refListEntry &&
+        typeof refListEntry === "object" &&
+        refListEntry.readComplete === true &&
+        refListEntry.parseValid === true
+    );
+
+    const rawFieldErrors = Array.isArray(resObj.errors)
+      ? resObj.errors.filter((e) => typeof e === "string" && e.trim() !== "")
+      : [];
+    for (const scopedErr of scopedTopErrorsForDest) {
+      if (!rawFieldErrors.includes(scopedErr)) {
+        rawFieldErrors.push(scopedErr);
+      }
+    }
+
+    const isCompleteCategoryIneligible = Boolean(
+      resObj.isComplete === true &&
+        !hasContinuation &&
+        defMatchesBaseline &&
+        isRefListCompleteAndValid &&
+        isCatEligComplete &&
+        (resObj.status === "category_ineligible" ||
+          resObj.isCategoryEligible === false ||
+          catEligEntry.isEligible === false)
+    );
+
+    const isFieldEligibleAndComplete = Boolean(
+      resObj.isComplete === true &&
+        !hasContinuation &&
+        defMatchesBaseline &&
+        isRefListCompleteAndValid &&
+        isCatEligible &&
+        resObj.status !== "incomplete" &&
+        resObj.status !== "blocked" &&
+        rawFieldErrors.length === 0
+    );
+
+    const rawAvailable = Array.isArray(resObj.availableEntries)
+      ? resObj.availableEntries
+      : [];
+    const verifiedAvailable = [];
+    if (isFieldEligibleAndComplete) {
+      for (const item of rawAvailable) {
+        if (!item || typeof item !== "object") continue;
+        const gid = extractEntryGid(item);
+        const entryDefId = extractEntryDefinitionId(item);
+        if (!isExactMetaobjectGid(gid)) continue;
+        if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
+        verifiedAvailable.push({
+          id: gid,
+          displayName: extractEntryLabel(item) || gid,
+          definition: {
+            id: entryDefId,
+            type:
+              item.definition?.type ||
+              resObj.restrictedMetaobjectDefinition?.type ||
+              null,
+            name:
+              item.definition?.name ||
+              resObj.restrictedMetaobjectDefinition?.name ||
+              null
+          },
+          taxonomy_reference: item.taxonomy_reference ?? null
+        });
+      }
+    }
+
+    if (isCompleteCategoryIneligible) {
+      categoryIneligibleCount += 1;
+    } else if (!isFieldEligibleAndComplete) {
+      incompleteOrBlockedCount += 1;
+    } else if (verifiedAvailable.length === 0) {
+      eligibleEmptyChoicesCount += 1;
+    } else {
+      eligibleWithChoicesCount += 1;
+    }
+
+    const mergedFieldErrors = [...rawFieldErrors];
+    if (!defMatchesBaseline) {
+      mergedFieldErrors.push(
+        `Restricted MetaobjectDefinition mismatch or invalid ID on ${destKey}.`
+      );
+    }
+    if (!isRefListCompleteAndValid) {
+      mergedFieldErrors.push(
+        refListEntry?.parseError ||
+          `Stored reference list read or parse was incomplete on ${destKey}.`
+      );
+    }
+    if (
+      !isCatEligComplete &&
+      catEligEntry?.reason &&
+      !mergedFieldErrors.includes(catEligEntry.reason)
+    ) {
+      mergedFieldErrors.push(catEligEntry.reason);
+    }
+
+    verifiedMapByDest[destKey] = {
+      ...resObj,
+      restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
+      isComplete: isFieldEligibleAndComplete,
+      availableEntries: isFieldEligibleAndComplete ? verifiedAvailable : [],
+      errors: mergedFieldErrors
+    };
+  }
+
+  const overallState =
+    incompleteOrBlockedCount > 0 ? "partial_or_blocked" : "choices_loaded";
+
+  const resolvedProdTitle =
+    latestBaseline?.productTitle || productTitle || reqProductId;
+
+  const summaryText = `Reference choices loaded for ${resolvedProdTitle}: ${eligibleWithChoicesCount} eligible attribute${
+    eligibleWithChoicesCount === 1 ? "" : "s"
+  } with verified choices${
+    eligibleEmptyChoicesCount > 0
+      ? `, ${eligibleEmptyChoicesCount} eligible with 0 entries in Shopify`
+      : ""
+  }${
+    categoryIneligibleCount > 0
+      ? `, ${categoryIneligibleCount} ineligible for category`
+      : ""
+  }${
+    incompleteOrBlockedCount > 0
+      ? `, ${incompleteOrBlockedCount} incomplete or blocked`
+      : ""
+  }.`;
+
+  return {
+    requestId: reqId,
+    sessionId: reqSessionId,
+    benchSessionId: reqSessionId,
+    productId: reqProductId,
+    baselineContextSig: reqBaselineContextSig,
+    productCategoryId: responseCategoryId,
+    completedAt: finishedAt,
+    ok: incompleteOrBlockedCount === 0,
+    state: overallState,
+    summary: summaryText,
+    eligibleWithChoicesCount,
+    eligibleEmptyChoicesCount,
+    categoryIneligibleCount,
+    incompleteOrBlockedCount,
+    errors: topErrors,
+    verifiedReferenceEntriesByDestination: verifiedMapByDest,
+    rawResponse
+  };
+}
+
+function buildDefaultPrevalidationMessages(productTitle, reloadActionLabel = "Reload Product") {
+  const safeTitle = productTitle || " the selected product";
+  return {
+    busyNotice: {
+      tone: "warning",
+      title: "Operation already in progress",
+      reasons: [
+        "Wait for the current operation to complete before retrying standardized reference choices."
+      ]
+    },
+    baselineNotLoadedNotice: {
+      tone: "error",
+      title: "Cannot load reference choices: Product baseline not loaded",
+      reasons: [`Reload ${safeTitle} so its baseline and definitions are available.`]
+    },
+    baselineIncompleteNotice: {
+      tone: "error",
+      title: "Cannot load reference choices: Baseline read incomplete",
+      reasons: [
+        `Product metafields, product category, or live PRODUCT definitions did not finish loading. Click ${reloadActionLabel} first.`
+      ]
+    }
+  };
+}
+
+/**
+ * Reusable client-safe hook for once-per-factual-context automatic and explicit
+ * retry read-only standardized reference choice loading.
+ */
+export function useStandardizedReferenceChoiceLoader({
+  sessionId,
+  productId,
+  productTitle,
+  isSwitchingProduct = false,
+  rawBaseline,
+  getLatestBaselineForProduct,
+  getStagedCandidatesForProduct,
+  isExternalBusy = false,
+  onPrevalidationNotice = null,
+  onClearNotice = null,
+  requestedDestinations = null,
+  requestIdPrefix = DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX,
+  actionPath = DEFAULT_REFERENCE_CHOICES_ACTION_PATH,
+  messages = null
 }) {
   const refChoicesFetcher = useFetcher();
 
@@ -214,59 +741,87 @@ export function useBenchV2StandardizedReferenceLoader({
   const refChoicesFetcherRef = useRef(refChoicesFetcher);
   refChoicesFetcherRef.current = refChoicesFetcher;
 
-  const benchSessionIdRef = useRef(benchSessionId);
-  benchSessionIdRef.current = benchSessionId;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+
+  const getLatestBaselineRef = useRef(getLatestBaselineForProduct);
+  getLatestBaselineRef.current = getLatestBaselineForProduct;
+
+  const getStagedCandidatesRef = useRef(getStagedCandidatesForProduct);
+  getStagedCandidatesRef.current = getStagedCandidatesForProduct;
 
   useEffect(() => {
     activeRefChoicesRequestRef.current = activeRefChoicesRequest;
   }, [activeRefChoicesRequest]);
 
-  const currentRefChoicesRecord = refChoicesStateByProduct[activeProductId] || null;
+  const destinationPolicy = React.useMemo(
+    () => resolveSupportedDestinationKeys(requestedDestinations),
+    [requestedDestinations]
+  );
+
+  const currentRefChoicesRecord = refChoicesStateByProduct[productId] || null;
   const currentBaselineContextSig = React.useMemo(
-    () => buildStandardizedBaselineContextSignature(rawCurrentBaseline),
-    [rawCurrentBaseline]
+    () =>
+      buildStandardizedBaselineContextSignature(
+        rawBaseline,
+        destinationPolicy.ok
+          ? destinationPolicy.bareKeys
+          : SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+      ),
+    [rawBaseline, destinationPolicy]
   );
 
   const isCurrentBaselineReadyForStandardizedLookup = Boolean(
-    !isSwitchingSelectedProduct &&
-      isExactProductGid(activeProductId) &&
-      rawCurrentBaseline &&
-      rawCurrentBaseline.productId === activeProductId &&
-      rawCurrentBaseline.metafieldsReadComplete === true &&
-      rawCurrentBaseline.defsReadComplete === true &&
-      rawCurrentBaseline.productCategoryReadComplete === true
+    destinationPolicy.ok &&
+      !isSwitchingProduct &&
+      isExactProductGid(productId) &&
+      rawBaseline &&
+      rawBaseline.productId === productId &&
+      rawBaseline.metafieldsReadComplete === true &&
+      rawBaseline.defsReadComplete === true &&
+      rawBaseline.productCategoryReadComplete === true
   );
 
   // Merge verified reference evidence into currentBaseline ONLY when bound to the
-  // current bench session, current productId, current category, and current baseline context.
+  // current session, current productId, current category, and current baseline context.
   const isCurrentRefChoicesBoundAndFresh = Boolean(
-    rawCurrentBaseline &&
+    rawBaseline &&
       currentRefChoicesRecord &&
-      currentRefChoicesRecord.benchSessionId === benchSessionIdRef.current &&
-      currentRefChoicesRecord.productId === activeProductId &&
+      (currentRefChoicesRecord.sessionId ?? currentRefChoicesRecord.benchSessionId) ===
+        sessionIdRef.current &&
+      currentRefChoicesRecord.productId === productId &&
       currentRefChoicesRecord.baselineContextSig === currentBaselineContextSig &&
       (currentRefChoicesRecord.productCategoryId || null) ===
-        (rawCurrentBaseline.productCategory?.id || null)
+        (rawBaseline.productCategory?.id || null)
   );
 
   const currentBaseline = React.useMemo(() => {
-    if (!rawCurrentBaseline) return null;
+    if (!rawBaseline) return null;
     if (!isCurrentRefChoicesBoundAndFresh || !currentRefChoicesRecord) {
-      return rawCurrentBaseline;
+      return rawBaseline;
     }
     return {
-      ...rawCurrentBaseline,
+      ...rawBaseline,
       verifiedReferenceEntriesByDestination:
         currentRefChoicesRecord.verifiedReferenceEntriesByDestination || {},
       standardizedReferenceResolutions:
         currentRefChoicesRecord.rawResponse || null
     };
-  }, [rawCurrentBaseline, isCurrentRefChoicesBoundAndFresh, currentRefChoicesRecord]);
+  }, [rawBaseline, isCurrentRefChoicesBoundAndFresh, currentRefChoicesRecord]);
 
   const isRefChoicesBusy =
     refChoicesFetcher.state !== "idle" || Boolean(activeRefChoicesRequest);
-  const isAnyOperationBusy =
-    isWriterBusy || isAiScanBusy || isRefChoicesBusy || isBaselineReloading;
+  const isAnyOperationBusy = Boolean(isExternalBusy || isRefChoicesBusy);
+
+  const cleanPrefix =
+    typeof requestIdPrefix === "string" && requestIdPrefix.trim() !== ""
+      ? requestIdPrefix.trim().replace(/[^A-Za-z0-9_-]/g, "")
+      : DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX;
+
+  const resolvedActionPath =
+    typeof actionPath === "string" && actionPath.trim() !== ""
+      ? actionPath.trim()
+      : DEFAULT_REFERENCE_CHOICES_ACTION_PATH;
 
   // ==========================================================================
   // AUTOMATIC + EXPLICIT RETRY READ-ONLY STANDARDIZED REFERENCE CHOICES LOADER
@@ -274,6 +829,8 @@ export function useBenchV2StandardizedReferenceLoader({
   const submitStandardizedReferenceChoicesRequest = useCallback(
     ({ targetProductId, targetBaselineSnap, targetContextSig }) => {
       if (
+        !destinationPolicy.ok ||
+        !isExactProductGid(targetProductId) ||
         !targetBaselineSnap ||
         targetBaselineSnap.productId !== targetProductId ||
         targetBaselineSnap.metafieldsReadComplete !== true ||
@@ -284,23 +841,31 @@ export function useBenchV2StandardizedReferenceLoader({
       }
 
       const attemptKey = buildAutoRefChoicesAttemptKey(
-        benchSessionIdRef.current,
+        sessionIdRef.current,
         targetProductId,
         targetContextSig
       );
       autoRefChoicesAttemptedKeysRef.current.add(attemptKey);
 
-      const requestId = `bench_v2_refchoices_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const enumerateList = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => `shopify.${k}`);
+      const requestId = `${cleanPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const enumerateList = destinationPolicy.destinationKeys;
+      const rawCandidates =
+        typeof getStagedCandidatesRef.current === "function"
+          ? getStagedCandidatesRef.current(targetProductId)
+          : {};
       const stagedCandidatesForProduct =
-        stagedVisionCandidatesByProductRef.current?.[targetProductId] || {};
+        rawCandidates && typeof rawCandidates === "object" && !Array.isArray(rawCandidates)
+          ? rawCandidates
+          : {};
 
       const reqMeta = {
         requestId,
-        benchSessionId: benchSessionIdRef.current,
+        sessionId: sessionIdRef.current,
+        benchSessionId: sessionIdRef.current,
         productId: targetProductId,
         baselineContextSig: targetContextSig,
         productCategoryId: targetBaselineSnap.productCategory?.id || null,
+        requestedDestinations: enumerateList,
         startedAt: new Date().toISOString()
       };
 
@@ -313,23 +878,26 @@ export function useBenchV2StandardizedReferenceLoader({
       formData.append("pieceId", targetProductId);
       formData.append("requestId", requestId);
       formData.append("enumerate_destinations", JSON.stringify(enumerateList));
-      formData.append("standardized_candidates", JSON.stringify(stagedCandidatesForProduct));
+      formData.append(
+        "standardized_candidates",
+        JSON.stringify(stagedCandidatesForProduct)
+      );
 
       refChoicesFetcherRef.current.submit(formData, {
         method: "POST",
-        action: "/app/meta-injector-api"
+        action: resolvedActionPath
       });
       return true;
     },
-    [stagedVisionCandidatesByProductRef]
+    [destinationPolicy, cleanPrefix, resolvedActionPath]
   );
 
   // Automatic read-only reference-choice loading:
-  // Fires at most once per (benchSessionId, activeProductId, factual baselineContextSig)
+  // Fires at most once per (sessionId, productId, factual baselineContextSig)
   // when the selected product baseline is genuinely ready. Records the attempt key
   // synchronously before submitting so Strict Mode or revalidation cannot loop.
   useEffect(() => {
-    if (!isCurrentBaselineReadyForStandardizedLookup || !rawCurrentBaseline) {
+    if (!isCurrentBaselineReadyForStandardizedLookup || !rawBaseline) {
       return;
     }
     if (isCurrentRefChoicesBoundAndFresh) {
@@ -338,15 +906,14 @@ export function useBenchV2StandardizedReferenceLoader({
     if (
       activeRefChoicesRequestRef.current ||
       refChoicesFetcherRef.current.state !== "idle" ||
-      isWriterBusy ||
-      isAiScanBusy
+      isExternalBusy
     ) {
       return;
     }
 
     const attemptKey = buildAutoRefChoicesAttemptKey(
-      benchSessionIdRef.current,
-      activeProductId,
+      sessionIdRef.current,
+      productId,
       currentBaselineContextSig
     );
     if (autoRefChoicesAttemptedKeysRef.current.has(attemptKey)) {
@@ -354,63 +921,76 @@ export function useBenchV2StandardizedReferenceLoader({
     }
 
     submitStandardizedReferenceChoicesRequest({
-      targetProductId: activeProductId,
-      targetBaselineSnap: rawCurrentBaseline,
+      targetProductId: productId,
+      targetBaselineSnap: rawBaseline,
       targetContextSig: currentBaselineContextSig
     });
   }, [
     isCurrentBaselineReadyForStandardizedLookup,
     isCurrentRefChoicesBoundAndFresh,
-    activeProductId,
+    productId,
     currentBaselineContextSig,
-    rawCurrentBaseline,
-    isWriterBusy,
-    isAiScanBusy,
+    rawBaseline,
+    isExternalBusy,
     isRefChoicesBusy,
     submitStandardizedReferenceChoicesRequest
   ]);
 
   const handleLoadStandardizedReferenceChoices = () => {
-    setClientPrevalidationBanner(null);
+    if (typeof onClearNotice === "function") {
+      onClearNotice();
+    }
 
-    if (isAnyOperationBusy) {
-      setClientPrevalidationBanner({
-        tone: "warning",
-        title: "Operation already in progress",
-        reasons: [
-          "Wait for the current operation to complete before retrying standardized reference choices."
-        ]
-      });
+    const defaultNotices = buildDefaultPrevalidationMessages(
+      productTitle || productId,
+      messages?.reloadActionLabel || "Reload Product"
+    );
+
+    if (!destinationPolicy.ok) {
+      if (typeof onPrevalidationNotice === "function") {
+        onPrevalidationNotice({
+          tone: "error",
+          title: "Cannot load reference choices: Unsupported destination filter",
+          reasons: [destinationPolicy.error]
+        });
+      }
       return;
     }
 
-    if (!rawCurrentBaseline || rawCurrentBaseline.productId !== activeProductId) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: "Cannot load reference choices: Product baseline not loaded",
-        reasons: [`Reload ${activeProductTitle} so its baseline and definitions are available.`]
-      });
+    if (isAnyOperationBusy) {
+      if (typeof onPrevalidationNotice === "function") {
+        onPrevalidationNotice(messages?.busyNotice || defaultNotices.busyNotice);
+      }
+      return;
+    }
+
+    if (!rawBaseline || rawBaseline.productId !== productId) {
+      if (typeof onPrevalidationNotice === "function") {
+        const customNotLoaded =
+          typeof messages?.buildBaselineNotLoadedNotice === "function"
+            ? messages.buildBaselineNotLoadedNotice(productTitle || productId)
+            : messages?.baselineNotLoadedNotice;
+        onPrevalidationNotice(customNotLoaded || defaultNotices.baselineNotLoadedNotice);
+      }
       return;
     }
 
     if (
-      rawCurrentBaseline.metafieldsReadComplete !== true ||
-      rawCurrentBaseline.defsReadComplete !== true ||
-      rawCurrentBaseline.productCategoryReadComplete !== true
+      rawBaseline.metafieldsReadComplete !== true ||
+      rawBaseline.defsReadComplete !== true ||
+      rawBaseline.productCategoryReadComplete !== true
     ) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: "Cannot load reference choices: Baseline read incomplete",
-        reasons: [
-          "Product metafields, product category, or live PRODUCT definitions did not finish loading. Click Reload Product first."
-        ]
-      });
+      if (typeof onPrevalidationNotice === "function") {
+        onPrevalidationNotice(
+          messages?.baselineIncompleteNotice || defaultNotices.baselineIncompleteNotice
+        );
+      }
       return;
     }
 
     submitStandardizedReferenceChoicesRequest({
-      targetProductId: activeProductId,
-      targetBaselineSnap: rawCurrentBaseline,
+      targetProductId: productId,
+      targetBaselineSnap: rawBaseline,
       targetContextSig: currentBaselineContextSig
     });
   };
@@ -444,367 +1024,34 @@ export function useBenchV2StandardizedReferenceLoader({
     processedRefChoicesRequestIdRef.current = pendingReq.requestId;
 
     const reqProductId = pendingReq.productId;
-    const latestBaselineForProduct = baselineByProductRef.current?.[reqProductId] || null;
-    const latestContextSig = buildStandardizedBaselineContextSignature(latestBaselineForProduct);
+    const latestBaselineForProduct =
+      typeof getLatestBaselineRef.current === "function"
+        ? getLatestBaselineRef.current(reqProductId)
+        : rawBaseline && rawBaseline.productId === reqProductId
+          ? rawBaseline
+          : null;
 
-    const recordFailedOrStaleRefChoices = (stateTag, summary, errorsList = []) => {
-      setRefChoicesStateByProduct((prev) => ({
-        ...prev,
-        [reqProductId]: {
-          requestId: pendingReq.requestId,
-          benchSessionId: pendingReq.benchSessionId,
-          productId: reqProductId,
-          baselineContextSig: pendingReq.baselineContextSig,
-          productCategoryId: pendingReq.productCategoryId,
-          completedAt: new Date().toISOString(),
-          ok: false,
-          state: stateTag,
-          summary,
-          errors: errorsList,
-          verifiedReferenceEntriesByDestination: {},
-          rawResponse: null
-        }
-      }));
-      observedBusyRequestIdRef.current = null;
-      activeRefChoicesRequestRef.current = null;
-      setActiveRefChoicesRequest(null);
-    };
-
-    if (!rawResponse || typeof rawResponse !== "object") {
-      recordFailedOrStaleRefChoices(
-        "failed_or_incomplete",
-        "Reference choices load failed: no structured response returned by /app/meta-injector-api.",
-        ["No structured response returned by /app/meta-injector-api."]
-      );
-      return;
-    }
-
-    if (
-      rawResponse.intent !== "resolveStandardizedCandidates" ||
-      rawResponse.readOnly !== true ||
-      rawResponse.requestId !== pendingReq.requestId ||
-      rawResponse.pieceId !== reqProductId ||
-      pendingReq.benchSessionId !== benchSessionIdRef.current
-    ) {
-      recordFailedOrStaleRefChoices(
-        "discarded_stale",
-        `Ignored mismatched or stale reference choices response (expected product ${reqProductId} / request ${pendingReq.requestId}, got product ${String(
-          rawResponse.pieceId
-        )} / request ${String(rawResponse.requestId)}).`,
-        ["Mismatched requestId, pieceId, or session."]
-      );
-      return;
-    }
-
-    const responseCategoryId = rawResponse.productCategory?.id || null;
-    if (
-      !latestBaselineForProduct ||
-      latestContextSig !== pendingReq.baselineContextSig ||
-      (latestBaselineForProduct.productCategory?.id || null) !== responseCategoryId
-    ) {
-      recordFailedOrStaleRefChoices(
-        "discarded_stale",
-        "Discarded stale reference choices response because the product baseline or category changed while the request was in flight.",
-        ["Baseline or product category changed during reference enumeration."]
-      );
-      return;
-    }
-
-    const topErrors = Array.isArray(rawResponse.errors)
-      ? rawResponse.errors.filter((e) => typeof e === "string" && e.trim() !== "")
-      : [];
-    if (
-      typeof rawResponse.error === "string" &&
-      rawResponse.error.trim() !== "" &&
-      !topErrors.includes(rawResponse.error.trim())
-    ) {
-      topErrors.unshift(rawResponse.error.trim());
-    }
-
-    const hasResolutionsMap = Boolean(
-      rawResponse.resolutions &&
-        typeof rawResponse.resolutions === "object" &&
-        !Array.isArray(rawResponse.resolutions)
-    );
-    const hasCurrentRefListsMap = Boolean(
-      rawResponse.currentReferenceLists &&
-        typeof rawResponse.currentReferenceLists === "object" &&
-        !Array.isArray(rawResponse.currentReferenceLists)
-    );
-    const hasCategoryEligibilityMap = Boolean(
-      rawResponse.categoryEligibility &&
-        typeof rawResponse.categoryEligibility === "object" &&
-        !Array.isArray(rawResponse.categoryEligibility)
+    const latestContextSig = buildStandardizedBaselineContextSignature(
+      latestBaselineForProduct,
+      destinationPolicy.ok
+        ? destinationPolicy.bareKeys
+        : SUPPORTED_STANDARDIZED_REFERENCE_KEYS
     );
 
-    const unscopedTopErrors = topErrors.filter((errText) => {
-      const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
-      if (!bracketMatch) return true;
-      const scopedDest = bracketMatch[1].trim();
-      return !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(scopedDest);
+    const evaluatedRecord = evaluateStandardizedReferenceChoicesResponse({
+      rawResponse,
+      pendingReq,
+      currentSessionId: sessionIdRef.current,
+      latestBaseline: latestBaselineForProduct,
+      latestContextSig,
+      productTitle,
+      supportedKeys: pendingReq.requestedDestinations,
+      actionPath: resolvedActionPath
     });
-
-    const allDestRefListsReadComplete =
-      hasCurrentRefListsMap &&
-      SUPPORTED_STANDARDIZED_REFERENCE_KEYS.every((stdKey) => {
-        const destKey = `shopify.${stdKey}`;
-        const refListEntry = rawResponse.currentReferenceLists[destKey];
-        return Boolean(
-          refListEntry &&
-            typeof refListEntry === "object" &&
-            refListEntry.readComplete === true &&
-            refListEntry.parseValid === true
-        );
-      });
-
-    if (
-      rawResponse.defsReadComplete !== true ||
-      !hasResolutionsMap ||
-      !hasCurrentRefListsMap ||
-      !hasCategoryEligibilityMap ||
-      !allDestRefListsReadComplete ||
-      unscopedTopErrors.length > 0
-    ) {
-      const globalFailureReasons =
-        unscopedTopErrors.length > 0
-          ? unscopedTopErrors
-          : topErrors.length > 0
-            ? topErrors
-            : [
-                rawResponse.defsReadComplete !== true
-                  ? "Live PRODUCT metafield definitions read did not complete."
-                  : !allDestRefListsReadComplete
-                    ? "Product standardized metafield reference list read or parse did not complete."
-                    : "Top-level resolveStandardizedCandidates prerequisite evidence was missing or incomplete."
-              ];
-
-      recordFailedOrStaleRefChoices(
-        "failed_or_incomplete",
-        globalFailureReasons[0] ||
-          "Reference choices enumeration failed global prerequisite checks.",
-        globalFailureReasons
-      );
-      return;
-    }
-
-    const verifiedMapByDest = {};
-    let eligibleWithChoicesCount = 0;
-    let eligibleEmptyChoicesCount = 0;
-    let categoryIneligibleCount = 0;
-    let incompleteOrBlockedCount = 0;
-
-    for (const stdKey of SUPPORTED_STANDARDIZED_REFERENCE_KEYS) {
-      const destKey = `shopify.${stdKey}`;
-      const resObj = rawResponse.resolutions[destKey];
-      const refListEntry = rawResponse.currentReferenceLists[destKey];
-      const catEligEntry =
-        resObj?.categoryEligibility || rawResponse.categoryEligibility[destKey] || null;
-      const baselineDef = latestBaselineForProduct.liveDefinitions?.[destKey] || null;
-      const expectedDefId = baselineDef?.restrictedMetaobjectDefinitionId || null;
-
-      const scopedTopErrorsForDest = topErrors.filter((errText) => {
-        const bracketMatch = /^\[([^\]]+)\]/.exec(errText.trim());
-        return Boolean(bracketMatch && bracketMatch[1].trim() === destKey);
-      });
-
-      if (!resObj || typeof resObj !== "object") {
-        incompleteOrBlockedCount += 1;
-        verifiedMapByDest[destKey] = {
-          destination: destKey,
-          status: "incomplete",
-          isComplete: false,
-          isCategoryEligible: false,
-          restrictedMetaobjectDefinitionId: expectedDefId,
-          availableEntries: [],
-          errors:
-            scopedTopErrorsForDest.length > 0
-              ? scopedTopErrorsForDest
-              : [`Missing resolution entry for ${destKey}.`]
-        };
-        continue;
-      }
-
-      const resolvedDefId =
-        resObj.restrictedMetaobjectDefinitionId ||
-        resObj.restrictedMetaobjectDefinition?.id ||
-        resObj.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
-        null;
-
-      const defMatchesBaseline = Boolean(
-        isExactMetaobjectDefinitionGid(resolvedDefId) &&
-          isExactMetaobjectDefinitionGid(expectedDefId) &&
-          resolvedDefId === expectedDefId &&
-          resObj.metafieldDefinition?.type === "list.metaobject_reference" &&
-          baselineDef?.type === "list.metaobject_reference"
-      );
-
-      const hasContinuation = Boolean(
-        resObj.continuation &&
-          typeof resObj.continuation === "object" &&
-          resObj.continuation.hasNextPage === true
-      );
-
-      const isCatEligComplete = Boolean(
-        catEligEntry &&
-          typeof catEligEntry === "object" &&
-          catEligEntry.isComplete === true
-      );
-      const isCatEligible = Boolean(
-        isCatEligComplete &&
-          catEligEntry.isEligible === true &&
-          resObj.isCategoryEligible === true &&
-          resObj.status !== "category_ineligible"
-      );
-
-      const isRefListCompleteAndValid = Boolean(
-        refListEntry &&
-          typeof refListEntry === "object" &&
-          refListEntry.readComplete === true &&
-          refListEntry.parseValid === true
-      );
-
-      const rawFieldErrors = Array.isArray(resObj.errors)
-        ? resObj.errors.filter((e) => typeof e === "string" && e.trim() !== "")
-        : [];
-      for (const scopedErr of scopedTopErrorsForDest) {
-        if (!rawFieldErrors.includes(scopedErr)) {
-          rawFieldErrors.push(scopedErr);
-        }
-      }
-
-      const isCompleteCategoryIneligible = Boolean(
-        resObj.isComplete === true &&
-          !hasContinuation &&
-          defMatchesBaseline &&
-          isRefListCompleteAndValid &&
-          isCatEligComplete &&
-          (resObj.status === "category_ineligible" ||
-            resObj.isCategoryEligible === false ||
-            catEligEntry.isEligible === false)
-      );
-
-      const isFieldEligibleAndComplete = Boolean(
-        resObj.isComplete === true &&
-          !hasContinuation &&
-          defMatchesBaseline &&
-          isRefListCompleteAndValid &&
-          isCatEligible &&
-          resObj.status !== "incomplete" &&
-          resObj.status !== "blocked" &&
-          rawFieldErrors.length === 0
-      );
-
-      const rawAvailable = Array.isArray(resObj.availableEntries)
-        ? resObj.availableEntries
-        : [];
-      const verifiedAvailable = [];
-      if (isFieldEligibleAndComplete) {
-        for (const item of rawAvailable) {
-          if (!item || typeof item !== "object") continue;
-          const gid = extractEntryGid(item);
-          const entryDefId = extractEntryDefinitionId(item);
-          if (!isExactMetaobjectGid(gid)) continue;
-          if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
-          verifiedAvailable.push({
-            id: gid,
-            displayName: extractEntryLabel(item) || gid,
-            definition: {
-              id: entryDefId,
-              type:
-                item.definition?.type ||
-                resObj.restrictedMetaobjectDefinition?.type ||
-                null,
-              name:
-                item.definition?.name ||
-                resObj.restrictedMetaobjectDefinition?.name ||
-                null
-            },
-            taxonomy_reference: item.taxonomy_reference ?? null
-          });
-        }
-      }
-
-      if (isCompleteCategoryIneligible) {
-        categoryIneligibleCount += 1;
-      } else if (!isFieldEligibleAndComplete) {
-        incompleteOrBlockedCount += 1;
-      } else if (verifiedAvailable.length === 0) {
-        eligibleEmptyChoicesCount += 1;
-      } else {
-        eligibleWithChoicesCount += 1;
-      }
-
-      const mergedFieldErrors = [...rawFieldErrors];
-      if (!defMatchesBaseline) {
-        mergedFieldErrors.push(
-          `Restricted MetaobjectDefinition mismatch or invalid ID on ${destKey}.`
-        );
-      }
-      if (!isRefListCompleteAndValid) {
-        mergedFieldErrors.push(
-          refListEntry?.parseError ||
-            `Stored reference list read or parse was incomplete on ${destKey}.`
-        );
-      }
-      if (
-        !isCatEligComplete &&
-        catEligEntry?.reason &&
-        !mergedFieldErrors.includes(catEligEntry.reason)
-      ) {
-        mergedFieldErrors.push(catEligEntry.reason);
-      }
-
-      verifiedMapByDest[destKey] = {
-        ...resObj,
-        restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
-        isComplete: isFieldEligibleAndComplete,
-        availableEntries: isFieldEligibleAndComplete ? verifiedAvailable : [],
-        errors: mergedFieldErrors
-      };
-    }
-
-    const overallState =
-      incompleteOrBlockedCount > 0 ? "partial_or_blocked" : "choices_loaded";
-
-    const resolvedProdTitle =
-      latestBaselineForProduct?.productTitle || activeProductTitle || reqProductId;
-
-    const summaryText = `Reference choices loaded for ${resolvedProdTitle}: ${eligibleWithChoicesCount} eligible attribute${
-      eligibleWithChoicesCount === 1 ? "" : "s"
-    } with verified choices${
-      eligibleEmptyChoicesCount > 0
-        ? `, ${eligibleEmptyChoicesCount} eligible with 0 entries in Shopify`
-        : ""
-    }${
-      categoryIneligibleCount > 0
-        ? `, ${categoryIneligibleCount} ineligible for category`
-        : ""
-    }${
-      incompleteOrBlockedCount > 0
-        ? `, ${incompleteOrBlockedCount} incomplete or blocked`
-        : ""
-    }.`;
 
     setRefChoicesStateByProduct((prev) => ({
       ...prev,
-      [reqProductId]: {
-        requestId: pendingReq.requestId,
-        benchSessionId: pendingReq.benchSessionId,
-        productId: reqProductId,
-        baselineContextSig: pendingReq.baselineContextSig,
-        productCategoryId: responseCategoryId,
-        completedAt: new Date().toISOString(),
-        ok: incompleteOrBlockedCount === 0,
-        state: overallState,
-        summary: summaryText,
-        eligibleWithChoicesCount,
-        eligibleEmptyChoicesCount,
-        categoryIneligibleCount,
-        incompleteOrBlockedCount,
-        errors: topErrors,
-        verifiedReferenceEntriesByDestination: verifiedMapByDest,
-        rawResponse
-      }
+      [reqProductId]: evaluatedRecord
     }));
 
     observedBusyRequestIdRef.current = null;
@@ -814,8 +1061,10 @@ export function useBenchV2StandardizedReferenceLoader({
     refChoicesFetcher.state,
     refChoicesFetcher.data,
     activeRefChoicesRequest,
-    activeProductTitle,
-    baselineByProductRef
+    productTitle,
+    rawBaseline,
+    destinationPolicy,
+    resolvedActionPath
   ]);
 
   const canRetryRefChoicesForCurrentProduct = Boolean(
@@ -828,10 +1077,10 @@ export function useBenchV2StandardizedReferenceLoader({
   const dismissCurrentRefChoicesRecord = useCallback(() => {
     setRefChoicesStateByProduct((prev) => {
       const next = { ...prev };
-      delete next[activeProductId];
+      delete next[productId];
       return next;
     });
-  }, [activeProductId]);
+  }, [productId]);
 
   return {
     currentBaseline,
@@ -842,4 +1091,64 @@ export function useBenchV2StandardizedReferenceLoader({
     handleLoadStandardizedReferenceChoices,
     dismissCurrentRefChoicesRecord
   };
+}
+
+/**
+ * Backward-compatible Bench V2 wrapper hook.
+ * Preserves the exact call signature, ref adapters, prevalidation banner
+ * behavior, record fields, and return values expected by `app/routes/app.bench-v2.jsx`.
+ */
+export function useBenchV2StandardizedReferenceLoader({
+  benchSessionId,
+  activeProductId,
+  activeProductTitle,
+  isSwitchingSelectedProduct,
+  rawCurrentBaseline,
+  baselineByProductRef,
+  stagedVisionCandidatesByProductRef,
+  isWriterBusy,
+  isAiScanBusy,
+  isBaselineReloading,
+  setClientPrevalidationBanner
+}) {
+  const getLatestBaselineForProduct = useCallback(
+    (targetProdId) => baselineByProductRef?.current?.[targetProdId] || null,
+    [baselineByProductRef]
+  );
+
+  const getStagedCandidatesForProduct = useCallback(
+    (targetProdId) =>
+      stagedVisionCandidatesByProductRef?.current?.[targetProdId] || {},
+    [stagedVisionCandidatesByProductRef]
+  );
+
+  const handleClearNotice = useCallback(() => {
+    if (typeof setClientPrevalidationBanner === "function") {
+      setClientPrevalidationBanner(null);
+    }
+  }, [setClientPrevalidationBanner]);
+
+  const handlePrevalidationNotice = useCallback(
+    (notice) => {
+      if (typeof setClientPrevalidationBanner === "function") {
+        setClientPrevalidationBanner(notice);
+      }
+    },
+    [setClientPrevalidationBanner]
+  );
+
+  return useStandardizedReferenceChoiceLoader({
+    sessionId: benchSessionId,
+    productId: activeProductId,
+    productTitle: activeProductTitle,
+    isSwitchingProduct: isSwitchingSelectedProduct,
+    rawBaseline: rawCurrentBaseline,
+    getLatestBaselineForProduct,
+    getStagedCandidatesForProduct,
+    isExternalBusy: Boolean(isWriterBusy || isAiScanBusy || isBaselineReloading),
+    onPrevalidationNotice: handlePrevalidationNotice,
+    onClearNotice: handleClearNotice,
+    requestIdPrefix: DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX,
+    actionPath: DEFAULT_REFERENCE_CHOICES_ACTION_PATH
+  });
 }
