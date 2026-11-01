@@ -7,10 +7,11 @@
 // Conditional Setting & Hardware, Geology [12 active custom.* destinations +
 // read-only compatibility custom.geological_era], and Channel Attributes
 // [PRODUCT custom.google_product_category + single-variant PRODUCTVARIANT
-// mm-google-shopping.age_group, condition, gender]), plus read-only Drawers 9,
-// 10 (shopify.* reference attributes including authoritative ERA dropdown
-// shopify.geological-era), and 11 (Parked & Protected inventory), with
-// Sidekick live bench snapshot sync.
+// mm-google-shopping.age_group, condition, gender]), Drawer 10 (18 retained
+// shopify.* standardized reference attributes with read-only choice loading,
+// category constraint eligibility, verified restricted Metaobject definition
+// membership, and exact-value approval), plus read-only Drawers 9 and 11
+// (Parked & Protected inventory), with Sidekick live bench snapshot sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -23,6 +24,7 @@ import {
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
+  BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
   MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS,
@@ -30,9 +32,12 @@ import {
   checkExistingWriterStringFidelity,
   isExactProductGid,
   isExactProductVariantGid,
+  isExactMetaobjectDefinitionGid,
   getFieldContractByDestination,
   buildBaselineObservation,
   evaluateDestinationTypeAndCompleteness,
+  inspectStoredReferenceListRawValue,
+  inspectVerifiedReferenceEvidenceForDestination,
   validateBatch1ProposedValue,
   createExactValueApprovalRecord,
   isExactValueApprovalValid,
@@ -40,6 +45,13 @@ import {
   isKeepOriginalRecordValid,
   evaluateBenchV2FieldRow
 } from "../utils/bench-v2.contract.jsx";
+import {
+  SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
+  isExactMetaobjectGid,
+  extractEntryGid,
+  extractEntryLabel,
+  extractEntryDefinitionId
+} from "../utils/meta-injector.standardized.jsx";
 import {
   REGISTRY_BY_OWNER_IDENTITY,
   FIELD_CATALOG
@@ -124,54 +136,80 @@ function generateBenchSessionId() {
   return candidate.slice(0, 96);
 }
 
-function resolveActualEventOrdering(aiScanReport, saveReport) {
-  const aiCompletedAt =
-    aiScanReport && typeof aiScanReport.completedAt === "string"
-      ? aiScanReport.completedAt
-      : null;
-  const saveCompletedAt =
-    saveReport && typeof saveReport.completedAt === "string"
-      ? saveReport.completedAt
-      : null;
+function resolveActualEventOrdering(aiScanReport, saveReport, refChoicesReport = null) {
+  const candidates = [];
 
-  const aiMs = aiCompletedAt ? Date.parse(aiCompletedAt) : NaN;
-  const saveMs = saveCompletedAt ? Date.parse(saveCompletedAt) : NaN;
-  const hasValidAiMs = Number.isFinite(aiMs);
-  const hasValidSaveMs = Number.isFinite(saveMs);
-
-  if (hasValidAiMs && hasValidSaveMs) {
-    if (saveMs >= aiMs) {
-      return {
-        runIdentity: saveReport.submissionId || null,
-        runTimestamp: saveCompletedAt,
-        latestEventKind: "save_attempt"
-      };
+  if (aiScanReport && typeof aiScanReport.completedAt === "string") {
+    const ms = Date.parse(aiScanReport.completedAt);
+    if (Number.isFinite(ms)) {
+      candidates.push({
+        ms,
+        runIdentity: aiScanReport.requestId || null,
+        runTimestamp: aiScanReport.completedAt,
+        latestEventKind: "ai_scan"
+      });
     }
+  }
+
+  if (saveReport && typeof saveReport.completedAt === "string") {
+    const ms = Date.parse(saveReport.completedAt);
+    if (Number.isFinite(ms)) {
+      candidates.push({
+        ms,
+        runIdentity: saveReport.submissionId || null,
+        runTimestamp: saveReport.completedAt,
+        latestEventKind: "save_attempt"
+      });
+    }
+  }
+
+  if (refChoicesReport && typeof refChoicesReport.completedAt === "string") {
+    const ms = Date.parse(refChoicesReport.completedAt);
+    if (Number.isFinite(ms)) {
+      candidates.push({
+        ms,
+        runIdentity: refChoicesReport.requestId || null,
+        runTimestamp: refChoicesReport.completedAt,
+        latestEventKind: "reference_choices_load"
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
     return {
-      runIdentity: aiScanReport.requestId || null,
-      runTimestamp: aiCompletedAt,
-      latestEventKind: "ai_scan"
+      runIdentity: null,
+      runTimestamp: null,
+      latestEventKind: null
     };
   }
-  if (hasValidSaveMs) {
-    return {
-      runIdentity: saveReport.submissionId || null,
-      runTimestamp: saveCompletedAt,
-      latestEventKind: "save_attempt"
-    };
-  }
-  if (hasValidAiMs) {
-    return {
-      runIdentity: aiScanReport.requestId || null,
-      runTimestamp: aiCompletedAt,
-      latestEventKind: "ai_scan"
-    };
-  }
+
+  candidates.sort((a, b) => b.ms - a.ms);
   return {
-    runIdentity: null,
-    runTimestamp: null,
-    latestEventKind: null
+    runIdentity: candidates[0].runIdentity,
+    runTimestamp: candidates[0].runTimestamp,
+    latestEventKind: candidates[0].latestEventKind
   };
+}
+
+function buildStandardizedBaselineContextSignature(baselineSnap) {
+  if (!baselineSnap || typeof baselineSnap !== "object") return "no_baseline";
+  const productId = baselineSnap.productId || "no_product";
+  const loadedAt = baselineSnap.loadedAt || "no_loaded_at";
+  const catId = baselineSnap.productCategory?.id || "unassigned";
+  const mfComplete = String(baselineSnap.metafieldsReadComplete);
+  const defsComplete = String(baselineSnap.defsReadComplete);
+  const catComplete = String(baselineSnap.productCategoryReadComplete);
+
+  const perDestParts = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => {
+    const dest = `shopify.${k}`;
+    const def = baselineSnap.liveDefinitions?.[dest];
+    const elig = baselineSnap.categoryEligibilityByDestination?.[dest];
+    const rawStored = baselineSnap.currentMetafields?.[dest] ?? "";
+    const storedType = baselineSnap.currentMetafieldTypes?.[dest] || "";
+    return `${dest}:${def?.type || ""}:${def?.restrictedMetaobjectDefinitionId || ""}:${elig?.status || ""}:${storedType}:${rawStored}`;
+  }).join("|");
+
+  return `${productId}::${loadedAt}::${catId}::${mfComplete}::${defsComplete}::${catComplete}::${perDestParts}`;
 }
 
 function resolveFieldRegistryAndApplicabilityMeta(contract) {
@@ -478,6 +516,7 @@ function getShortPlainNotice(row) {
     contract,
     baselineObservation: obs,
     typeAndCompleteness,
+    referenceEvidence,
     hasProposalKey,
     validation,
     fidelityCheck
@@ -539,17 +578,33 @@ function getShortPlainNotice(row) {
       resolvedTypeCheck.code === "metafields_read_not_complete" ||
       resolvedTypeCheck.code === "variant_metafields_read_not_complete" ||
       resolvedTypeCheck.code === "definitions_read_not_complete" ||
-      resolvedTypeCheck.code === "variant_definitions_read_not_complete"
+      resolvedTypeCheck.code === "variant_definitions_read_not_complete" ||
+      resolvedTypeCheck.code === "product_category_read_not_complete" ||
+      resolvedTypeCheck.code === "category_eligibility_incomplete"
     ) {
       return {
         tone: "error",
-        text: "Read incomplete — reload before saving."
+        text: resolvedTypeCheck.reason || "Read incomplete — reload before saving."
       };
     }
     if (resolvedTypeCheck.code === "destination_definition_error") {
+      if (contract.namespace === "shopify" && resolvedTypeCheck.reason) {
+        return {
+          tone: "error",
+          text: resolvedTypeCheck.reason
+        };
+      }
       return {
         tone: "error",
         text: "Definition or category error — see Details."
+      };
+    }
+    if (resolvedTypeCheck.code === "missing_restricted_metaobject_definition") {
+      return {
+        tone: "error",
+        text:
+          resolvedTypeCheck.reason ||
+          "Missing restricted MetaobjectDefinition on live PRODUCT definition."
       };
     }
     if (resolvedTypeCheck.code === "missing_type_evidence") {
@@ -600,6 +655,29 @@ function getShortPlainNotice(row) {
       return {
         tone: "muted",
         text: "Matches saved value."
+      };
+    }
+  }
+
+  if (contract.namespace === "shopify") {
+    if (!referenceEvidence || !referenceEvidence.evidenceLoaded) {
+      return {
+        tone: "muted",
+        text: `Eligible on this product (Def: ${obs.restrictedMetaobjectDefinitionId}) — click "Load Reference Choices" in Drawer 10 to verify allowed entries before approving.`
+      };
+    }
+    if (!referenceEvidence.isComplete) {
+      return {
+        tone: "error",
+        text:
+          referenceEvidence.error ||
+          "Reference entry enumeration failed or is incomplete — click 'Load Reference Choices' to retry."
+      };
+    }
+    if (referenceEvidence.entriesByGid.size === 0) {
+      return {
+        tone: "warning",
+        text: `0 Metaobject entries exist in Shopify for ${obs.restrictedMetaobjectDefinitionId} — nothing can be approved until entries exist.`
       };
     }
   }
@@ -739,10 +817,10 @@ function getDrawerConnectionSubtitle(drawer) {
     return "Read-only parked and protected fields (includes excluded custom & standardized authenticity/rarity)";
   }
   if (drawer.drawerId === "identity") {
-    return "Detailed custom.* identity fields connected (standardized companion shopify.material in Drawer 10 remains locked pending reference wiring)";
+    return "Detailed custom.* identity fields connected (standardized companion shopify.material in Drawer 10 is connected with live reference verification)";
   }
   if (drawer.drawerId === "appearance_and_character") {
-    return "Detailed custom.* appearance fields connected (standardized companion shopify.color-pattern in Drawer 10 remains locked pending reference wiring)";
+    return "Detailed custom.* appearance fields connected (standardized companion shopify.color-pattern in Drawer 10 is connected with live reference verification)";
   }
   if (drawer.drawerId === "manual_measurements") {
     const writableCount = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1).length;
@@ -755,7 +833,7 @@ function getDrawerConnectionSubtitle(drawer) {
   if (drawer.drawerId === "geology") {
     const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
     const readyCount = writableRows.filter((r) => r.typeAndCompleteness?.ready === true).length;
-    return `Detailed custom.* geology paths connected (${readyCount}/${writableRows.length} ready on product; 12 had scan-delivery evidence on Canyon, only AGE custom.geological_age has independently verified Save/readback; legacy custom.geological_era is read-only; authoritative ERA dropdown shopify.geological-era + 4 standardized geology reference companions in Drawer 10 remain locked)`;
+    return `Detailed custom.* geology paths connected (${readyCount}/${writableRows.length} ready on product; legacy custom.geological_era is read-only; authoritative ERA dropdown shopify.geological-era + 4 standardized geology reference companions are connected in Drawer 10)`;
   }
   if (drawer.drawerId === "other_channel") {
     const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
@@ -763,7 +841,18 @@ function getDrawerConnectionSubtitle(drawer) {
     return `4 channel destinations wired (${readyCount}/${writableRows.length} ready on current product: PRODUCT custom.google_product_category + manual/preset single-variant PRODUCTVARIANT mm-google-shopping.age_group, condition, gender; mm-google-shopping.custom_product held; legacy google.* variant slots & custom.target_gender read-only)`;
   }
   if (drawer.drawerId === "standardized_attributes") {
-    return "Locked in this batch (all 18 non-excluded shopify.* reference attributes — including authoritative ERA dropdown shopify.geological-era, 4 standardized geology companions, shopify.material, and shopify.color-pattern — remain read-only pending reference wiring)";
+    const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
+    const categoryEligibleRows = writableRows.filter(
+      (r) => r.typeAndCompleteness?.ready === true
+    );
+    const verifiedChoiceRows = categoryEligibleRows.filter(
+      (r) => r.referenceEvidence?.isComplete === true && r.referenceEvidence.entriesByGid.size > 0
+    );
+    const emptyChoiceRows = categoryEligibleRows.filter(
+      (r) => r.referenceEvidence?.isComplete === true && r.referenceEvidence.entriesByGid.size === 0
+    );
+    const blockedByCategoryCount = writableRows.length - categoryEligibleRows.length;
+    return `18 retained shopify.* reference attributes wired (${categoryEligibleRows.length}/${writableRows.length} category/definition-eligible on product, ${blockedByCategoryCount} blocked by category/definition, ${verifiedChoiceRows.length} with verified choices ready for approval${emptyChoiceRows.length > 0 ? `, ${emptyChoiceRows.length} with 0 entries` : ""})`;
   }
   if (drawer.isImplementedInBatch1) {
     return "Connected in Batch 1";
@@ -935,6 +1024,7 @@ export default function BenchV2Route() {
   const writerFetcher = useFetcher();
   const aiScanFetcher = useFetcher();
   const pickerFetcher = useFetcher();
+  const refChoicesFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawUrlProductId = searchParams.get("productId");
@@ -1022,6 +1112,13 @@ export default function BenchV2Route() {
   const [lastAiScanReportByProduct, setLastAiScanReportByProduct] = useState({});
   const processedAiScanRequestIdRef = useRef(null);
   const activeAiScanRequestRef = useRef(null);
+
+  // 9B. Explicit Read-Only Standardized Reference Choices Tracking & State
+  const [activeRefChoicesRequest, setActiveRefChoicesRequest] = useState(null);
+  const [refChoicesStateByProduct, setRefChoicesStateByProduct] = useState({});
+  const [stagedVisionCandidatesByProduct, setStagedVisionCandidatesByProduct] = useState({});
+  const processedRefChoicesRequestIdRef = useRef(null);
+  const activeRefChoicesRequestRef = useRef(null);
 
   // 10. Presentation-Only State: All drawers initially collapsed + View-Only Drawer Filter
   const [openDrawersById, setOpenDrawersById] = useState(() =>
@@ -1178,6 +1275,10 @@ export default function BenchV2Route() {
     activeAiScanRequestRef.current = activeAiScanRequest;
   }, [activeAiScanRequest]);
 
+  useEffect(() => {
+    activeRefChoicesRequestRef.current = activeRefChoicesRequest;
+  }, [activeRefChoicesRequest]);
+
   const baselineByProductRef = useRef(baselineByProduct);
   useEffect(() => {
     baselineByProductRef.current = baselineByProduct;
@@ -1237,13 +1338,45 @@ export default function BenchV2Route() {
     }
   }, [pickerFetcher.state, pickerFetcher.data]);
 
-  const currentBaseline =
+  const rawCurrentBaseline =
     baselineByProduct[activeProductId] &&
     baselineByProduct[activeProductId].productId === activeProductId
       ? baselineByProduct[activeProductId]
       : loaderData?.baselineSnapshot?.productId === activeProductId
         ? loaderData.baselineSnapshot
         : null;
+
+  const currentRefChoicesRecord = refChoicesStateByProduct[activeProductId] || null;
+  const currentBaselineContextSig = React.useMemo(
+    () => buildStandardizedBaselineContextSignature(rawCurrentBaseline),
+    [rawCurrentBaseline]
+  );
+
+  // Merge verified reference evidence into currentBaseline ONLY when bound to the
+  // current bench session, current productId, current category, and current baseline context.
+  const isCurrentRefChoicesBoundAndFresh = Boolean(
+    rawCurrentBaseline &&
+      currentRefChoicesRecord &&
+      currentRefChoicesRecord.benchSessionId === benchSessionIdRef.current &&
+      currentRefChoicesRecord.productId === activeProductId &&
+      currentRefChoicesRecord.baselineContextSig === currentBaselineContextSig &&
+      (currentRefChoicesRecord.productCategoryId || null) ===
+        (rawCurrentBaseline.productCategory?.id || null)
+  );
+
+  const currentBaseline = React.useMemo(() => {
+    if (!rawCurrentBaseline) return null;
+    if (!isCurrentRefChoicesBoundAndFresh || !currentRefChoicesRecord) {
+      return rawCurrentBaseline;
+    }
+    return {
+      ...rawCurrentBaseline,
+      verifiedReferenceEntriesByDestination:
+        currentRefChoicesRecord.verifiedReferenceEntriesByDestination || {},
+      standardizedReferenceResolutions:
+        currentRefChoicesRecord.rawResponse || null
+    };
+  }, [rawCurrentBaseline, isCurrentRefChoicesBoundAndFresh, currentRefChoicesRecord]);
 
   const currentProposedMap = proposedByProduct[activeProductId] || {};
   const currentAiAlternativesMap = aiAlternativesByProduct[activeProductId] || {};
@@ -1258,9 +1391,12 @@ export default function BenchV2Route() {
 
   const isWriterBusy = writerFetcher.state !== "idle" || Boolean(activeSaveSubmission);
   const isAiScanBusy = aiScanFetcher.state !== "idle" || Boolean(activeAiScanRequest);
+  const isRefChoicesBusy =
+    refChoicesFetcher.state !== "idle" || Boolean(activeRefChoicesRequest);
   const isBaselineReloading = revalidator.state !== "idle";
   const isPickerLoading = pickerFetcher.state !== "idle";
-  const isAnyOperationBusy = isWriterBusy || isAiScanBusy || isBaselineReloading;
+  const isAnyOperationBusy =
+    isWriterBusy || isAiScanBusy || isRefChoicesBusy || isBaselineReloading;
 
   const activeProductKnownEntry = knownProductsById[activeProductId] || null;
   const activeProductPieceName =
@@ -1355,16 +1491,20 @@ export default function BenchV2Route() {
   };
 
   const handleSelectProductGid = (nextProductGid) => {
-    if (isWriterBusy || isAiScanBusy) {
+    if (isWriterBusy || isAiScanBusy || isRefChoicesBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
         title: isWriterBusy
           ? "Cannot switch products while saving"
-          : "Cannot switch products while AI Scan is running",
+          : isAiScanBusy
+            ? "Cannot switch products while AI Scan is running"
+            : "Cannot switch products while loading reference choices",
         reasons: [
           isWriterBusy
             ? "Wait for the current save request to finish before switching products."
-            : "Wait for the current AI Scan to finish before switching products."
+            : isAiScanBusy
+              ? "Wait for the current AI Scan to finish before switching products."
+              : "Wait for the current reference choices request to finish before switching products."
         ]
       });
       return;
@@ -1396,10 +1536,316 @@ export default function BenchV2Route() {
     setSearchParams(nextParams);
   };
 
+  // ==========================================================================
+  // EXPLICIT READ-ONLY STANDARDIZED REFERENCE CHOICES LOADER
+  // ==========================================================================
+  const handleLoadStandardizedReferenceChoices = () => {
+    setClientPrevalidationBanner(null);
+
+    if (isAnyOperationBusy) {
+      setClientPrevalidationBanner({
+        tone: "warning",
+        title: "Operation already in progress",
+        reasons: [
+          "Wait for the current operation to complete before loading standardized reference choices."
+        ]
+      });
+      return;
+    }
+
+    if (!rawCurrentBaseline || rawCurrentBaseline.productId !== activeProductId) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: "Cannot load reference choices: Product baseline not loaded",
+        reasons: [`Reload ${activeProductTitle} so its baseline and definitions are available.`]
+      });
+      return;
+    }
+
+    if (
+      rawCurrentBaseline.metafieldsReadComplete !== true ||
+      rawCurrentBaseline.defsReadComplete !== true ||
+      rawCurrentBaseline.productCategoryReadComplete === false
+    ) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: "Cannot load reference choices: Baseline read incomplete",
+        reasons: [
+          "Product metafields, product category, or live PRODUCT definitions did not finish loading. Click Reload Product first."
+        ]
+      });
+      return;
+    }
+
+    const requestId = `bench_v2_refchoices_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const enumerateList = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => `shopify.${k}`);
+    const stagedCandidatesForProduct = stagedVisionCandidatesByProduct[activeProductId] || {};
+
+    setActiveRefChoicesRequest({
+      requestId,
+      benchSessionId: benchSessionIdRef.current,
+      productId: activeProductId,
+      baselineContextSig: buildStandardizedBaselineContextSignature(rawCurrentBaseline),
+      productCategoryId: rawCurrentBaseline.productCategory?.id || null,
+      startedAt: new Date().toISOString()
+    });
+
+    const formData = new FormData();
+    formData.append("intent", "resolveStandardizedCandidates");
+    formData.append("pieceId", activeProductId);
+    formData.append("requestId", requestId);
+    formData.append("enumerate_destinations", JSON.stringify(enumerateList));
+    formData.append("standardized_candidates", JSON.stringify(stagedCandidatesForProduct));
+
+    refChoicesFetcher.submit(formData, {
+      method: "POST",
+      action: "/app/meta-injector-api"
+    });
+  };
+
+  useEffect(() => {
+    if (refChoicesFetcher.state !== "idle") return;
+    const pendingReq = activeRefChoicesRequestRef.current;
+    if (!pendingReq) return;
+
+    if (processedRefChoicesRequestIdRef.current === pendingReq.requestId) {
+      return;
+    }
+    processedRefChoicesRequestIdRef.current = pendingReq.requestId;
+
+    const reqProductId = pendingReq.productId;
+    const rawResponse = refChoicesFetcher.data;
+    const latestBaselineForProduct = baselineByProductRef.current[reqProductId] || null;
+    const latestContextSig = buildStandardizedBaselineContextSignature(latestBaselineForProduct);
+
+    const recordFailedOrStaleRefChoices = (stateTag, summary, errorsList = []) => {
+      setRefChoicesStateByProduct((prev) => ({
+        ...prev,
+        [reqProductId]: {
+          requestId: pendingReq.requestId,
+          benchSessionId: pendingReq.benchSessionId,
+          productId: reqProductId,
+          baselineContextSig: pendingReq.baselineContextSig,
+          productCategoryId: pendingReq.productCategoryId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          state: stateTag,
+          summary,
+          errors: errorsList,
+          verifiedReferenceEntriesByDestination: {},
+          rawResponse: null
+        }
+      }));
+      setActiveRefChoicesRequest(null);
+    };
+
+    if (!rawResponse || typeof rawResponse !== "object") {
+      recordFailedOrStaleRefChoices(
+        "failed_or_incomplete",
+        "Reference choices load failed: no structured response returned by /app/meta-injector-api.",
+        ["No structured response returned by /app/meta-injector-api."]
+      );
+      return;
+    }
+
+    if (
+      rawResponse.intent !== "resolveStandardizedCandidates" ||
+      rawResponse.readOnly !== true ||
+      rawResponse.requestId !== pendingReq.requestId ||
+      rawResponse.pieceId !== reqProductId ||
+      pendingReq.benchSessionId !== benchSessionIdRef.current
+    ) {
+      recordFailedOrStaleRefChoices(
+        "discarded_stale",
+        `Ignored mismatched or stale reference choices response (expected product ${reqProductId} / request ${pendingReq.requestId}, got product ${String(
+          rawResponse.pieceId
+        )} / request ${String(rawResponse.requestId)}).`,
+        ["Mismatched requestId, pieceId, or session."]
+      );
+      return;
+    }
+
+    const responseCategoryId = rawResponse.productCategory?.id || null;
+    if (
+      !latestBaselineForProduct ||
+      latestContextSig !== pendingReq.baselineContextSig ||
+      (latestBaselineForProduct.productCategory?.id || null) !== responseCategoryId
+    ) {
+      recordFailedOrStaleRefChoices(
+        "discarded_stale",
+        "Discarded stale reference choices response because the product baseline or category changed while the request was in flight. Click 'Load Reference Choices' again.",
+        ["Baseline or product category changed during reference enumeration."]
+      );
+      return;
+    }
+
+    const topErrors = Array.isArray(rawResponse.errors)
+      ? rawResponse.errors.filter((e) => typeof e === "string" && e.trim() !== "")
+      : [];
+
+    if (
+      rawResponse.success !== true ||
+      rawResponse.isComplete !== true ||
+      rawResponse.defsReadComplete !== true ||
+      !rawResponse.resolutions ||
+      typeof rawResponse.resolutions !== "object"
+    ) {
+      recordFailedOrStaleRefChoices(
+        "failed_or_incomplete",
+        topErrors[0] ||
+          "Reference choices enumeration did not complete cleanly. Click 'Load Reference Choices' to retry.",
+        topErrors.length > 0
+          ? topErrors
+          : ["Top-level resolveStandardizedCandidates response was incomplete."]
+      );
+      return;
+    }
+
+    const verifiedMapByDest = {};
+    let eligibleWithChoicesCount = 0;
+    let eligibleEmptyChoicesCount = 0;
+    let categoryIneligibleCount = 0;
+    let incompleteOrBlockedCount = 0;
+
+    for (const stdKey of SUPPORTED_STANDARDIZED_REFERENCE_KEYS) {
+      const destKey = `shopify.${stdKey}`;
+      const resObj = rawResponse.resolutions[destKey];
+      const baselineDef = latestBaselineForProduct.liveDefinitions?.[destKey] || null;
+      const expectedDefId = baselineDef?.restrictedMetaobjectDefinitionId || null;
+
+      if (!resObj || typeof resObj !== "object") {
+        incompleteOrBlockedCount += 1;
+        verifiedMapByDest[destKey] = {
+          destination: destKey,
+          status: "incomplete",
+          isComplete: false,
+          isCategoryEligible: false,
+          restrictedMetaobjectDefinitionId: expectedDefId,
+          availableEntries: [],
+          errors: [`Missing resolution entry for ${destKey}.`]
+        };
+        continue;
+      }
+
+      const resolvedDefId =
+        resObj.restrictedMetaobjectDefinitionId ||
+        resObj.restrictedMetaobjectDefinition?.id ||
+        resObj.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
+        null;
+
+      const defMatchesBaseline = Boolean(
+        isExactMetaobjectDefinitionGid(resolvedDefId) &&
+          (!expectedDefId || resolvedDefId === expectedDefId)
+      );
+
+      const rawAvailable = Array.isArray(resObj.availableEntries)
+        ? resObj.availableEntries
+        : [];
+      const verifiedAvailable = [];
+      for (const item of rawAvailable) {
+        if (!item || typeof item !== "object") continue;
+        const gid = extractEntryGid(item);
+        const entryDefId = extractEntryDefinitionId(item);
+        if (!isExactMetaobjectGid(gid)) continue;
+        if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
+        verifiedAvailable.push({
+          id: gid,
+          displayName: extractEntryLabel(item) || gid,
+          definition: {
+            id: entryDefId,
+            type: item.definition?.type || resObj.restrictedMetaobjectDefinition?.type || null,
+            name: item.definition?.name || resObj.restrictedMetaobjectDefinition?.name || null
+          },
+          taxonomy_reference: item.taxonomy_reference ?? null
+        });
+      }
+
+      const hasContinuation = Boolean(
+        resObj.continuation &&
+          typeof resObj.continuation === "object" &&
+          resObj.continuation.hasNextPage === true
+      );
+
+      const isFieldComplete = Boolean(
+        resObj.isComplete === true && !hasContinuation && defMatchesBaseline
+      );
+
+      if (!isFieldComplete) {
+        incompleteOrBlockedCount += 1;
+      } else if (resObj.status === "category_ineligible" || resObj.isCategoryEligible !== true) {
+        categoryIneligibleCount += 1;
+      } else if (resObj.status === "blocked") {
+        incompleteOrBlockedCount += 1;
+      } else if (verifiedAvailable.length === 0) {
+        eligibleEmptyChoicesCount += 1;
+      } else {
+        eligibleWithChoicesCount += 1;
+      }
+
+      verifiedMapByDest[destKey] = {
+        ...resObj,
+        restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
+        isComplete: isFieldComplete,
+        availableEntries: verifiedAvailable,
+        errors: !defMatchesBaseline
+          ? [
+              ...(Array.isArray(resObj.errors) ? resObj.errors : []),
+              `Restricted MetaobjectDefinition mismatch or invalid ID on ${destKey}.`
+            ]
+          : Array.isArray(resObj.errors)
+            ? resObj.errors
+            : []
+      };
+    }
+
+    const overallState =
+      incompleteOrBlockedCount > 0 ? "partial_or_blocked" : "choices_loaded";
+
+    const summaryText = `Reference choices loaded for ${activeProductTitle}: ${eligibleWithChoicesCount} eligible attribute${
+      eligibleWithChoicesCount === 1 ? "" : "s"
+    } with verified choices${
+      eligibleEmptyChoicesCount > 0
+        ? `, ${eligibleEmptyChoicesCount} eligible with 0 entries in Shopify`
+        : ""
+    }${
+      categoryIneligibleCount > 0
+        ? `, ${categoryIneligibleCount} ineligible for category`
+        : ""
+    }${
+      incompleteOrBlockedCount > 0
+        ? `, ${incompleteOrBlockedCount} incomplete or blocked`
+        : ""
+    }.`;
+
+    setRefChoicesStateByProduct((prev) => ({
+      ...prev,
+      [reqProductId]: {
+        requestId: pendingReq.requestId,
+        benchSessionId: pendingReq.benchSessionId,
+        productId: reqProductId,
+        baselineContextSig: pendingReq.baselineContextSig,
+        productCategoryId: responseCategoryId,
+        completedAt: new Date().toISOString(),
+        ok: incompleteOrBlockedCount === 0,
+        state: overallState,
+        summary: summaryText,
+        eligibleWithChoicesCount,
+        eligibleEmptyChoicesCount,
+        categoryIneligibleCount,
+        incompleteOrBlockedCount,
+        errors: topErrors,
+        verifiedReferenceEntriesByDestination: verifiedMapByDest,
+        rawResponse
+      }
+    }));
+
+    setActiveRefChoicesRequest(null);
+  }, [refChoicesFetcher.state, refChoicesFetcher.data, activeProductTitle]);
+
   const handleExplicitAiScanProduct = () => {
     setClientPrevalidationBanner(null);
 
-    if (isWriterBusy || isAiScanBusy || isBaselineReloading) {
+    if (isAnyOperationBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
         title: "Operation already in progress",
@@ -1676,6 +2122,17 @@ export default function BenchV2Route() {
           : {}
       );
       return;
+    }
+
+    if (
+      rawResponse.standardized_candidates &&
+      typeof rawResponse.standardized_candidates === "object" &&
+      !Array.isArray(rawResponse.standardized_candidates)
+    ) {
+      setStagedVisionCandidatesByProduct((prev) => ({
+        ...prev,
+        [scannedProductId]: rawResponse.standardized_candidates
+      }));
     }
 
     const rawProducerProposals = rawResponse.producerProposals;
@@ -2259,6 +2716,76 @@ export default function BenchV2Route() {
     clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
   };
 
+  /**
+   * Preserves both existing saved Metaobject GIDs on the product AND any valid
+   * Metaobject GIDs already staged in the current proposal when selecting a preset
+   * reference option in Drawer 10, so selecting a second choice appends rather than
+   * silently replacing a prior staged addition.
+   */
+  const handleSelectPresetOption = (row, selectedOptionValue) => {
+    const destKey = row.contract.destinationKey;
+    if (row.contract.namespace !== "shopify") {
+      handleManualProposalChange(destKey, selectedOptionValue);
+      return;
+    }
+
+    const storedCheck = inspectStoredReferenceListRawValue(
+      row.baselineObservation?.rawValue
+    );
+    if (!storedCheck.valid) {
+      handleManualProposalChange(destKey, selectedOptionValue);
+      return;
+    }
+
+    let selectedGids = [];
+    try {
+      const parsedOpt = JSON.parse(selectedOptionValue);
+      if (Array.isArray(parsedOpt)) {
+        selectedGids = parsedOpt.filter((g) => typeof g === "string" && isExactMetaobjectGid(g));
+      }
+    } catch {
+      if (isExactMetaobjectGid(selectedOptionValue)) {
+        selectedGids = [selectedOptionValue.trim()];
+      }
+    }
+
+    if (selectedGids.length === 0) {
+      handleManualProposalChange(destKey, selectedOptionValue);
+      return;
+    }
+
+    let currentStagedGids = [];
+    if (row.hasProposalKey && typeof row.proposedValue === "string" && row.proposedValue.trim().startsWith("[")) {
+      try {
+        const parsedCurrent = JSON.parse(row.proposedValue.trim());
+        if (Array.isArray(parsedCurrent)) {
+          const verifiedMap = row.referenceEvidence?.entriesByGid || null;
+          currentStagedGids = parsedCurrent.filter(
+            (g) =>
+              typeof g === "string" &&
+              isExactMetaobjectGid(g) &&
+              (storedCheck.gids.includes(g) || !verifiedMap || verifiedMap.has(g))
+          );
+        }
+      } catch {
+        currentStagedGids = [];
+      }
+    }
+
+    const mergedGids = [];
+    const pushUnique = (gid) => {
+      if (isExactMetaobjectGid(gid) && !mergedGids.includes(gid)) {
+        mergedGids.push(gid);
+      }
+    };
+
+    storedCheck.gids.forEach(pushUnique);
+    currentStagedGids.forEach(pushUnique);
+    selectedGids.forEach(pushUnique);
+
+    handleManualProposalChange(destKey, JSON.stringify(mergedGids));
+  };
+
   const handleClearDraftProposal = (destinationKey) => {
     setClientPrevalidationBanner(null);
     releaseRetainedFieldEditor(activeProductId, destinationKey);
@@ -2419,7 +2946,10 @@ export default function BenchV2Route() {
       }
 
       const obs = baseEval.baselineObservation;
-      const usesMeaningDisplay = Boolean(fieldContract.usesYesNoMeaningDisplay);
+      const isShopifyReference = fieldContract.namespace === "shopify";
+      const usesMeaningDisplay = Boolean(
+        fieldContract.usesYesNoMeaningDisplay || isShopifyReference
+      );
       const plainLabel = cleanFieldHeading(fieldContract.label);
       const readableSaved = formatReadableSavedValue(
         obs,
@@ -2752,11 +3282,14 @@ export default function BenchV2Route() {
         ? "saving"
         : isAiScanBusy
           ? "ai_scanning"
-          : "idle";
+          : isRefChoicesBusy
+            ? "loading_reference_choices"
+            : "idle";
 
     const orderedEvents = resolveActualEventOrdering(
       currentAiScanReport,
-      activeSaveReportForCurrentProduct
+      activeSaveReportForCurrentProduct,
+      currentRefChoicesRecord
     );
 
     const fieldsByKey = {};
@@ -2773,6 +3306,7 @@ export default function BenchV2Route() {
           contract,
           baselineObservation: obs,
           typeAndCompleteness,
+          referenceEvidence,
           baselineDisplayValue,
           hasProposalKey,
           proposedValue,
@@ -2799,7 +3333,10 @@ export default function BenchV2Route() {
 
         const regMeta = resolveFieldRegistryAndApplicabilityMeta(contract);
         const isMediaCapabilityDescriptor = destKey === "native_image_alt";
-        const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
+        const isShopifyReference = contract.namespace === "shopify";
+        const usesMeaningDisplay = Boolean(
+          contract.usesYesNoMeaningDisplay || isShopifyReference
+        );
 
         const rawBaselineExists =
           obs.evidenceAvailable &&
@@ -2947,6 +3484,9 @@ export default function BenchV2Route() {
             : {}),
           ...(obs.storedType ? { storedType: obs.storedType } : {}),
           ...(obs.liveDefType ? { liveDefType: obs.liveDefType } : {}),
+          ...(obs.restrictedMetaobjectDefinitionId
+            ? { restrictedMetaobjectDefinitionId: obs.restrictedMetaobjectDefinitionId }
+            : {}),
           ...(obs.metafieldsCompleteState !== "complete"
             ? { metafieldsCompleteState: obs.metafieldsCompleteState }
             : {}),
@@ -3038,6 +3578,18 @@ export default function BenchV2Route() {
             : {}),
           ...(typeAndCompleteness?.verifiedActualType
             ? { verifiedActualType: typeAndCompleteness.verifiedActualType }
+            : {}),
+          ...(isShopifyReference
+            ? {
+                restrictedMetaobjectDefinitionId:
+                  obs.restrictedMetaobjectDefinitionId || null,
+                categoryEligibilityStatus: obs.categoryEligibility?.status || null,
+                referenceChoicesLoaded: Boolean(referenceEvidence?.evidenceLoaded),
+                referenceChoicesVerifiedComplete: Boolean(referenceEvidence?.isComplete),
+                verifiedReferenceChoiceCount: referenceEvidence?.isComplete
+                  ? referenceEvidence.entriesByGid.size
+                  : 0
+              }
             : {}),
           ...(contract.maxLength !== null ? { maxLength: contract.maxLength } : {}),
           ...(contract.canonicalTarget
@@ -3213,6 +3765,71 @@ export default function BenchV2Route() {
       (r) => r.contract.destinationKey
     );
 
+    const drawer10Group = evaluatedDrawerGroups.find(
+      (d) => d.drawerId === "standardized_attributes"
+    );
+    const drawer10Rows = drawer10Group ? drawer10Group.evaluatedRows : [];
+    const eligibleStandardizedDestKeys = drawer10Rows
+      .filter((r) => r.typeAndCompleteness?.ready === true)
+      .map((r) => r.contract.destinationKey);
+    const blockedStandardizedDestKeys = drawer10Rows
+      .filter((r) => r.typeAndCompleteness?.ready !== true)
+      .map((r) => r.contract.destinationKey);
+    const verifiedChoiceReadyDestKeys = drawer10Rows
+      .filter(
+        (r) =>
+          r.typeAndCompleteness?.ready === true &&
+          r.referenceEvidence?.isComplete === true &&
+          r.referenceEvidence.entriesByGid.size > 0
+      )
+      .map((r) => r.contract.destinationKey);
+    const emptyChoiceEligibleDestKeys = drawer10Rows
+      .filter(
+        (r) =>
+          r.typeAndCompleteness?.ready === true &&
+          r.referenceEvidence?.isComplete === true &&
+          r.referenceEvidence.entriesByGid.size === 0
+      )
+      .map((r) => r.contract.destinationKey);
+    const incompleteChoiceDestKeys = drawer10Rows
+      .filter(
+        (r) =>
+          r.typeAndCompleteness?.ready === true &&
+          r.referenceEvidence?.evidenceLoaded === true &&
+          r.referenceEvidence?.isComplete !== true
+      )
+      .map((r) => r.contract.destinationKey);
+
+    const currentVisionCandidates =
+      stagedVisionCandidatesByProduct[activeProductId] || {};
+
+    let standardizedReadinessState = "choices_not_loaded";
+    let standardizedReadinessReason =
+      `18 retained shopify.* reference attributes connected (${eligibleStandardizedDestKeys.length} category/definition-eligible on product, ${blockedStandardizedDestKeys.length} blocked by category/definition). Click "Load Reference Choices" in Drawer 10 to verify allowed Metaobject entries before approving.`;
+
+    if (isRefChoicesBusy) {
+      standardizedReadinessState = "loading_reference_choices";
+      standardizedReadinessReason =
+        "Loading and verifying Metaobject reference choices from Shopify...";
+    } else if (currentRefChoicesRecord && !isCurrentRefChoicesBoundAndFresh) {
+      standardizedReadinessState = "stale_reference_choices_discarded";
+      standardizedReadinessReason =
+        "Previously loaded reference choices were invalidated because the product baseline or category changed. Click 'Load Reference Choices' in Drawer 10 to re-verify.";
+    } else if (isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord) {
+      if (!currentRefChoicesRecord.ok || incompleteChoiceDestKeys.length > 0) {
+        standardizedReadinessState = "failed_or_incomplete";
+        standardizedReadinessReason =
+          currentRefChoicesRecord.summary ||
+          "Reference choices load was incomplete or reported errors.";
+      } else if (verifiedChoiceReadyDestKeys.length > 0) {
+        standardizedReadinessState = "verified_choices_loaded";
+        standardizedReadinessReason = currentRefChoicesRecord.summary;
+      } else {
+        standardizedReadinessState = "no_verified_choices_available";
+        standardizedReadinessReason = currentRefChoicesRecord.summary;
+      }
+    }
+
     const saveVerificationEvidence = {
       hasRepairAttemptInSession: Boolean(activeSaveReportForCurrentProduct),
       lastRepairSubmissionId: activeSaveReportForCurrentProduct?.submissionId || null,
@@ -3296,6 +3913,7 @@ export default function BenchV2Route() {
           .map(([id]) => id),
         isWriterBusy,
         isAiScanBusy,
+        isRefChoicesBusy,
         isBaselineReloading,
         isPickerLoading,
         hasBaselineErrors,
@@ -3355,17 +3973,27 @@ export default function BenchV2Route() {
       explicitlyApprovedKeys,
       keepOriginalKeys,
       standardizedReferenceState: {
-        readinessState: "locked_in_batch_1",
-        readinessReason:
-          "Standardized shopify.* taxonomy reference attributes (including authoritative ERA dropdown shopify.geological-era, 4 standardized geology reference companions, shopify.material, and shopify.color-pattern) are read-only in this batch; no candidate matching or reference write is active yet.",
-        stagedCandidateCount: 0,
-        stagedCandidates: {},
-        eligibleDestinationKeys: [],
-        blockedDestinationKeys: [],
-        lastMatchRequestId: null,
-        lastMatchedAt: null,
-        lastMatchSuccess: null,
-        lastMatchIsComplete: null,
+        readinessState: standardizedReadinessState,
+        readinessReason: standardizedReadinessReason,
+        stagedCandidateCount: Object.keys(currentVisionCandidates).length,
+        stagedCandidates: currentVisionCandidates,
+        eligibleDestinationKeys: eligibleStandardizedDestKeys,
+        verifiedChoiceReadyDestinationKeys: verifiedChoiceReadyDestKeys,
+        emptyChoiceEligibleDestinationKeys: emptyChoiceEligibleDestKeys,
+        incompleteChoiceDestinationKeys: incompleteChoiceDestKeys,
+        blockedDestinationKeys: blockedStandardizedDestKeys,
+        lastMatchRequestId: isCurrentRefChoicesBoundAndFresh
+          ? currentRefChoicesRecord?.requestId || null
+          : null,
+        lastMatchedAt: isCurrentRefChoicesBoundAndFresh
+          ? currentRefChoicesRecord?.completedAt || null
+          : null,
+        lastMatchSuccess: isCurrentRefChoicesBoundAndFresh
+          ? Boolean(currentRefChoicesRecord?.ok)
+          : null,
+        lastMatchIsComplete: isCurrentRefChoicesBoundAndFresh
+          ? Boolean(currentRefChoicesRecord?.rawResponse?.isComplete)
+          : null,
         productCategory: currentBaseline?.productCategory || null
       },
       saveVerificationEvidence,
@@ -3407,14 +4035,20 @@ export default function BenchV2Route() {
   const handleExplicitSaveApprovedChanges = () => {
     setClientPrevalidationBanner(null);
 
-    if (isWriterBusy || isAiScanBusy) {
+    if (isWriterBusy || isAiScanBusy || isRefChoicesBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
-        title: isWriterBusy ? "Save already in progress" : "AI Scan in progress",
+        title: isWriterBusy
+          ? "Save already in progress"
+          : isAiScanBusy
+            ? "AI Scan in progress"
+            : "Reference choices load in progress",
         reasons: [
           isWriterBusy
             ? "Wait for the current save request to finish before clicking Save again."
-            : "Wait for the current AI Scan to finish before saving."
+            : isAiScanBusy
+              ? "Wait for the current AI Scan to finish before saving."
+              : "Wait for the current reference choices load to finish before saving."
         ]
       });
       return;
@@ -3435,7 +4069,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 8 (where ready on this product) and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 8 or Drawer 10 (where ready on this product) and check Approve before clicking Save."
         ]
       });
       return;
@@ -3714,6 +4348,29 @@ export default function BenchV2Route() {
                 }}
               >
                 {isAiScanBusy ? "Scanning Photos with Gemini..." : "AI Scan Product"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleLoadStandardizedReferenceChoices}
+                disabled={isAnyOperationBusy || !currentBaseline}
+                style={{
+                  padding: "10px 18px",
+                  fontSize: "16px",
+                  fontWeight: 700,
+                  backgroundColor:
+                    isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
+                  color: isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                  border: "2px solid #115e59",
+                  borderRadius: "8px",
+                  cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                }}
+              >
+                {isRefChoicesBusy
+                  ? "Loading Reference Choices..."
+                  : isCurrentRefChoicesBoundAndFresh
+                    ? "Reload Reference Choices"
+                    : "Load Reference Choices"}
               </button>
 
               <button
@@ -4259,24 +4916,23 @@ export default function BenchV2Route() {
               color: "#334155"
             }}
           >
-            Connected fields in Drawers 1 to 8 unlock for manual edit and exact-value approval
-            only when live Shopify owner/type/completeness evidence or an explicit reviewed exact
-            PRODUCT text contract is verified. In Drawer 5
+            Connected fields in Drawers 1 to 8 and Drawer 10 unlock for manual edit and
+            exact-value approval only when live Shopify owner/type/completeness evidence (or
+            an explicit reviewed exact PRODUCT text contract on custom.*) is verified. In Drawer 5
             (Manual Measurements), <strong>Dimensions (mm)</strong> and{" "}
             <strong>Weight (grams)</strong> are manual-only, while 4 unverified measurement
             keepers stay on hold. In Drawer 7 (Geology), 12 detailed <code>custom.*</code>{" "}
-            paths are connected (12 had scan-delivery evidence on Canyon Red; only AGE{" "}
-            <code>custom.geological_age</code> has independently verified actual Save/readback),
-            legacy <code>custom.geological_era</code> is read-only, and authoritative ERA
-            dropdown <code>shopify.geological-era</code> plus its 4 standardized geology
-            reference companions in Drawer 10 (as well as <code>shopify.material</code> and{" "}
-            <code>shopify.color-pattern</code>) remain locked pending reference wiring. In
+            paths are connected, and legacy <code>custom.geological_era</code> is read-only. In
             Drawer 8 (Channel Attributes), <code>custom.google_product_category</code> (PRODUCT)
             and manual/preset single-variant <code>mm-google-shopping.age_group</code>,{" "}
             <code>condition</code>, and <code>gender</code> (PRODUCTVARIANT) are wired when
             single-variant readiness passes, while <code>mm-google-shopping.custom_product</code>{" "}
-            remains held and legacy <code>google.*</code> variant slots +{" "}
-            <code>custom.target_gender</code> remain read-only.
+            remains held. In Drawer 10 (Standardized Attributes), all 18 retained{" "}
+            <code>shopify.*</code> reference attributes (including{" "}
+            <code>shopify.jewelry-type</code>, <code>shopify.geological-era</code>,{" "}
+            <code>shopify.material</code>, and <code>shopify.color-pattern</code>) are connected
+            with read-only reference choice loading, product category constraint eligibility, and
+            verified Metaobject definition membership.
           </div>
 
           <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
@@ -4381,6 +5037,67 @@ export default function BenchV2Route() {
                   &bull; {errMsg}
                 </div>
               ))}
+          </div>
+        )}
+
+        {/* HONEST STANDARDIZED REFERENCE CHOICES STATUS BANNER */}
+        {currentRefChoicesRecord && (
+          <div
+            role="region"
+            aria-label="Standardized Reference Choices Status"
+            style={getBannerBoxStyle(
+              !isCurrentRefChoicesBoundAndFresh
+                ? "warning"
+                : currentRefChoicesRecord.ok
+                  ? "info"
+                  : "error",
+              "16px 20px"
+            )}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "12px"
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "17px", fontWeight: 700 }}>
+                  {!isCurrentRefChoicesBoundAndFresh
+                    ? "Reference Choices Out of Date (Baseline Changed)"
+                    : currentRefChoicesRecord.ok
+                      ? "Standardized Reference Choices Loaded"
+                      : "Standardized Reference Choices Warning"}
+                </div>
+                <div style={{ marginTop: "4px", fontSize: "15px", color: "#0f172a" }}>
+                  {!isCurrentRefChoicesBoundAndFresh
+                    ? "Product baseline or category changed since reference choices were loaded. Click 'Load Reference Choices' to re-verify allowed Metaobject entries."
+                    : currentRefChoicesRecord.summary}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setRefChoicesStateByProduct((prev) => {
+                    const next = { ...prev };
+                    delete next[activeProductId];
+                    return next;
+                  })
+                }
+                style={DISMISS_BTN_STYLE}
+              >
+                Dismiss
+              </button>
+            </div>
+            {Array.isArray(currentRefChoicesRecord.errors) &&
+              currentRefChoicesRecord.errors.length > 0 && (
+                <ul style={{ margin: "8px 0 0 0", paddingLeft: "20px", fontSize: "14px" }}>
+                  {currentRefChoicesRecord.errors.map((errText, idx) => (
+                    <li key={idx}>{errText}</li>
+                  ))}
+                </ul>
+              )}
           </div>
         )}
 
@@ -4714,28 +5431,114 @@ export default function BenchV2Route() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    aria-expanded={isOpen}
-                    onClick={() => handleToggleDrawer(drawer.drawerId)}
-                    style={{
-                      padding: "8px 16px",
-                      fontSize: "15px",
-                      fontWeight: 700,
-                      backgroundColor: isOpen ? "#0f172a" : "#f8fafc",
-                      color: isOpen ? "#ffffff" : "#0f172a",
-                      border: "2px solid #334155",
-                      borderRadius: "8px",
-                      cursor: "pointer"
-                    }}
-                  >
-                    {isOpen ? "Close Drawer" : "Open Drawer"}
-                  </button>
+                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                    {drawer.drawerId === "standardized_attributes" && (
+                      <button
+                        type="button"
+                        onClick={handleLoadStandardizedReferenceChoices}
+                        disabled={isAnyOperationBusy || !currentBaseline}
+                        style={{
+                          padding: "8px 14px",
+                          fontSize: "15px",
+                          fontWeight: 700,
+                          backgroundColor:
+                            isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
+                          color:
+                            isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                          border: "2px solid #115e59",
+                          borderRadius: "8px",
+                          cursor:
+                            isAnyOperationBusy || !currentBaseline
+                              ? "not-allowed"
+                              : "pointer"
+                        }}
+                      >
+                        {isRefChoicesBusy
+                          ? "Loading Choices..."
+                          : isCurrentRefChoicesBoundAndFresh
+                            ? "Reload Reference Choices"
+                            : "Load Reference Choices"}
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() => handleToggleDrawer(drawer.drawerId)}
+                      style={{
+                        padding: "8px 16px",
+                        fontSize: "15px",
+                        fontWeight: 700,
+                        backgroundColor: isOpen ? "#0f172a" : "#f8fafc",
+                        color: isOpen ? "#ffffff" : "#0f172a",
+                        border: "2px solid #334155",
+                        borderRadius: "8px",
+                        cursor: "pointer"
+                      }}
+                    >
+                      {isOpen ? "Close Drawer" : "Open Drawer"}
+                    </button>
+                  </div>
                 </div>
 
                 {/* DRAWER BODY — VISIBLE FIELDS IN DRAWER */}
                 {isOpen && (
                   <div style={{ padding: "18px 20px", backgroundColor: "#f8fafc" }}>
+                    {/* DRAWER 10 REFERENCE CHOICES CONTROL BAR */}
+                    {drawer.drawerId === "standardized_attributes" && (
+                      <div
+                        style={{
+                          marginBottom: "16px",
+                          padding: "14px 16px",
+                          backgroundColor: "#ffffff",
+                          border: "2px solid #0f766e",
+                          borderRadius: "8px",
+                          display: "flex",
+                          flexWrap: "wrap",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "12px"
+                        }}
+                      >
+                        <div style={{ flex: "1 1 480px" }}>
+                          <div style={{ fontWeight: 700, fontSize: "16px", color: "#0f172a" }}>
+                            Standardized Reference Verification (Drawer 10)
+                          </div>
+                          <div style={{ fontSize: "14px", color: "#334155", marginTop: "4px" }}>
+                            {isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord
+                              ? currentRefChoicesRecord.summary
+                              : "Click 'Load Reference Choices' to query live Shopify Metaobject definitions and verify allowed entries for this product's category before approving."}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleLoadStandardizedReferenceChoices}
+                          disabled={isAnyOperationBusy || !currentBaseline}
+                          style={{
+                            padding: "9px 16px",
+                            fontSize: "15px",
+                            fontWeight: 700,
+                            backgroundColor:
+                              isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
+                            color:
+                              isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                            border: "2px solid #115e59",
+                            borderRadius: "8px",
+                            cursor:
+                              isAnyOperationBusy || !currentBaseline
+                                ? "not-allowed"
+                                : "pointer"
+                          }}
+                        >
+                          {isRefChoicesBusy
+                            ? "Loading Reference Choices..."
+                            : isCurrentRefChoicesBoundAndFresh
+                              ? "Reload Reference Choices"
+                              : "Load Reference Choices"}
+                        </button>
+                      </div>
+                    )}
+
                     {/* PER-IMAGE NATIVE MEDIA ALT BASELINE INSPECTION IN DRAWER 9 */}
                     {drawer.drawerId === "native_seo_description_media" &&
                       Array.isArray(currentBaseline?.nativeTargets?.media?.edges) && (
@@ -4835,6 +5638,7 @@ export default function BenchV2Route() {
                             contract,
                             baselineObservation: obs,
                             typeAndCompleteness,
+                            referenceEvidence,
                             options,
                             hasProposalKey,
                             proposedValue,
@@ -4855,14 +5659,19 @@ export default function BenchV2Route() {
                             canSelectKeepOriginal
                           } = row;
 
-                          const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
+                          const isShopifyReference = contract.namespace === "shopify";
+                          const usesMeaningDisplay = Boolean(
+                            contract.usesYesNoMeaningDisplay || isShopifyReference
+                          );
                           const isManualOnlyField = isManualOnlyNoAiDestination(
                             contract.destinationKey,
                             contract
                           );
 
                           const canEditDraftInBatch1 =
-                            contract.isWritableInBatch1 && obs.evidenceAvailable;
+                            contract.isWritableInBatch1 &&
+                            obs.evidenceAvailable &&
+                            (!isShopifyReference || typeAndCompleteness?.ready === true);
 
                           const canApproveForSave =
                             contract.isWritableInBatch1 &&
@@ -4877,7 +5686,12 @@ export default function BenchV2Route() {
                             inputPlaceholder =
                               contract.owner === "PRODUCTVARIANT"
                                 ? "Editing locked until single-variant baseline loads"
-                                : "Editing locked until baseline loads";
+                                : isShopifyReference
+                                  ? "Blocked by category or definition constraint on this product"
+                                  : "Editing locked until baseline loads";
+                          } else if (isShopifyReference) {
+                            inputPlaceholder =
+                              'Select a verified reference choice above or enter canonical JSON GID array (e.g. ["gid://shopify/Metaobject/..."])...';
                           } else if (contract.destinationKey === "custom.dimensions_mm") {
                             inputPlaceholder = "Enter manual measurement (e.g. 38 x 24 x 6 mm)...";
                           } else if (contract.destinationKey === "custom.weight_grams") {
@@ -4959,9 +5773,22 @@ export default function BenchV2Route() {
                                         (Single-Variant {contract.destinationKey} — manual/preset)
                                       </span>
                                     )}
+                                  {isShopifyReference && contract.isWritableInBatch1 && (
+                                    <span
+                                      style={{
+                                        fontSize: "13px",
+                                        fontWeight: 600,
+                                        color: "#0f766e",
+                                        marginLeft: "8px"
+                                      }}
+                                    >
+                                      (Standardized Reference {contract.destinationKey})
+                                    </span>
+                                  )}
                                   {isManualOnlyField &&
                                     contract.isWritableInBatch1 &&
-                                    contract.owner !== "PRODUCTVARIANT" && (
+                                    contract.owner !== "PRODUCTVARIANT" &&
+                                    !isShopifyReference && (
                                       <span
                                         style={{
                                           fontSize: "13px",
@@ -5028,6 +5855,21 @@ export default function BenchV2Route() {
                                   >
                                     {readableSaved}
                                   </div>
+                                  {isShopifyReference &&
+                                    obs.presence === "present" &&
+                                    typeof obs.rawValue === "string" &&
+                                    obs.rawValue.trim() !== "" && (
+                                      <div
+                                        style={{
+                                          marginTop: "6px",
+                                          fontSize: "13px",
+                                          color: "#475569",
+                                          wordBreak: "break-all"
+                                        }}
+                                      >
+                                        Raw JSON: <code>{obs.rawValue}</code>
+                                      </div>
+                                    )}
                                 </div>
 
                                 {/* PROPOSED BOX + NEARBY APPROVAL CONTROLS */}
@@ -5087,10 +5929,7 @@ export default function BenchV2Route() {
                                           }
                                           onChange={(e) => {
                                             if (e.target.value === "") return;
-                                            handleManualProposalChange(
-                                              contract.destinationKey,
-                                              e.target.value
-                                            );
+                                            handleSelectPresetOption(row, e.target.value);
                                           }}
                                           style={{
                                             width: "100%",
@@ -5103,7 +5942,11 @@ export default function BenchV2Route() {
                                             color: "#0f172a"
                                           }}
                                         >
-                                          <option value="">Choose an option...</option>
+                                          <option value="">
+                                            {isShopifyReference
+                                              ? `Choose verified Metaobject entry (${options.length} available)...`
+                                              : "Choose an option..."}
+                                          </option>
                                           {options.map((opt, idx) => {
                                             const optVal =
                                               typeof opt === "object"
@@ -5179,10 +6022,30 @@ export default function BenchV2Route() {
                                             style={{
                                               fontSize: "14px",
                                               color: "#334155",
-                                              marginTop: "6px"
+                                              marginTop: "6px",
+                                              wordBreak: "break-word"
                                             }}
                                           >
-                                            Meaning: <strong>{proposedDisplayValue}</strong>
+                                            {isShopifyReference ? (
+                                              <>
+                                                Resolved Entries:{" "}
+                                                <strong>{proposedDisplayValue}</strong>
+                                                <div
+                                                  style={{
+                                                    fontSize: "13px",
+                                                    color: "#475569",
+                                                    marginTop: "2px",
+                                                    wordBreak: "break-all"
+                                                  }}
+                                                >
+                                                  Raw JSON: <code>{proposedValue}</code>
+                                                </div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                Meaning: <strong>{proposedDisplayValue}</strong>
+                                              </>
+                                            )}
                                           </div>
                                         )}
 
@@ -5387,6 +6250,18 @@ export default function BenchV2Route() {
                                         <code>{obs.variantId || "none"}</code>
                                         {obs.variantTargetStatus
                                           ? ` (${obs.variantTargetStatus})`
+                                          : ""}
+                                      </>
+                                    )}
+                                    {isShopifyReference && (
+                                      <>
+                                        {" "}
+                                        | <strong>Restricted MetaobjectDef:</strong>{" "}
+                                        <code>
+                                          {obs.restrictedMetaobjectDefinitionId || "none"}
+                                        </code>
+                                        {obs.categoryEligibility?.status
+                                          ? ` (Category Eligibility: ${obs.categoryEligibility.status})`
                                           : ""}
                                       </>
                                     )}

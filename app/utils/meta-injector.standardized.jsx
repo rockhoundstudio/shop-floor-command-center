@@ -7,7 +7,28 @@ export const ALLOWED_VISION_CANDIDATE_KEYS = [
   "product-use"
 ];
 
-export const VERIFIED_STANDARDIZED_DESTINATIONS = ALLOWED_VISION_CANDIDATE_KEYS.map(
+export const SUPPORTED_STANDARDIZED_REFERENCE_KEYS = Object.freeze([
+  "age-group",
+  "chain-link-type",
+  "color-pattern",
+  "condition",
+  "construction",
+  "crystal-system",
+  "geological-era",
+  "jewelry-finding-type",
+  "jewelry-material",
+  "jewelry-type",
+  "material",
+  "material-origin",
+  "mineral-class",
+  "product-classification",
+  "product-use",
+  "rock-composition",
+  "rock-formation",
+  "target-gender"
+]);
+
+export const VERIFIED_STANDARDIZED_DESTINATIONS = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map(
   (k) => `shopify.${k}`
 );
 
@@ -52,6 +73,10 @@ export const extractEntryDefinitionId = (entry) => {
   if (!entry || typeof entry !== "object") return "";
   const def = entry.definition ?? entry.definitionId ?? entry.metaobjectDefinitionId ?? "";
   if (typeof def === "string" || typeof def === "number") return String(def).trim();
+  if (def && typeof item !== "undefined" && typeof def === "object") {
+    const nested = def.id || def.gid || "";
+    if (typeof nested === "string" || typeof nested === "number") return String(nested).trim();
+  }
   if (def && typeof def === "object") {
     const nested = def.id || def.gid || "";
     if (typeof nested === "string" || typeof nested === "number") return String(nested).trim();

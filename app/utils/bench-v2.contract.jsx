@@ -6,7 +6,16 @@
 // ==========================================================================
 
 import { DROPDOWN_OPTIONS, collectionLocationOptions } from "./meta-injector.constants.jsx";
-import { ALLOWED_VISION_CANDIDATE_KEYS } from "./meta-injector.standardized.jsx";
+import {
+  ALLOWED_VISION_CANDIDATE_KEYS,
+  SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
+  isExactMetaobjectGid,
+  parseMetaobjectGidArray,
+  extractEntryGid,
+  extractEntryLabel,
+  extractEntryDefinitionId,
+  formatDisplayFieldValue
+} from "./meta-injector.standardized.jsx";
 
 export const BENCH_V2_CONTRACT_VERSION = "2.0.0-batch-1";
 
@@ -80,6 +89,14 @@ export const BENCH_V2_CONNECTED_VARIANT_DESTINATIONS = Object.freeze(
     "mm-google-shopping.condition",
     "mm-google-shopping.gender"
   ])
+);
+
+// Explicit replacement-bench-local allowlist of finite retained Drawer 10 PRODUCT
+// standardized reference destinations (18 keys; excludes authenticity, necklace-design, rarity).
+export const BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS = Object.freeze(
+  new Set(
+    SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => `shopify.${k}`)
+  )
 );
 
 // Explicit Bench V2 writer opt-in markers and unheld custom destination sets
@@ -278,9 +295,9 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     drawerNumber: 10,
     heading: "10. Standardized Attributes (shopify.*)",
     subHarness: "SUB_HARNESS_5",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    isImplementedInBatch1: false,
-    description: "Future Batch 3 descriptor: all 21 shopify.* taxonomy reference attributes (6 candidate-matchable in Batch 3 + 15 read-only holds; all locked in Batch 1)."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Connected standardized taxonomy reference attributes (18 retained shopify.* destinations): requires complete reads, live PRODUCT list.metaobject_reference definition, product category constraint eligibility, verified restricted Metaobject definition membership for all proposed GIDs, and exact-value approval."
   }),
   Object.freeze({
     drawerId: "parked_excluded_protected",
@@ -417,7 +434,8 @@ const STANDARDIZED_SHOPIFY_KEYS = Object.freeze([
   "target-gender"
 ]);
 
-const FUTURE_BATCH_3_CANDIDATE_STANDARDIZED_KEYS = new Set(ALLOWED_VISION_CANDIDATE_KEYS);
+const VISION_CANDIDATE_STANDARDIZED_KEYS = new Set(ALLOWED_VISION_CANDIDATE_KEYS);
+const SUPPORTED_STANDARDIZED_KEY_SET = new Set(SUPPORTED_STANDARDIZED_REFERENCE_KEYS);
 
 const EXCLUDED_STANDARDIZED_KEYS = new Set([
   "authenticity",
@@ -435,6 +453,11 @@ function defineFieldContract(spec) {
 
   const isEligibleOwnerAndDestination =
     (spec.owner === "PRODUCT" && spec.namespace === "custom") ||
+    (spec.owner === "PRODUCT" &&
+      spec.namespace === "shopify" &&
+      SUPPORTED_STANDARDIZED_KEY_SET.has(spec.key) &&
+      !EXCLUDED_STANDARDIZED_KEYS.has(spec.key) &&
+      BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(spec.destinationKey)) ||
     (spec.owner === "PRODUCTVARIANT" &&
       BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(spec.destinationKey));
 
@@ -1251,9 +1274,10 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     purposeNote: "Shipping-weight changes are outside this task; inspectable baseline only."
   }),
 
-  // DRAWER 10: STANDARDIZED ATTRIBUTES (shopify.* — SUB_HARNESS_5 — FUTURE BATCH 3)
+  // DRAWER 10: STANDARDIZED ATTRIBUTES (shopify.* — SUB_HARNESS_5 — CONNECTED REFERENCE HARNESS)
   ...STANDARDIZED_SHOPIFY_KEYS.filter((k) => !EXCLUDED_STANDARDIZED_KEYS.has(k)).map((k) => {
-    const isCandidateKey = FUTURE_BATCH_3_CANDIDATE_STANDARDIZED_KEYS.has(k);
+    const isVisionCandidateKey = VISION_CANDIDATE_STANDARDIZED_KEYS.has(k);
+    const isSupportedRefKey = SUPPORTED_STANDARDIZED_KEY_SET.has(k);
     return defineFieldContract({
       destinationKey: `shopify.${k}`,
       namespace: "shopify",
@@ -1262,14 +1286,19 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
       owner: "PRODUCT",
       drawerId: "standardized_attributes",
       subHarness: "SUB_HARNESS_5",
-      batchStage: isCandidateKey
-        ? BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR
+      batchStage: isSupportedRefKey
+        ? BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED
         : BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-      writeCapability: BENCH_V2_WRITE_CAPABILITY.STANDARDIZED_REFERENCE_LOCKED,
+      writeCapability: isSupportedRefKey
+        ? BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL
+        : BENCH_V2_WRITE_CAPABILITY.STANDARDIZED_REFERENCE_LOCKED,
+      isManualOnlyNoAi: !isVisionCandidateKey,
       expectedType: "list.metaobject_reference",
-      purposeNote: isCandidateKey
-        ? "Future Batch 3 reference-matching candidate destination. Locked in Batch 1; requires live definition, category constraint eligibility, and exact Metaobject GID resolution."
-        : "Read-only standardized taxonomy attribute (pending_read_only)."
+      allowedTypes: ["list.metaobject_reference"],
+      maxLength: null,
+      purposeNote: isSupportedRefKey
+        ? "Standardized taxonomy reference attribute (list.metaobject_reference). Requires complete reads, live PRODUCT definition, category constraint eligibility, verified restricted Metaobject definition membership for all proposed GIDs, and exact-value approval."
+        : "Read-only standardized taxonomy attribute."
     });
   }),
 
@@ -1397,6 +1426,7 @@ export const BENCH_V2_DRAWER_GROUPS = Object.freeze(
 
 const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 const EXACT_PRODUCT_VARIANT_GID_REGEX = /^gid:\/\/shopify\/ProductVariant\/\d+$/;
+const EXACT_METAOBJECT_DEF_GID_REGEX = /^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/;
 const COLLECTION_DATE_PLACEHOLDER_REGEX = /^(n\/a|none|unknown)$/i;
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
@@ -1409,6 +1439,10 @@ export function isExactProductGid(value) {
 
 export function isExactProductVariantGid(value) {
   return typeof value === "string" && EXACT_PRODUCT_VARIANT_GID_REGEX.test(value);
+}
+
+export function isExactMetaobjectDefinitionGid(value) {
+  return typeof value === "string" && EXACT_METAOBJECT_DEF_GID_REGEX.test(value);
 }
 
 export function getFieldContractByDestination(destinationKey) {
@@ -1444,11 +1478,265 @@ export function checkExistingWriterStringFidelity(exactProposedValue) {
   };
 }
 
-export function formatBenchV2ValueDisplay(destinationKey, rawVal, observedType = null) {
+/**
+ * Inspects and normalizes a stored `list.metaobject_reference` raw value.
+ * Never treats malformed or non-GID values as empty.
+ */
+export function inspectStoredReferenceListRawValue(rawVal) {
+  if (rawVal === undefined || rawVal === null) {
+    return { valid: true, gids: [], error: null };
+  }
+  if (typeof rawVal !== "string") {
+    return {
+      valid: false,
+      gids: [],
+      error: "Stored reference value is not a string."
+    };
+  }
+  const trimmed = rawVal.trim();
+  if (trimmed === "") {
+    return { valid: true, gids: [], error: null };
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) {
+      return {
+        valid: false,
+        gids: [],
+        error: "Stored reference value is not a JSON array."
+      };
+    }
+    const gids = [];
+    for (const item of parsed) {
+      if (typeof item !== "string" || !isExactMetaobjectGid(item.trim())) {
+        return {
+          valid: false,
+          gids: [],
+          error: `Stored reference array contains non-Metaobject GID item "${String(item)}".`
+        };
+      }
+      const cleanGid = item.trim();
+      if (!gids.includes(cleanGid)) {
+        gids.push(cleanGid);
+      }
+    }
+    return { valid: true, gids, error: null };
+  } catch {
+    if (isExactMetaobjectGid(trimmed)) {
+      return { valid: true, gids: [trimmed], error: null };
+    }
+    return {
+      valid: false,
+      gids: [],
+      error: "Stored reference value is not a valid JSON array of Metaobject GIDs."
+    };
+  }
+}
+
+/**
+ * Extracts verified reference entry evidence for a `shopify.*` destination from
+ * `baselineSnapshot` (`verifiedReferenceEntriesByDestination[destinationKey]` or
+ * `standardizedReferenceResolutions.resolutions[destinationKey]`).
+ *
+ * Returns a uniform evidence descriptor:
+ * - `evidenceLoaded`: true when a read-only resolution payload for the active product is present
+ * - `isComplete`: true when enumeration and category/definition checks completed without error
+ * - `restrictedMetaobjectDefinitionId`: verified MetaobjectDefinition GID
+ * - `entriesByGid`: Map of verified Metaobject GID -> `{ id, label, definitionId }` where `definitionId === restrictedMetaobjectDefinitionId`
+ */
+export function inspectVerifiedReferenceEvidenceForDestination(
+  baselineSnapshot,
+  destinationKey,
+  expectedRestrictedDefId = null
+) {
+  if (!baselineSnapshot || typeof baselineSnapshot !== "object") {
+    return {
+      evidenceLoaded: false,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: null,
+      entriesByGid: new Map(),
+      error: "Baseline snapshot is not loaded."
+    };
+  }
+
+  const productGid = baselineSnapshot.productId;
+  const directMap =
+    baselineSnapshot.verifiedReferenceEntriesByDestination &&
+    typeof baselineSnapshot.verifiedReferenceEntriesByDestination === "object" &&
+    !Array.isArray(baselineSnapshot.verifiedReferenceEntriesByDestination)
+      ? baselineSnapshot.verifiedReferenceEntriesByDestination[destinationKey]
+      : null;
+
+  const topResEnvelope =
+    baselineSnapshot.standardizedReferenceResolutions &&
+    typeof baselineSnapshot.standardizedReferenceResolutions === "object" &&
+    !Array.isArray(baselineSnapshot.standardizedReferenceResolutions)
+      ? baselineSnapshot.standardizedReferenceResolutions
+      : null;
+
+  const resolutionEntry =
+    directMap ||
+    (topResEnvelope &&
+    topResEnvelope.pieceId === productGid &&
+    topResEnvelope.readOnly === true &&
+    topResEnvelope.resolutions &&
+    typeof topResEnvelope.resolutions === "object"
+      ? topResEnvelope.resolutions[destinationKey]
+      : null);
+
+  if (!resolutionEntry || typeof resolutionEntry !== "object") {
+    return {
+      evidenceLoaded: false,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
+      entriesByGid: new Map(),
+      error: `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Load Reference Choices" in Drawer 10 to verify allowed entries.`
+    };
+  }
+
+  if (
+    topResEnvelope &&
+    (topResEnvelope.pieceId !== productGid ||
+      topResEnvelope.readOnly !== true ||
+      topResEnvelope.success !== true ||
+      topResEnvelope.isComplete !== true)
+  ) {
+    const topErr =
+      Array.isArray(topResEnvelope.errors) && topResEnvelope.errors.length > 0
+        ? topResEnvelope.errors.join("; ")
+        : "Top-level standardized reference resolution is incomplete or failed.";
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
+      entriesByGid: new Map(),
+      error: topErr
+    };
+  }
+
+  const resolvedDefId =
+    resolutionEntry.restrictedMetaobjectDefinitionId ||
+    resolutionEntry.restrictedMetaobjectDefinition?.id ||
+    resolutionEntry.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
+    expectedRestrictedDefId ||
+    null;
+
+  if (!isExactMetaobjectDefinitionGid(resolvedDefId)) {
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: null,
+      entriesByGid: new Map(),
+      error: `Missing or invalid restricted MetaobjectDefinition GID on "${destinationKey}".`
+    };
+  }
+
+  if (
+    expectedRestrictedDefId &&
+    isExactMetaobjectDefinitionGid(expectedRestrictedDefId) &&
+    resolvedDefId !== expectedRestrictedDefId
+  ) {
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: resolvedDefId,
+      entriesByGid: new Map(),
+      error: `Restricted MetaobjectDefinition mismatch on "${destinationKey}": baseline expects "${expectedRestrictedDefId}" but resolution reported "${resolvedDefId}".`
+    };
+  }
+
+  const fieldErrors = Array.isArray(resolutionEntry.errors)
+    ? resolutionEntry.errors.filter((e) => typeof e === "string" && e.trim() !== "")
+    : [];
+  const hasContinuation = Boolean(
+    resolutionEntry.continuation &&
+      typeof resolutionEntry.continuation === "object" &&
+      resolutionEntry.continuation.hasNextPage === true
+  );
+
+  if (
+    resolutionEntry.isComplete !== true ||
+    resolutionEntry.status === "incomplete" ||
+    resolutionEntry.status === "blocked" ||
+    resolutionEntry.status === "category_ineligible" ||
+    hasContinuation ||
+    fieldErrors.length > 0
+  ) {
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: resolvedDefId,
+      entriesByGid: new Map(),
+      error:
+        fieldErrors[0] ||
+        `Reference entry enumeration for "${destinationKey}" is not complete (status: ${resolutionEntry.status || "incomplete"}).`
+    };
+  }
+
+  const entriesByGid = new Map();
+  const rawEntries = Array.isArray(resolutionEntry.availableEntries)
+    ? resolutionEntry.availableEntries
+    : Array.isArray(resolutionEntry.entries)
+      ? resolutionEntry.entries
+      : [];
+
+  for (const item of rawEntries) {
+    if (!item || typeof item !== "object") continue;
+    const gid = extractEntryGid(item);
+    const defId = extractEntryDefinitionId(item);
+    if (!isExactMetaobjectGid(gid)) continue;
+    if (!isExactMetaobjectDefinitionGid(defId) || defId !== resolvedDefId) continue;
+    const label = extractEntryLabel(item) || gid;
+    entriesByGid.set(gid, {
+      id: gid,
+      label,
+      definitionId: defId
+    });
+  }
+
+  if (
+    resolutionEntry.entriesByGid instanceof Map
+  ) {
+    resolutionEntry.entriesByGid.forEach((val, key) => {
+      const gid = typeof key === "string" ? key.trim() : extractEntryGid(val);
+      const defId = extractEntryDefinitionId(val);
+      if (isExactMetaobjectGid(gid) && defId === resolvedDefId) {
+        entriesByGid.set(gid, {
+          id: gid,
+          label: extractEntryLabel(val) || gid,
+          definitionId: defId
+        });
+      }
+    });
+  }
+
+  return {
+    evidenceLoaded: true,
+    isComplete: true,
+    restrictedMetaobjectDefinitionId: resolvedDefId,
+    entriesByGid,
+    error: null
+  };
+}
+
+export function formatBenchV2ValueDisplay(
+  destinationKey,
+  rawVal,
+  observedType = null,
+  verifiedEntriesMap = null
+) {
   if (rawVal === undefined || rawVal === null || rawVal === "") {
     return "";
   }
   const strVal = String(rawVal);
+
+  if (
+    (typeof destinationKey === "string" && destinationKey.startsWith("shopify.")) ||
+    observedType === "list.metaobject_reference"
+  ) {
+    return formatDisplayFieldValue(strVal, true, null, verifiedEntriesMap);
+  }
+
   const lower = strVal.trim().toLowerCase();
 
   if (
@@ -1540,8 +1828,49 @@ export function formatOoakDisplayConvention(rawVal, observedType = null) {
   return formatBenchV2ValueDisplay("custom.is_ooak", rawVal, observedType);
 }
 
-export function getContractOptionsForObservation(contract, baselineObs = null) {
-  if (!contract || !contract.optionsKey) return [];
+export function getContractOptionsForObservation(
+  contract,
+  baselineObs = null,
+  baselineSnapshot = null
+) {
+  if (!contract) return [];
+
+  if (contract.namespace === "shopify" && contract.isWritableInBatch1) {
+    const refEvidence = inspectVerifiedReferenceEvidenceForDestination(
+      baselineSnapshot,
+      contract.destinationKey,
+      baselineObs?.restrictedMetaobjectDefinitionId || null
+    );
+    if (!refEvidence.isComplete || refEvidence.entriesByGid.size === 0) {
+      return [];
+    }
+    const storedCheck = inspectStoredReferenceListRawValue(baselineObs?.rawValue);
+    if (!storedCheck.valid) {
+      return [];
+    }
+    const existingGids = storedCheck.gids;
+    const options = [];
+    refEvidence.entriesByGid.forEach((entry) => {
+      const mergedGids = [...existingGids];
+      if (!mergedGids.includes(entry.id)) {
+        mergedGids.push(entry.id);
+      }
+      const serializedValue = JSON.stringify(mergedGids);
+      const displayLabel =
+        existingGids.length > 0 && !existingGids.includes(entry.id)
+          ? `${entry.label} (${entry.id}) — append to [${existingGids.length} existing]`
+          : `${entry.label} (${entry.id})`;
+      options.push(
+        Object.freeze({
+          label: displayLabel,
+          value: serializedValue
+        })
+      );
+    });
+    return Object.freeze(options);
+  }
+
+  if (!contract.optionsKey) return [];
   if (contract.destinationKey === "custom.is_ooak") {
     const resolvedType = baselineObs?.liveDefType || baselineObs?.storedType || null;
     if (resolvedType === "boolean") {
@@ -1559,6 +1888,10 @@ function inspectSnapshotCompleteness(baselineSnapshot, destinationKey) {
     return {
       metafieldsCompleteState: "unknown",
       defsCompleteState: "unknown",
+      productCategoryCompleteState: "unknown",
+      productCategoryId: null,
+      restrictedMetaobjectDefinitionId: null,
+      categoryEligibility: null,
       destinationDefError: null
     };
   }
@@ -1571,11 +1904,42 @@ function inspectSnapshotCompleteness(baselineSnapshot, destinationKey) {
   const defsCompleteState =
     defsFlag === true ? "complete" : defsFlag === false ? "incomplete" : "unknown";
 
+  const catCompleteFlag = baselineSnapshot.productCategoryReadComplete;
+  const productCategoryCompleteState =
+    catCompleteFlag === true
+      ? "complete"
+      : catCompleteFlag === false
+        ? "incomplete"
+        : baselineSnapshot.productCategory !== undefined
+          ? "complete"
+          : "unknown";
+
+  const productCategoryId =
+    typeof baselineSnapshot.productCategory?.id === "string" &&
+    baselineSnapshot.productCategory.id.trim() !== ""
+      ? baselineSnapshot.productCategory.id.trim()
+      : null;
+
   const liveDefEntry =
     baselineSnapshot.liveDefinitions &&
     typeof baselineSnapshot.liveDefinitions === "object" &&
     !Array.isArray(baselineSnapshot.liveDefinitions)
       ? baselineSnapshot.liveDefinitions[destinationKey]
+      : null;
+
+  const restrictedMetaobjectDefinitionId =
+    typeof liveDefEntry?.restrictedMetaobjectDefinitionId === "string" &&
+    liveDefEntry.restrictedMetaobjectDefinitionId.trim() !== ""
+      ? liveDefEntry.restrictedMetaobjectDefinitionId.trim()
+      : typeof liveDefEntry?.requiredDefinitionId === "string" &&
+          liveDefEntry.requiredDefinitionId.trim() !== ""
+        ? liveDefEntry.requiredDefinitionId.trim()
+        : null;
+
+  const categoryEligibility =
+    baselineSnapshot.categoryEligibilityByDestination &&
+    typeof baselineSnapshot.categoryEligibilityByDestination === "object"
+      ? baselineSnapshot.categoryEligibilityByDestination[destinationKey] || null
       : null;
 
   const destinationConstraintErr =
@@ -1600,6 +1964,10 @@ function inspectSnapshotCompleteness(baselineSnapshot, destinationKey) {
   return {
     metafieldsCompleteState,
     defsCompleteState,
+    productCategoryCompleteState,
+    productCategoryId,
+    restrictedMetaobjectDefinitionId,
+    categoryEligibility,
     destinationDefError
   };
 }
@@ -1714,6 +2082,10 @@ function makeUnavailableObservation({
   presence,
   storedType = null,
   liveDefType = null,
+  restrictedMetaobjectDefinitionId = null,
+  productCategoryCompleteState = "unknown",
+  productCategoryId = null,
+  categoryEligibility = null,
   metafieldsCompleteState = "unknown",
   defsCompleteState = "unknown",
   destinationDefError = null,
@@ -1730,6 +2102,10 @@ function makeUnavailableObservation({
     rawValue: undefined,
     storedType,
     liveDefType,
+    restrictedMetaobjectDefinitionId,
+    productCategoryCompleteState,
+    productCategoryId,
+    categoryEligibility,
     metafieldsCompleteState,
     defsCompleteState,
     destinationDefError,
@@ -1846,6 +2222,10 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
       rawValue: rawVal,
       storedType,
       liveDefType: liveVarDefType,
+      restrictedMetaobjectDefinitionId: null,
+      productCategoryCompleteState: completeness.productCategoryCompleteState,
+      productCategoryId: completeness.productCategoryId,
+      categoryEligibility: null,
       metafieldsCompleteState: varCompleteness.metafieldsCompleteState,
       defsCompleteState: varCompleteness.defsCompleteState,
       destinationDefError: varCompleteness.destinationDefError,
@@ -1924,6 +2304,10 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
       rawValue: rawNative,
       storedType: "native",
       liveDefType: "native",
+      restrictedMetaobjectDefinitionId: null,
+      productCategoryCompleteState: completeness.productCategoryCompleteState,
+      productCategoryId: completeness.productCategoryId,
+      categoryEligibility: null,
       metafieldsCompleteState: completeness.metafieldsCompleteState,
       defsCompleteState: completeness.defsCompleteState,
       destinationDefError: completeness.destinationDefError,
@@ -1937,6 +2321,10 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
       destinationKey: contract.destinationKey,
       owner: contract.owner,
       presence: "metafields_not_loaded",
+      restrictedMetaobjectDefinitionId: completeness.restrictedMetaobjectDefinitionId,
+      productCategoryCompleteState: completeness.productCategoryCompleteState,
+      productCategoryId: completeness.productCategoryId,
+      categoryEligibility: completeness.categoryEligibility,
       metafieldsCompleteState: completeness.metafieldsCompleteState,
       defsCompleteState: completeness.defsCompleteState,
       destinationDefError: completeness.destinationDefError,
@@ -1957,6 +2345,10 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
       presence: "unknown_incomplete_read",
       storedType,
       liveDefType,
+      restrictedMetaobjectDefinitionId: completeness.restrictedMetaobjectDefinitionId,
+      productCategoryCompleteState: completeness.productCategoryCompleteState,
+      productCategoryId: completeness.productCategoryId,
+      categoryEligibility: completeness.categoryEligibility,
       metafieldsCompleteState: completeness.metafieldsCompleteState,
       defsCompleteState: completeness.defsCompleteState,
       destinationDefError: completeness.destinationDefError,
@@ -1972,6 +2364,11 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
         ? "empty_string"
         : "present";
 
+  const isShopifyReference = contract.namespace === "shopify";
+  const categorySignatureSegment = isShopifyReference
+    ? `::cat=${completeness.productCategoryId || "unassigned"}::elig=${completeness.categoryEligibility?.status || "unknown"}::moDef=${completeness.restrictedMetaobjectDefinitionId || "no_mo_def"}`
+    : "";
+
   return Object.freeze({
     destinationKey: contract.destinationKey,
     owner: contract.owner,
@@ -1983,10 +2380,14 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
     rawValue: rawVal,
     storedType,
     liveDefType,
+    restrictedMetaobjectDefinitionId: completeness.restrictedMetaobjectDefinitionId,
+    productCategoryCompleteState: completeness.productCategoryCompleteState,
+    productCategoryId: completeness.productCategoryId,
+    categoryEligibility: completeness.categoryEligibility,
     metafieldsCompleteState: completeness.metafieldsCompleteState,
     defsCompleteState: completeness.defsCompleteState,
     destinationDefError: completeness.destinationDefError,
-    signature: `${productGid}::${contract.destinationKey}::${presence}::${storedType || "no_stored_type"}::${liveDefType || "no_def_type"}::${completeness.metafieldsCompleteState}::${completeness.defsCompleteState}::${rawVal ?? ""}`
+    signature: `${productGid}::${contract.destinationKey}::${presence}::${storedType || "no_stored_type"}::${liveDefType || "no_def_type"}::${completeness.metafieldsCompleteState}::${completeness.defsCompleteState}${categorySignatureSegment}::${rawVal ?? ""}`
   });
 }
 
@@ -2006,6 +2407,7 @@ export function evaluateDestinationTypeAndCompleteness({
   }
 
   const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+  const isShopifyReference = contract.owner === "PRODUCT" && contract.namespace === "shopify";
 
   if (!baselineObs.evidenceAvailable) {
     if (isVariantOwner) {
@@ -2127,6 +2529,117 @@ export function evaluateDestinationTypeAndCompleteness({
 
   const liveDefType = baselineObs.liveDefType;
   const storedType = baselineObs.storedType;
+
+  if (isShopifyReference) {
+    if (baselineObs.productCategoryCompleteState !== "complete") {
+      return {
+        ready: false,
+        code: "product_category_read_not_complete",
+        verifiedActualType: null,
+        observedShopifyType: null,
+        typeEvidenceSource: null,
+        reason: `Product category read is "${baselineObs.productCategoryCompleteState}" for "${contract.destinationKey}"; cannot verify category constraint eligibility.`
+      };
+    }
+
+    if (!liveDefType) {
+      return {
+        ready: false,
+        code: "missing_type_evidence",
+        verifiedActualType: null,
+        observedShopifyType: null,
+        typeEvidenceSource: null,
+        reason: `Missing live PRODUCT metafield definition for "${contract.destinationKey}". Standardized reference attributes require a live PRODUCT definition (never inferred from static contracts or stored values alone).`
+      };
+    }
+
+    if (liveDefType !== "list.metaobject_reference") {
+      return {
+        ready: false,
+        code: "contract_type_mismatch",
+        verifiedActualType: null,
+        observedShopifyType: liveDefType,
+        typeEvidenceSource: null,
+        reason: `Type mismatch on "${contract.destinationKey}": expected live definition "list.metaobject_reference", but Shopify reports "${liveDefType}".`
+      };
+    }
+
+    if (storedType && storedType !== "list.metaobject_reference") {
+      return {
+        ready: false,
+        code: "live_vs_stored_type_conflict",
+        verifiedActualType: null,
+        observedShopifyType: storedType,
+        typeEvidenceSource: null,
+        reason: `Type conflict on "${contract.destinationKey}": live definition is "list.metaobject_reference" but stored metafield is "${storedType}".`
+      };
+    }
+
+    const catElig = baselineObs.categoryEligibility;
+    if (!catElig || catElig.isComplete !== true) {
+      return {
+        ready: false,
+        code: "category_eligibility_incomplete",
+        verifiedActualType: null,
+        observedShopifyType: liveDefType,
+        typeEvidenceSource: null,
+        reason:
+          catElig?.reason ||
+          `Category constraint eligibility check did not complete for "${contract.destinationKey}".`
+      };
+    }
+
+    if (catElig.isEligible !== true) {
+      return {
+        ready: false,
+        code: "destination_definition_error",
+        verifiedActualType: null,
+        observedShopifyType: liveDefType,
+        typeEvidenceSource: null,
+        reason:
+          catElig.reason ||
+          `Product category is not eligible for standardized attribute "${contract.destinationKey}".`
+      };
+    }
+
+    if (!isExactMetaobjectDefinitionGid(baselineObs.restrictedMetaobjectDefinitionId)) {
+      return {
+        ready: false,
+        code: "missing_restricted_metaobject_definition",
+        verifiedActualType: null,
+        observedShopifyType: liveDefType,
+        typeEvidenceSource: null,
+        reason: `Live PRODUCT definition for "${contract.destinationKey}" is missing a valid metaobject_definition_id restriction.`
+      };
+    }
+
+    if (baselineObs.presence === "present") {
+      const storedCheck = inspectStoredReferenceListRawValue(baselineObs.rawValue);
+      if (!storedCheck.valid) {
+        return {
+          ready: false,
+          code: "invalid_stored_reference_list",
+          verifiedActualType: null,
+          observedShopifyType: liveDefType,
+          typeEvidenceSource: null,
+          reason: `Existing stored reference list on "${contract.destinationKey}" could not be parsed safely: ${storedCheck.error}`
+        };
+      }
+    }
+
+    return {
+      ready: true,
+      code: "type_and_completeness_verified",
+      verifiedActualType: "list.metaobject_reference",
+      observedShopifyType: "list.metaobject_reference",
+      typeEvidenceSource: storedType
+        ? "live_definition_and_stored"
+        : "live_definition",
+      restrictedMetaobjectDefinitionId: baselineObs.restrictedMetaobjectDefinitionId,
+      reason: null
+    };
+  }
+
   const reviewedExactContractType =
     !isVariantOwner &&
     contract.owner === "PRODUCT" &&
@@ -2289,7 +2802,140 @@ export function validateBatch1ProposedValue({
 
   const exactValue = proposedValue;
 
-  if (verifiedActualType === "boolean") {
+  if (verifiedActualType === "list.metaobject_reference") {
+    let parsedArray;
+    try {
+      parsedArray = JSON.parse(exactValue);
+    } catch {
+      return {
+        valid: false,
+        code: "invalid_reference_json_array",
+        reason: `Destination "${contract.destinationKey}" requires a canonical JSON array of Metaobject GIDs (e.g. ["gid://shopify/Metaobject/123"]).`
+      };
+    }
+
+    if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
+      return {
+        valid: false,
+        code: "empty_or_non_array_reference_list",
+        reason: `Destination "${contract.destinationKey}" requires a non-empty JSON array of Metaobject GIDs.`
+      };
+    }
+
+    const seenGids = new Set();
+    for (const item of parsedArray) {
+      if (typeof item !== "string" || item.trim() !== item || !isExactMetaobjectGid(item)) {
+        return {
+          valid: false,
+          code: "invalid_metaobject_gid_element",
+          reason: `Invalid reference element "${String(item)}" for "${contract.destinationKey}": every item must be an exact "gid://shopify/Metaobject/<id>" string.`
+        };
+      }
+      if (seenGids.has(item)) {
+        return {
+          valid: false,
+          code: "duplicate_metaobject_gid_element",
+          reason: `Duplicate Metaobject GID "${item}" in proposal for "${contract.destinationKey}".`
+        };
+      }
+      seenGids.add(item);
+    }
+
+    const canonicalSerialized = JSON.stringify(parsedArray);
+    if (canonicalSerialized !== exactValue) {
+      return {
+        valid: false,
+        code: "non_canonical_reference_json_serialization",
+        reason: `Existing writer serializes this reference list as ${canonicalSerialized}. Use ${canonicalSerialized} so your exact approved value is stored without alteration.`
+      };
+    }
+
+    const storedCheck = inspectStoredReferenceListRawValue(baselineObs.rawValue);
+    if (!storedCheck.valid) {
+      return {
+        valid: false,
+        code: "invalid_stored_reference_list",
+        reason: `Existing stored reference list on "${contract.destinationKey}" could not be parsed safely: ${storedCheck.error}`
+      };
+    }
+
+    for (const existingGid of storedCheck.gids) {
+      if (!seenGids.has(existingGid)) {
+        return {
+          valid: false,
+          code: "existing_reference_assignment_dropped",
+          reason: `Proposal for "${contract.destinationKey}" is missing existing assigned Metaobject ${existingGid}. Existing reference assignments are preserved and never silently removed.`
+        };
+      }
+    }
+
+    const isUnchangedRefList =
+      baselineObs.presence === "present" &&
+      storedCheck.gids.length === parsedArray.length &&
+      storedCheck.gids.every((g, idx) => g === parsedArray[idx]) &&
+      typeof baselineObs.rawValue === "string" &&
+      baselineObs.rawValue === exactValue;
+
+    if (isUnchangedRefList) {
+      return {
+        valid: true,
+        code: "unchanged_from_baseline",
+        normalizedValue: exactValue,
+        isUnchangedFromStored: true,
+        verifiedActualType,
+        observedShopifyType: typeAndCompleteness.observedShopifyType,
+        typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
+        baselineObservation: baselineObs,
+        reason: "Proposed value is identical to the current stored baseline."
+      };
+    }
+
+    const refEvidence = inspectVerifiedReferenceEvidenceForDestination(
+      baselineSnapshot,
+      contract.destinationKey,
+      baselineObs.restrictedMetaobjectDefinitionId
+    );
+
+    if (!refEvidence.evidenceLoaded || !refEvidence.isComplete) {
+      return {
+        valid: false,
+        code: "reference_entries_not_verified",
+        reason:
+          refEvidence.error ||
+          `Verified Metaobject entries for "${contract.destinationKey}" have not been loaded. Click "Load Reference Choices" in Drawer 10 before approving.`
+      };
+    }
+
+    for (const proposedGid of parsedArray) {
+      const verifiedEntry = refEvidence.entriesByGid.get(proposedGid);
+      if (!verifiedEntry) {
+        return {
+          valid: false,
+          code: "unverified_metaobject_entry_membership",
+          reason: `Metaobject "${proposedGid}" is not a verified entry of required definition "${baselineObs.restrictedMetaobjectDefinitionId}" for "${contract.destinationKey}".`
+        };
+      }
+      if (verifiedEntry.definitionId !== baselineObs.restrictedMetaobjectDefinitionId) {
+        return {
+          valid: false,
+          code: "metaobject_definition_mismatch",
+          reason: `Metaobject "${proposedGid}" belongs to definition "${verifiedEntry.definitionId}", but "${contract.destinationKey}" requires "${baselineObs.restrictedMetaobjectDefinitionId}".`
+        };
+      }
+    }
+
+    return {
+      valid: true,
+      code: "valid_change",
+      normalizedValue: exactValue,
+      isUnchangedFromStored: false,
+      verifiedActualType,
+      observedShopifyType: typeAndCompleteness.observedShopifyType,
+      typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
+      baselineObservation: baselineObs,
+      reason: "Valid Batch 1 standardized reference proposed change."
+    };
+  } else if (verifiedActualType === "boolean") {
     if (exactValue !== "true" && exactValue !== "false") {
       return {
         valid: false,
@@ -2424,11 +3070,31 @@ export function createExactValueApprovalRecord({
     };
   }
 
+  const isShopifyReference = contract.namespace === "shopify";
+  if (
+    isShopifyReference &&
+    !isExactMetaobjectDefinitionGid(obs.restrictedMetaobjectDefinitionId)
+  ) {
+    return {
+      ok: false,
+      error: `Cannot approve "${destinationKey}": restricted MetaobjectDefinition GID is not verified.`,
+      code: "missing_restricted_metaobject_definition",
+      record: null
+    };
+  }
+
   const record = Object.freeze({
     kind: "exact_value_approval",
     productId,
     owner: contract.owner,
     variantId: isVariantOwner ? obs.variantId : null,
+    restrictedMetaobjectDefinitionId: isShopifyReference
+      ? obs.restrictedMetaobjectDefinitionId
+      : null,
+    productCategoryId: isShopifyReference ? (obs.productCategoryId || null) : null,
+    categoryEligibilityStatus: isShopifyReference
+      ? (obs.categoryEligibility?.status || null)
+      : null,
     destinationKey: obs.destinationKey,
     approvedValue: validation.normalizedValue,
     verifiedType: validation.verifiedActualType,
@@ -2483,6 +3149,25 @@ export function isExactValueApprovalValid({
       return false;
     }
     if (approvalRecord.variantId !== undefined && approvalRecord.variantId !== null) {
+      return false;
+    }
+  }
+
+  if (contract.namespace === "shopify") {
+    const obs = validation.baselineObservation;
+    if (
+      !isExactMetaobjectDefinitionGid(approvalRecord.restrictedMetaobjectDefinitionId) ||
+      approvalRecord.restrictedMetaobjectDefinitionId !== obs.restrictedMetaobjectDefinitionId
+    ) {
+      return false;
+    }
+    if ((approvalRecord.productCategoryId || null) !== (obs.productCategoryId || null)) {
+      return false;
+    }
+    if (
+      (approvalRecord.categoryEligibilityStatus || null) !==
+      (obs.categoryEligibility?.status || null)
+    ) {
       return false;
     }
   }
@@ -2621,7 +3306,19 @@ export function evaluateBenchV2FieldRow({
     : null;
 
   const observedType = baselineObs.liveDefType || baselineObs.storedType || null;
-  const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay);
+  const isShopifyReference = contract.namespace === "shopify";
+  const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay || isShopifyReference);
+
+  const refEvidence = isShopifyReference
+    ? inspectVerifiedReferenceEvidenceForDestination(
+        baselineSnapshot,
+        contract.destinationKey,
+        baselineObs.restrictedMetaobjectDefinitionId
+      )
+    : null;
+
+  const verifiedEntriesMap =
+    refEvidence && refEvidence.isComplete ? refEvidence.entriesByGid : null;
 
   const hasProposalKey = Boolean(
     proposedMapForProduct &&
@@ -2709,8 +3406,15 @@ export function evaluateBenchV2FieldRow({
         typeAndCompleteness?.code === "variant_definitions_read_not_complete"
       ) {
         connectionStatus = `Blocked (Definitions Read Incomplete: ${baselineObs.defsCompleteState})`;
-      } else if (typeAndCompleteness?.code === "destination_definition_error") {
-        connectionStatus = "Blocked (Definition / Constraint Error)";
+      } else if (
+        typeAndCompleteness?.code === "destination_definition_error" ||
+        typeAndCompleteness?.code === "category_eligibility_incomplete" ||
+        typeAndCompleteness?.code === "product_category_read_not_complete" ||
+        typeAndCompleteness?.code === "missing_restricted_metaobject_definition"
+      ) {
+        connectionStatus = isShopifyReference
+          ? `Blocked (${baselineObs.categoryEligibility?.status === "category_ineligible" ? "Category Constraint Ineligible" : "Definition / Category Constraint Error"})`
+          : "Blocked (Definition / Constraint Error)";
       } else if (typeAndCompleteness?.code === "missing_type_evidence") {
         connectionStatus = "Blocked (Missing Live Definition / Stored Type Evidence)";
       } else if (
@@ -2720,6 +3424,12 @@ export function evaluateBenchV2FieldRow({
         connectionStatus = "Blocked (Type Conflict)";
       } else {
         connectionStatus = "Blocked (Eligibility Check Failed)";
+      }
+    } else if (isShopifyReference) {
+      if (refEvidence && refEvidence.isComplete) {
+        connectionStatus = `Connected (Standardized Reference Writable — Verified Def: ${baselineObs.restrictedMetaobjectDefinitionId}; ${refEvidence.entriesByGid.size} Verified Choice${refEvidence.entriesByGid.size === 1 ? "" : "s"})`;
+      } else {
+        connectionStatus = `Connected (Standardized Reference Eligible — Load Reference Choices to Verify ${baselineObs.restrictedMetaobjectDefinitionId} Entries)`;
       }
     } else if (typeAndCompleteness.typeEvidenceSource === "reviewed_exact_contract") {
       connectionStatus = `Connected (Batch 1 Writable — Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
@@ -2776,9 +3486,11 @@ export function evaluateBenchV2FieldRow({
     statusReason =
       contract.owner === "PRODUCTVARIANT" && baselineObs.variantId
         ? `Approved exact value (${validation.verifiedActualType}) bound to variant ${baselineObs.variantId}.`
-        : validation.typeEvidenceSource === "reviewed_exact_contract"
-          ? `Approved exact value (${validation.verifiedActualType} via reviewed exact contract).`
-          : `Approved exact value (${validation.verifiedActualType}).`;
+        : isShopifyReference
+          ? `Approved exact Metaobject GID list (${validation.verifiedActualType}) bound to definition ${baselineObs.restrictedMetaobjectDefinitionId}.`
+          : validation.typeEvidenceSource === "reviewed_exact_contract"
+            ? `Approved exact value (${validation.verifiedActualType} via reviewed exact contract).`
+            : `Approved exact value (${validation.verifiedActualType}).`;
   } else if (hasNonEmptyProposal) {
     if (!validation.valid) {
       reviewStatus = "Blocked Proposal";
@@ -2795,22 +3507,37 @@ export function evaluateBenchV2FieldRow({
     statusReason = "Blank input cannot be approved or written; clear draft edit or enter a valid value.";
   } else if (contract.isWritableInBatch1 && typeAndCompleteness && !typeAndCompleteness.ready) {
     statusReason = typeAndCompleteness.reason;
+  } else if (isShopifyReference && typeAndCompleteness?.ready && (!refEvidence || !refEvidence.isComplete)) {
+    statusReason =
+      refEvidence?.error ||
+      `Click "Load Reference Choices" in Drawer 10 to verify allowed Metaobject entries for ${baselineObs.restrictedMetaobjectDefinitionId}.`;
   }
 
   const baselineDisplayValue = usesMeaningDisplay
-    ? formatBenchV2ValueDisplay(contract.destinationKey, baselineObs.rawValue, observedType)
+    ? formatBenchV2ValueDisplay(
+        contract.destinationKey,
+        baselineObs.rawValue,
+        observedType,
+        verifiedEntriesMap
+      )
     : (baselineObs.rawValue ?? "");
 
   const proposedDisplayValue = usesMeaningDisplay && hasNonEmptyProposal
-    ? formatBenchV2ValueDisplay(contract.destinationKey, proposedValue, observedType)
+    ? formatBenchV2ValueDisplay(
+        contract.destinationKey,
+        proposedValue,
+        observedType,
+        verifiedEntriesMap
+      )
     : proposedValue;
 
   return Object.freeze({
     contract,
     baselineObservation: baselineObs,
     typeAndCompleteness,
+    referenceEvidence: refEvidence,
     baselineDisplayValue,
-    options: getContractOptionsForObservation(contract, baselineObs),
+    options: getContractOptionsForObservation(contract, baselineObs, baselineSnapshot),
     hasProposalKey,
     proposedValue,
     proposedDisplayValue,
