@@ -477,6 +477,7 @@ function getShortPlainNotice(row) {
   const {
     contract,
     baselineObservation: obs,
+    typeAndCompleteness,
     hasProposalKey,
     validation,
     fidelityCheck
@@ -526,43 +527,59 @@ function getShortPlainNotice(row) {
     };
   }
 
-  if (obs.metafieldsCompleteState !== "complete" || obs.defsCompleteState !== "complete") {
-    return {
-      tone: "error",
-      text: "Read incomplete — reload before saving."
-    };
-  }
+  const resolvedTypeCheck =
+    typeAndCompleteness ||
+    evaluateDestinationTypeAndCompleteness({
+      contract,
+      baselineObs: obs
+    });
 
-  if (obs.destinationDefError) {
+  if (!resolvedTypeCheck.ready) {
+    if (
+      resolvedTypeCheck.code === "metafields_read_not_complete" ||
+      resolvedTypeCheck.code === "variant_metafields_read_not_complete" ||
+      resolvedTypeCheck.code === "definitions_read_not_complete" ||
+      resolvedTypeCheck.code === "variant_definitions_read_not_complete"
+    ) {
+      return {
+        tone: "error",
+        text: "Read incomplete — reload before saving."
+      };
+    }
+    if (resolvedTypeCheck.code === "destination_definition_error") {
+      return {
+        tone: "error",
+        text: "Definition or category error — see Details."
+      };
+    }
+    if (resolvedTypeCheck.code === "missing_type_evidence") {
+      return {
+        tone: "error",
+        text: "Missing Shopify type evidence — cannot save yet."
+      };
+    }
+    if (resolvedTypeCheck.code === "live_vs_stored_type_conflict") {
+      return {
+        tone: "error",
+        text: "Shopify type conflict — see Details."
+      };
+    }
+    if (resolvedTypeCheck.code === "contract_type_mismatch") {
+      const observedType = obs.liveDefType || obs.storedType;
+      const allowedTypes =
+        Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
+          ? contract.allowedTypes
+          : [contract.expectedType];
+      return {
+        tone: "error",
+        text: observedType
+          ? `Shopify type mismatch (observed ${observedType}, expected ${allowedTypes.join(" or ")}) — see Details.`
+          : "Shopify type mismatch — see Details."
+      };
+    }
     return {
       tone: "error",
-      text: "Definition or category error — see Details."
-    };
-  }
-
-  if (!obs.liveDefType && !obs.storedType) {
-    return {
-      tone: "error",
-      text: "Missing Shopify type evidence — cannot save yet."
-    };
-  }
-
-  if (obs.liveDefType && obs.storedType && obs.liveDefType !== obs.storedType) {
-    return {
-      tone: "error",
-      text: "Shopify type conflict — see Details."
-    };
-  }
-
-  const verifiedActualType = obs.liveDefType || obs.storedType;
-  const allowedTypes =
-    Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
-      ? contract.allowedTypes
-      : [contract.expectedType];
-  if (verifiedActualType && !allowedTypes.includes(verifiedActualType)) {
-    return {
-      tone: "error",
-      text: `Shopify type mismatch (observed ${verifiedActualType}, expected ${allowedTypes.join(" or ")}) — see Details.`
+      text: resolvedTypeCheck.reason || "Field not ready to save — see Details."
     };
   }
 
@@ -737,25 +754,12 @@ function getDrawerConnectionSubtitle(drawer) {
   }
   if (drawer.drawerId === "geology") {
     const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
-    const readyCount = writableRows.filter(
-      (r) =>
-        r.baselineObservation.evidenceAvailable &&
-        r.baselineObservation.metafieldsCompleteState === "complete" &&
-        r.baselineObservation.defsCompleteState === "complete" &&
-        Boolean(r.baselineObservation.liveDefType || r.baselineObservation.storedType)
-    ).length;
+    const readyCount = writableRows.filter((r) => r.typeAndCompleteness?.ready === true).length;
     return `Detailed custom.* geology paths connected (${readyCount}/${writableRows.length} ready on product; 12 had scan-delivery evidence on Canyon, only AGE custom.geological_age has independently verified Save/readback; legacy custom.geological_era is read-only; authoritative ERA dropdown shopify.geological-era + 4 standardized geology reference companions in Drawer 10 remain locked)`;
   }
   if (drawer.drawerId === "other_channel") {
     const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
-    const readyCount = writableRows.filter(
-      (r) =>
-        r.baselineObservation.evidenceAvailable &&
-        r.baselineObservation.metafieldsCompleteState === "complete" &&
-        r.baselineObservation.defsCompleteState === "complete" &&
-        Boolean(r.baselineObservation.liveDefType || r.baselineObservation.storedType) &&
-        !r.baselineObservation.destinationDefError
-    ).length;
+    const readyCount = writableRows.filter((r) => r.typeAndCompleteness?.ready === true).length;
     return `4 channel destinations wired (${readyCount}/${writableRows.length} ready on current product: PRODUCT custom.google_product_category + manual/preset single-variant PRODUCTVARIANT mm-google-shopping.age_group, condition, gender; mm-google-shopping.custom_product held; legacy google.* variant slots & custom.target_gender read-only)`;
   }
   if (drawer.drawerId === "standardized_attributes") {
@@ -1530,6 +1534,8 @@ export default function BenchV2Route() {
       }
     }
 
+    // Only populate observedDestinationTypes with genuinely observed Shopify types
+    // (liveDefType || storedType), never claiming a reviewed_exact_contract type was observed.
     const observedDestinationTypes = {};
     for (const destKey of BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS) {
       const obs = buildBaselineObservation(currentBaseline, destKey);
@@ -1538,12 +1544,21 @@ export default function BenchV2Route() {
         contract,
         baselineObs: obs
       });
-      if (typeCheck.ready && typeCheck.verifiedActualType) {
-        observedDestinationTypes[destKey] = typeCheck.verifiedActualType;
+      if (typeCheck.ready && typeCheck.observedShopifyType) {
+        observedDestinationTypes[destKey] = typeCheck.observedShopifyType;
       }
     }
 
-    const ooak1ObservedType = observedDestinationTypes["custom.is_one_of_a_kind"] || "";
+    const ooak1Obs = buildBaselineObservation(currentBaseline, "custom.is_one_of_a_kind");
+    const ooak1TypeCheck = evaluateDestinationTypeAndCompleteness({
+      contract: getFieldContractByDestination("custom.is_one_of_a_kind"),
+      baselineObs: ooak1Obs
+    });
+    const ooak1ObservedType =
+      observedDestinationTypes["custom.is_one_of_a_kind"] ||
+      (ooak1TypeCheck.ready && ooak1TypeCheck.observedShopifyType === "single_line_text_field"
+        ? ooak1TypeCheck.observedShopifyType
+        : "");
     const ooak2ObservedType = observedDestinationTypes["custom.is_ooak"] || "";
 
     const requestId = `bench_v2_aiscan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -2757,6 +2772,7 @@ export default function BenchV2Route() {
         const {
           contract,
           baselineObservation: obs,
+          typeAndCompleteness,
           baselineDisplayValue,
           hasProposalKey,
           proposedValue,
@@ -2808,11 +2824,7 @@ export default function BenchV2Route() {
             obs.metafieldsCompleteState !== "complete" ||
             obs.defsCompleteState !== "complete" ||
             Boolean(obs.destinationDefError) ||
-            (contract.isWritableInBatch1 &&
-              ((!obs.liveDefType && !obs.storedType) ||
-                (obs.liveDefType &&
-                  obs.storedType &&
-                  obs.liveDefType !== obs.storedType)))
+            (contract.isWritableInBatch1 && typeAndCompleteness?.ready !== true)
         );
 
         const hasContractOrOwnerHold = Boolean(!contract.isWritableInBatch1);
@@ -3017,6 +3029,15 @@ export default function BenchV2Route() {
           (contract.allowedTypes.length > 1 ||
             contract.allowedTypes[0] !== contract.expectedType)
             ? { allowedTypes: contract.allowedTypes }
+            : {}),
+          ...(contract.reviewedExactContractType
+            ? { reviewedExactContractType: contract.reviewedExactContractType }
+            : {}),
+          ...(typeAndCompleteness?.typeEvidenceSource
+            ? { typeEvidenceSource: typeAndCompleteness.typeEvidenceSource }
+            : {}),
+          ...(typeAndCompleteness?.verifiedActualType
+            ? { verifiedActualType: typeAndCompleteness.verifiedActualType }
             : {}),
           ...(contract.maxLength !== null ? { maxLength: contract.maxLength } : {}),
           ...(contract.canonicalTarget
@@ -4239,7 +4260,8 @@ export default function BenchV2Route() {
             }}
           >
             Connected fields in Drawers 1 to 8 unlock for manual edit and exact-value approval
-            only when live Shopify owner/type/completeness evidence is verified. In Drawer 5
+            only when live Shopify owner/type/completeness evidence or an explicit reviewed exact
+            PRODUCT text contract is verified. In Drawer 5
             (Manual Measurements), <strong>Dimensions (mm)</strong> and{" "}
             <strong>Weight (grams)</strong> are manual-only, while 4 unverified measurement
             keepers stay on hold. In Drawer 7 (Geology), 12 detailed <code>custom.*</code>{" "}
@@ -4812,6 +4834,7 @@ export default function BenchV2Route() {
                           const {
                             contract,
                             baselineObservation: obs,
+                            typeAndCompleteness,
                             options,
                             hasProposalKey,
                             proposedValue,
@@ -5413,6 +5436,16 @@ export default function BenchV2Route() {
                                     <strong>Observed Types:</strong> Live Definition={" "}
                                     <code>{obs.liveDefType || "none"}</code> | Stored={" "}
                                     <code>{obs.storedType || "none"}</code>
+                                    {typeAndCompleteness?.typeEvidenceSource && (
+                                      <>
+                                        {" "}
+                                        | <strong>Type Evidence Source:</strong>{" "}
+                                        <code>{typeAndCompleteness.typeEvidenceSource}</code>
+                                        {typeAndCompleteness.verifiedActualType
+                                          ? ` (Resolved Write Type: ${typeAndCompleteness.verifiedActualType})`
+                                          : ""}
+                                      </>
+                                    )}
                                   </div>
                                   <div>
                                     <strong>Completeness:</strong> Metafields={" "}

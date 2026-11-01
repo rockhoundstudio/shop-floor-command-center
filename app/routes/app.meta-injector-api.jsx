@@ -9,6 +9,9 @@ import {
   BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
   BENCH_V2_OPT_IN_UNHELD_BARE_KEYS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS as BENCH_V2_OPT_IN_VARIANT_DESTINATIONS,
+  BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
+  REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
+  getFieldContractByDestination,
   isExactProductGid,
   isExactProductVariantGid
 } from "../utils/bench-v2.contract.jsx";
@@ -79,28 +82,6 @@ const RETIRED_KEYS = [
   "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
   "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
 ];
-
-// Narrow, explicit reviewed destination type contracts (never generic fallbacks or inferred mappings)
-const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
-  "custom.rock_composition": "single_line_text_field",
-  "custom.crystal_system": "single_line_text_field",
-  "custom.mineral_class": "single_line_text_field",
-  "custom.rock_formation": "single_line_text_field",
-  "custom.geological_era": "single_line_text_field",
-  "custom.is_one_of_a_kind": "single_line_text_field",
-  "custom.collection_date": "single_line_text_field",
-  "custom.cut_type": "single_line_text_field",
-  "custom.secondary_colors": "single_line_text_field",
-  "custom.tenacity": "single_line_text_field",
-  "custom.color_pattern": "single_line_text_field",
-  "custom.wire_material": "single_line_text_field",
-  "custom.jewelry_type": "single_line_text_field",
-  "custom.seo_title": "single_line_text_field",
-  "custom.chain_material": "single_line_text_field",
-  "custom.chain_link_type": "single_line_text_field",
-  "custom.jewelry_finding_type": "single_line_text_field",
-  "custom.google_product_category": "single_line_text_field"
-});
 
 const ALL_STANDARDIZED_META_KEYS = Array.from(
   new Set(
@@ -549,7 +530,7 @@ export const action = async ({ request }) => {
               metafields(first: 250) { edges { node { namespace key value } } }
               variants(first: 250) {
                 pageInfo { hasNextPage endCursor }
-                edges { node { id title price inventoryItem { measurement { weight { value unit } } } }
+                edges { node { id title price inventoryItem { measurement { weight { value unit } } } } }
               }
               media(first: 250) {
                 pageInfo { hasNextPage endCursor }
@@ -1555,6 +1536,7 @@ export const action = async ({ request }) => {
       const defReadResult = await fetchProductMetafieldDefinitionsWithConstraints(admin);
       const defs = defReadResult.defs;
       const defsReadComplete = defReadResult.defsReadComplete;
+      const defConstraintErrorsByDestination = defReadResult.constraintErrorsByDestination || {};
 
       const hasBenchV2VariantEntryInPlan = Boolean(
         isBenchV2OptIn &&
@@ -2136,12 +2118,44 @@ export const action = async ({ request }) => {
 
         const def = defs[fullKey] || defs[canonicalDestinationKey];
         const storedType = currentMetafieldsTypes[fullKey] || currentMetafieldsTypes[canonicalDestinationKey];
+        const destinationDefErr =
+          defConstraintErrorsByDestination[fullKey] ||
+          defConstraintErrorsByDestination[canonicalDestinationKey] ||
+          def?.constraints?.error ||
+          def?.error ||
+          null;
+
+        if (isBenchV2OptIn && destinationDefErr) {
+            blockedFields[fullKey] = `Definition or constraint error on ${canonicalDestinationKey}: ${destinationDefErr}`;
+            continue;
+        }
+
         const reviewedContractType = Object.prototype.hasOwnProperty.call(
           REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
           canonicalDestinationKey
         )
           ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[canonicalDestinationKey]
           : null;
+
+        const benchV2Contract = isBenchV2OptIn
+          ? getFieldContractByDestination(canonicalDestinationKey)
+          : null;
+        const benchV2ReviewedContractType =
+          isBenchV2OptIn &&
+          productLookupComplete &&
+          hasMetafieldsBaseline &&
+          defsReadComplete &&
+          !destinationDefErr &&
+          ns === "custom" &&
+          canonicalDestinationKey !== "custom.is_ooak" &&
+          BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(canonicalDestinationKey) &&
+          benchV2Contract?.isWritableInBatch1 === true &&
+          benchV2Contract?.owner === "PRODUCT" &&
+          benchV2Contract?.namespace === "custom" &&
+          benchV2Contract?.reviewedExactContractType === "single_line_text_field" &&
+          reviewedContractType === "single_line_text_field"
+            ? benchV2Contract.reviewedExactContractType
+            : null;
 
         if (def && storedType && def.type !== storedType) {
             blockedFields[fullKey] = `Type conflict: Definition is ${def.type} but stored is ${storedType}`;
@@ -2158,9 +2172,11 @@ export const action = async ({ request }) => {
             }
         }
 
-        let resolvedType = def?.type
-          ? def.type
-          : (storedType || (!isBenchV2OptIn ? reviewedContractType : null) || null);
+        const observedShopifyType = def?.type || storedType || null;
+        const intendedContractWriteType = !observedShopifyType
+          ? (isBenchV2OptIn ? benchV2ReviewedContractType : reviewedContractType)
+          : null;
+        const resolvedType = observedShopifyType || intendedContractWriteType || null;
 
         if (!resolvedType) {
             blockedFields[fullKey] = "No exact live definition or stored type available; fallback mappings are strictly forbidden.";
@@ -2201,6 +2217,18 @@ export const action = async ({ request }) => {
         ) {
             if (isPlainTextProposalRejectedForContract(val, resolvedValue)) {
                 blockedFields[fullKey] = `Rejected non-text or reference-shaped proposal for plain-text destination ${canonicalDestinationKey}.`;
+                continue;
+            }
+        }
+
+        if (isBenchV2OptIn && resolvedType === "single_line_text_field" && def) {
+            const liveTextValidation = validateAgainstLiveTextDefinitionValidations(
+                def,
+                resolvedValue,
+                canonicalDestinationKey
+            );
+            if (!liveTextValidation.valid) {
+                blockedFields[fullKey] = liveTextValidation.reason;
                 continue;
             }
         }
@@ -3044,8 +3072,25 @@ export const action = async ({ request }) => {
              return;
          }
          const actual = newMetafields[dotKey];
+         const actualProdType = newMetafieldTypes[dotKey] || null;
          let expStr = String(m.value).trim();
          let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
+
+         if (isBenchV2OptIn && actualProdType !== m.type) {
+             readBackVerified = false;
+             unresolvedChanges[dotKey] = {
+                 owner: "PRODUCT",
+                 reason: `Read-back type mismatch (expected ${m.type}, got ${actualProdType || "none"})`,
+                 expected: expStr,
+                 actual: actStr || "Missing"
+             };
+             conflicts[dotKey] = {
+                 owner: "PRODUCT",
+                 expected: expStr,
+                 actual: actStr || "Missing"
+             };
+             return;
+         }
 
          if (m.type === "number_decimal") {
              if (parseFloat(expStr) !== parseFloat(actStr)) {

@@ -107,6 +107,29 @@ export const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
   ])
 );
 
+// Single shared declaration of reviewed exact destination type contracts
+// (owned here and reusable by app/routes/app.meta-injector-api.jsx so no parallel allowlist is maintained).
+export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
+  "custom.rock_composition": "single_line_text_field",
+  "custom.crystal_system": "single_line_text_field",
+  "custom.mineral_class": "single_line_text_field",
+  "custom.rock_formation": "single_line_text_field",
+  "custom.geological_era": "single_line_text_field",
+  "custom.is_one_of_a_kind": "single_line_text_field",
+  "custom.collection_date": "single_line_text_field",
+  "custom.cut_type": "single_line_text_field",
+  "custom.secondary_colors": "single_line_text_field",
+  "custom.tenacity": "single_line_text_field",
+  "custom.color_pattern": "single_line_text_field",
+  "custom.wire_material": "single_line_text_field",
+  "custom.jewelry_type": "single_line_text_field",
+  "custom.seo_title": "single_line_text_field",
+  "custom.chain_material": "single_line_text_field",
+  "custom.chain_link_type": "single_line_text_field",
+  "custom.jewelry_finding_type": "single_line_text_field",
+  "custom.google_product_category": "single_line_text_field"
+});
+
 // Exact 54 bare provenance keys used by Bench V2 AI Scan (excluding cancelled
 // overall_solid_length_in and legacy geological_era).
 export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
@@ -424,6 +447,24 @@ function defineFieldContract(spec) {
     ? Object.freeze([...spec.allowedTypes])
     : Object.freeze([spec.expectedType]);
 
+  const rawReviewedContractType = Object.prototype.hasOwnProperty.call(
+    REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
+    spec.destinationKey
+  )
+    ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[spec.destinationKey]
+    : null;
+
+  const reviewedExactContractType =
+    Boolean(isBatch1Writable) &&
+    spec.owner === "PRODUCT" &&
+    spec.namespace === "custom" &&
+    spec.destinationKey !== "custom.is_ooak" &&
+    allowedTypes.length === 1 &&
+    allowedTypes[0] === "single_line_text_field" &&
+    rawReviewedContractType === "single_line_text_field"
+      ? rawReviewedContractType
+      : null;
+
   return Object.freeze({
     destinationKey: spec.destinationKey,
     namespace: spec.namespace,
@@ -441,6 +482,7 @@ function defineFieldContract(spec) {
     autoPreApproveAllowed: false,
     expectedType: spec.expectedType,
     allowedTypes,
+    reviewedExactContractType,
     requiresLiveDefinitionOrStoredTypeEvidence: spec.requiresLiveDefinitionOrStoredTypeEvidence !== false,
     maxLength: typeof spec.maxLength === "number" ? spec.maxLength : null,
     control: spec.control || "text",
@@ -1957,6 +1999,8 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: "missing_contract_or_observation",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: "Missing field contract or baseline observation."
     };
   }
@@ -1970,6 +2014,8 @@ export function evaluateDestinationTypeAndCompleteness({
           ready: false,
           code: "multiple_variants_hold",
           verifiedActualType: null,
+          observedShopifyType: null,
+          typeEvidenceSource: null,
           reason: `Product has multiple variants; "${contract.destinationKey}" is held read-only to prevent ambiguous variant targeting.`
         };
       }
@@ -1978,6 +2024,8 @@ export function evaluateDestinationTypeAndCompleteness({
           ready: false,
           code: "zero_variants_hold",
           verifiedActualType: null,
+          observedShopifyType: null,
+          typeEvidenceSource: null,
           reason: `Product has zero variants; "${contract.destinationKey}" cannot target a ProductVariant.`
         };
       }
@@ -1986,6 +2034,8 @@ export function evaluateDestinationTypeAndCompleteness({
           ready: false,
           code: "invalid_variant_gid",
           verifiedActualType: null,
+          observedShopifyType: null,
+          typeEvidenceSource: null,
           reason: `Exact Shopify ProductVariant GID is required before authorizing writes on "${contract.destinationKey}".`
         };
       }
@@ -1994,6 +2044,8 @@ export function evaluateDestinationTypeAndCompleteness({
           ready: false,
           code: "incomplete_variant_metafield_read",
           verifiedActualType: null,
+          observedShopifyType: null,
+          typeEvidenceSource: null,
           reason: `Variant metafield or variant enumeration completeness is "${baselineObs.metafieldsCompleteState}" for "${contract.destinationKey}"; cannot infer absence or authorize writes until variantMetafieldsReadComplete === true.`
         };
       }
@@ -2001,6 +2053,8 @@ export function evaluateDestinationTypeAndCompleteness({
         ready: false,
         code: "missing_variant_baseline_evidence",
         verifiedActualType: null,
+        observedShopifyType: null,
+        typeEvidenceSource: null,
         reason: `Loaded single-variant baseline evidence is required for "${contract.destinationKey}" (current state: ${baselineObs.presence}).`
       };
     }
@@ -2010,6 +2064,8 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: isUnknownRead ? "incomplete_metafield_read" : "missing_baseline_evidence",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: isUnknownRead
         ? `Metafield read completeness is "${baselineObs.metafieldsCompleteState}" for "${contract.destinationKey}"; cannot infer absence or authorize writes until metafieldsReadComplete === true.`
         : `Loaded baseline evidence is required for "${contract.destinationKey}" (current state: ${baselineObs.presence}).`
@@ -2025,6 +2081,8 @@ export function evaluateDestinationTypeAndCompleteness({
         ready: false,
         code: "unverified_single_variant_target",
         verifiedActualType: null,
+        observedShopifyType: null,
+        typeEvidenceSource: null,
         reason: `Single-variant target GID is not verified for "${contract.destinationKey}" (status: ${baselineObs.variantTargetStatus || "unknown"}).`
       };
     }
@@ -2035,6 +2093,8 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: isVariantOwner ? "variant_metafields_read_not_complete" : "metafields_read_not_complete",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: isVariantOwner
         ? `Variant metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires variantMetafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
         : `Product metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires metafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
@@ -2046,6 +2106,8 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: "destination_definition_error",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: `Definition/constraint error on "${contract.destinationKey}": ${baselineObs.destinationDefError}`
     };
   }
@@ -2055,6 +2117,8 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: isVariantOwner ? "variant_definitions_read_not_complete" : "definitions_read_not_complete",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: isVariantOwner
         ? `Live PRODUCTVARIANT metafield definition read is "${baselineObs.defsCompleteState}" (requires variantDefsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
         : `Live PRODUCT metafield definition read is "${baselineObs.defsCompleteState}" (requires defsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
@@ -2063,12 +2127,47 @@ export function evaluateDestinationTypeAndCompleteness({
 
   const liveDefType = baselineObs.liveDefType;
   const storedType = baselineObs.storedType;
+  const reviewedExactContractType =
+    !isVariantOwner &&
+    contract.owner === "PRODUCT" &&
+    contract.namespace === "custom" &&
+    contract.isWritableInBatch1 === true &&
+    contract.destinationKey !== "custom.is_ooak"
+      ? contract.reviewedExactContractType || null
+      : null;
 
   if (!liveDefType && !storedType) {
+    if (reviewedExactContractType) {
+      const allowedTypesForContract =
+        Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
+          ? contract.allowedTypes
+          : [contract.expectedType];
+      if (!allowedTypesForContract.includes(reviewedExactContractType)) {
+        return {
+          ready: false,
+          code: "contract_type_mismatch",
+          verifiedActualType: null,
+          observedShopifyType: null,
+          typeEvidenceSource: null,
+          reason: `Type mismatch on "${contract.destinationKey}": contract allows [${allowedTypesForContract.join(", ")}], but reviewed contract specifies "${reviewedExactContractType}".`
+        };
+      }
+      return {
+        ready: true,
+        code: "type_and_completeness_verified",
+        verifiedActualType: reviewedExactContractType,
+        observedShopifyType: null,
+        typeEvidenceSource: "reviewed_exact_contract",
+        reason: null
+      };
+    }
+
     return {
       ready: false,
       code: "missing_type_evidence",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: `Neither live ${contract.owner} metafield definition nor stored metafield type is present for "${contract.destinationKey}". Guessing a type or creating a definition is forbidden.`
     };
   }
@@ -2078,28 +2177,53 @@ export function evaluateDestinationTypeAndCompleteness({
       ready: false,
       code: "live_vs_stored_type_conflict",
       verifiedActualType: null,
+      observedShopifyType: null,
+      typeEvidenceSource: null,
       reason: `Type conflict on "${contract.destinationKey}": live definition is "${liveDefType}" but stored metafield is "${storedType}".`
     };
   }
 
-  const verifiedActualType = liveDefType || storedType;
-  const allowedTypes = Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
-    ? contract.allowedTypes
-    : [contract.expectedType];
+  const observedShopifyType = liveDefType || storedType;
 
-  if (!allowedTypes.includes(verifiedActualType)) {
+  if (reviewedExactContractType && observedShopifyType !== reviewedExactContractType) {
     return {
       ready: false,
       code: "contract_type_mismatch",
       verifiedActualType: null,
-      reason: `Type mismatch on "${contract.destinationKey}": contract allows [${allowedTypes.join(", ")}], but Shopify reports "${verifiedActualType}".`
+      observedShopifyType,
+      typeEvidenceSource: null,
+      reason: `Type conflict on "${contract.destinationKey}": observed Shopify type is "${observedShopifyType}", which conflicts with reviewed destination contract "${reviewedExactContractType}".`
     };
   }
+
+  const allowedTypes = Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
+    ? contract.allowedTypes
+    : [contract.expectedType];
+
+  if (!allowedTypes.includes(observedShopifyType)) {
+    return {
+      ready: false,
+      code: "contract_type_mismatch",
+      verifiedActualType: null,
+      observedShopifyType,
+      typeEvidenceSource: null,
+      reason: `Type mismatch on "${contract.destinationKey}": contract allows [${allowedTypes.join(", ")}], but Shopify reports "${observedShopifyType}".`
+    };
+  }
+
+  const typeEvidenceSource =
+    liveDefType && storedType
+      ? "live_definition_and_stored"
+      : liveDefType
+        ? "live_definition"
+        : "stored_metafield";
 
   return {
     ready: true,
     code: "type_and_completeness_verified",
-    verifiedActualType,
+    verifiedActualType: observedShopifyType,
+    observedShopifyType,
+    typeEvidenceSource,
     reason: null
   };
 }
@@ -2248,6 +2372,8 @@ export function validateBatch1ProposedValue({
     normalizedValue: exactValue,
     isUnchangedFromStored,
     verifiedActualType,
+    observedShopifyType: typeAndCompleteness.observedShopifyType,
+    typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
     baselineObservation: baselineObs,
     reason: isUnchangedFromStored
       ? "Proposed value is identical to the current stored baseline."
@@ -2306,6 +2432,7 @@ export function createExactValueApprovalRecord({
     destinationKey: obs.destinationKey,
     approvedValue: validation.normalizedValue,
     verifiedType: validation.verifiedActualType,
+    typeEvidenceSource: validation.typeEvidenceSource || null,
     baselineSignature: obs.signature,
     approvedAt: new Date().toISOString()
   });
@@ -2594,6 +2721,8 @@ export function evaluateBenchV2FieldRow({
       } else {
         connectionStatus = "Blocked (Eligibility Check Failed)";
       }
+    } else if (typeAndCompleteness.typeEvidenceSource === "reviewed_exact_contract") {
+      connectionStatus = `Connected (Batch 1 Writable — Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
     } else {
       connectionStatus =
         contract.owner === "PRODUCTVARIANT"
@@ -2647,7 +2776,9 @@ export function evaluateBenchV2FieldRow({
     statusReason =
       contract.owner === "PRODUCTVARIANT" && baselineObs.variantId
         ? `Approved exact value (${validation.verifiedActualType}) bound to variant ${baselineObs.variantId}.`
-        : `Approved exact value (${validation.verifiedActualType}).`;
+        : validation.typeEvidenceSource === "reviewed_exact_contract"
+          ? `Approved exact value (${validation.verifiedActualType} via reviewed exact contract).`
+          : `Approved exact value (${validation.verifiedActualType}).`;
   } else if (hasNonEmptyProposal) {
     if (!validation.valid) {
       reviewStatus = "Blocked Proposal";
@@ -2677,6 +2808,7 @@ export function evaluateBenchV2FieldRow({
   return Object.freeze({
     contract,
     baselineObservation: baselineObs,
+    typeAndCompleteness,
     baselineDisplayValue,
     options: getContractOptionsForObservation(contract, baselineObs),
     hasProposalKey,
