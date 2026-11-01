@@ -193,23 +193,159 @@ function resolveActualEventOrdering(aiScanReport, saveReport, refChoicesReport =
 
 function buildStandardizedBaselineContextSignature(baselineSnap) {
   if (!baselineSnap || typeof baselineSnap !== "object") return "no_baseline";
-  const productId = baselineSnap.productId || "no_product";
-  const loadedAt = baselineSnap.loadedAt || "no_loaded_at";
-  const catId = baselineSnap.productCategory?.id || "unassigned";
-  const mfComplete = String(baselineSnap.metafieldsReadComplete);
-  const defsComplete = String(baselineSnap.defsReadComplete);
-  const catComplete = String(baselineSnap.productCategoryReadComplete);
+  const productId =
+    typeof baselineSnap.productId === "string" && baselineSnap.productId.trim() !== ""
+      ? baselineSnap.productId.trim()
+      : "no_product";
+  const hasCatObj =
+    baselineSnap.productCategory && typeof baselineSnap.productCategory === "object";
+  const catState =
+    baselineSnap.productCategory === undefined
+      ? "cat_missing"
+      : baselineSnap.productCategory === null
+        ? "cat_null"
+        : "cat_object";
+  const catId =
+    hasCatObj && typeof baselineSnap.productCategory.id === "string"
+      ? baselineSnap.productCategory.id
+      : "";
+  const catFullName =
+    hasCatObj && typeof baselineSnap.productCategory.fullName === "string"
+      ? baselineSnap.productCategory.fullName
+      : "";
+  const mfComplete =
+    baselineSnap.metafieldsReadComplete === true
+      ? "complete"
+      : baselineSnap.metafieldsReadComplete === false
+        ? "incomplete"
+        : "unknown";
+  const defsComplete =
+    baselineSnap.defsReadComplete === true
+      ? "complete"
+      : baselineSnap.defsReadComplete === false
+        ? "incomplete"
+        : "unknown";
+  const catComplete =
+    baselineSnap.productCategoryReadComplete === true
+      ? "complete"
+      : baselineSnap.productCategoryReadComplete === false
+        ? "incomplete"
+        : "unknown";
+  const mfReadErr =
+    typeof baselineSnap.metafieldsReadError === "string"
+      ? baselineSnap.metafieldsReadError
+      : "";
+  const defReadErrs = Array.isArray(baselineSnap.defReadErrors)
+    ? baselineSnap.defReadErrors.map((e) => String(e ?? "")).join(";")
+    : "no_def_err_array";
+  const topErrs = Array.isArray(baselineSnap.errors)
+    ? baselineSnap.errors.map((e) => String(e ?? "")).join(";")
+    : "no_top_err_array";
+
+  const hasLiveDefsMap = Boolean(
+    baselineSnap.liveDefinitions &&
+      typeof baselineSnap.liveDefinitions === "object" &&
+      !Array.isArray(baselineSnap.liveDefinitions)
+  );
+  const hasEligMap = Boolean(
+    baselineSnap.categoryEligibilityByDestination &&
+      typeof baselineSnap.categoryEligibilityByDestination === "object" &&
+      !Array.isArray(baselineSnap.categoryEligibilityByDestination)
+  );
+  const hasConstraintErrMap = Boolean(
+    baselineSnap.constraintErrorsByDestination &&
+      typeof baselineSnap.constraintErrorsByDestination === "object" &&
+      !Array.isArray(baselineSnap.constraintErrorsByDestination)
+  );
+  const hasMfMap = Boolean(
+    baselineSnap.currentMetafields &&
+      typeof baselineSnap.currentMetafields === "object" &&
+      !Array.isArray(baselineSnap.currentMetafields)
+  );
+  const hasMfTypesMap = Boolean(
+    baselineSnap.currentMetafieldTypes &&
+      typeof baselineSnap.currentMetafieldTypes === "object" &&
+      !Array.isArray(baselineSnap.currentMetafieldTypes)
+  );
 
   const perDestParts = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => {
     const dest = `shopify.${k}`;
-    const def = baselineSnap.liveDefinitions?.[dest];
-    const elig = baselineSnap.categoryEligibilityByDestination?.[dest];
-    const rawStored = baselineSnap.currentMetafields?.[dest] ?? "";
-    const storedType = baselineSnap.currentMetafieldTypes?.[dest] || "";
-    return `${dest}:${def?.type || ""}:${def?.restrictedMetaobjectDefinitionId || ""}:${elig?.status || ""}:${storedType}:${rawStored}`;
+    const hasDef =
+      hasLiveDefsMap &&
+      Object.prototype.hasOwnProperty.call(baselineSnap.liveDefinitions, dest) &&
+      baselineSnap.liveDefinitions[dest] !== undefined &&
+      baselineSnap.liveDefinitions[dest] !== null;
+    const def = hasDef ? baselineSnap.liveDefinitions[dest] : null;
+    const defConstraints =
+      def && def.constraints && typeof def.constraints === "object"
+        ? def.constraints
+        : null;
+    const constraintVals = Array.isArray(defConstraints?.values)
+      ? defConstraints.values.map((v) => String(v ?? "")).join(",")
+      : "no_vals";
+
+    const hasElig =
+      hasEligMap &&
+      Object.prototype.hasOwnProperty.call(
+        baselineSnap.categoryEligibilityByDestination,
+        dest
+      ) &&
+      baselineSnap.categoryEligibilityByDestination[dest] !== undefined &&
+      baselineSnap.categoryEligibilityByDestination[dest] !== null;
+    const elig = hasElig ? baselineSnap.categoryEligibilityByDestination[dest] : null;
+
+    const constraintErr =
+      hasConstraintErrMap &&
+      Object.prototype.hasOwnProperty.call(
+        baselineSnap.constraintErrorsByDestination,
+        dest
+      )
+        ? String(baselineSnap.constraintErrorsByDestination[dest] ?? "")
+        : "";
+
+    const hasStoredMf =
+      hasMfMap &&
+      Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafields, dest) &&
+      baselineSnap.currentMetafields[dest] !== undefined;
+    const rawStored = hasStoredMf ? baselineSnap.currentMetafields[dest] : undefined;
+    const storedPresence = !hasMfMap
+      ? "mf_map_missing"
+      : !hasStoredMf
+        ? "absent"
+        : rawStored === null
+          ? "null"
+          : "present";
+    const storedValStr =
+      rawStored === undefined || rawStored === null ? "" : String(rawStored);
+    const storedType =
+      hasMfTypesMap &&
+      Object.prototype.hasOwnProperty.call(baselineSnap.currentMetafieldTypes, dest) &&
+      baselineSnap.currentMetafieldTypes[dest] !== undefined &&
+      baselineSnap.currentMetafieldTypes[dest] !== null
+        ? String(baselineSnap.currentMetafieldTypes[dest])
+        : "";
+
+    return JSON.stringify([
+      dest,
+      hasLiveDefsMap ? (hasDef ? "def_present" : "def_absent") : "defs_map_missing",
+      def?.id || "",
+      def?.type || "",
+      def?.restrictedMetaobjectDefinitionId || def?.requiredDefinitionId || "",
+      defConstraints
+        ? `${String(defConstraints.hasConstraints)}:${defConstraints.key || ""}:${String(defConstraints.isComplete)}:${defConstraints.error || ""}:${constraintVals}`
+        : "no_constraints_obj",
+      hasEligMap ? (hasElig ? "elig_present" : "elig_absent") : "elig_map_missing",
+      elig
+        ? `${String(elig.isComplete)}:${String(elig.isEligible)}:${elig.status || ""}:${elig.matchedConstraintValue || ""}:${elig.reason || ""}`
+        : "no_elig_obj",
+      constraintErr,
+      storedPresence,
+      storedType,
+      storedValStr
+    ]);
   }).join("|");
 
-  return `${productId}::${loadedAt}::${catId}::${mfComplete}::${defsComplete}::${catComplete}::${perDestParts}`;
+  return `${productId}::${catState}:${catId}:${catFullName}::${mfComplete}::${defsComplete}::${catComplete}::${mfReadErr}::${defReadErrs}::${topErrs}::${perDestParts}`;
 }
 
 function resolveFieldRegistryAndApplicabilityMeta(contract) {
