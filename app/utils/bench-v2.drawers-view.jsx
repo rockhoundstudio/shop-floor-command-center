@@ -427,6 +427,7 @@ export function BenchV2DrawersView({
                           contract.destinationKey,
                           contract
                         );
+                        const isMultilineField = contract.control === "multiline";
 
                         const canEditDraftInBatch1 =
                           contract.isWritableInBatch1 &&
@@ -723,34 +724,77 @@ export function BenchV2DrawersView({
                                       </select>
                                     )}
 
-                                    <div style={{ display: "flex", gap: "8px" }}>
-                                      <input
-                                        type="text"
-                                        aria-label={`Manual proposal for ${contract.destinationKey}`}
-                                        value={proposedValue}
-                                        disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
-                                        placeholder={inputPlaceholder}
-                                        onFocus={() =>
-                                          handleFieldEditorFocus(contract.destinationKey)
-                                        }
-                                        onBlur={() =>
-                                          handleFieldEditorBlur(contract.destinationKey)
-                                        }
-                                        onChange={(e) =>
-                                          handleManualProposalChange(
-                                            contract.destinationKey,
-                                            e.target.value
-                                          )
-                                        }
-                                        style={{
-                                          flex: 1,
-                                          padding: "8px 10px",
-                                          fontSize: "16px",
-                                          border: "1px solid #475569",
-                                          borderRadius: "6px",
-                                          color: "#0f172a"
-                                        }}
-                                      />
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        gap: "8px",
+                                        alignItems: isMultilineField ? "flex-start" : "stretch"
+                                      }}
+                                    >
+                                      {isMultilineField ? (
+                                        <textarea
+                                          aria-label={`Manual proposal for ${contract.destinationKey}`}
+                                          value={proposedValue}
+                                          disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                          placeholder={inputPlaceholder}
+                                          rows={
+                                            contract.destinationKey === "native_seo_description"
+                                              ? 3
+                                              : 6
+                                          }
+                                          onFocus={() =>
+                                            handleFieldEditorFocus(contract.destinationKey)
+                                          }
+                                          onBlur={() =>
+                                            handleFieldEditorBlur(contract.destinationKey)
+                                          }
+                                          onChange={(e) =>
+                                            handleManualProposalChange(
+                                              contract.destinationKey,
+                                              e.target.value
+                                            )
+                                          }
+                                          style={{
+                                            flex: 1,
+                                            padding: "8px 10px",
+                                            fontSize: "16px",
+                                            lineHeight: 1.5,
+                                            fontFamily: "inherit",
+                                            border: "1px solid #475569",
+                                            borderRadius: "6px",
+                                            color: "#0f172a",
+                                            resize: "vertical"
+                                          }}
+                                        />
+                                      ) : (
+                                        <input
+                                          type="text"
+                                          aria-label={`Manual proposal for ${contract.destinationKey}`}
+                                          value={proposedValue}
+                                          disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                          placeholder={inputPlaceholder}
+                                          onFocus={() =>
+                                            handleFieldEditorFocus(contract.destinationKey)
+                                          }
+                                          onBlur={() =>
+                                            handleFieldEditorBlur(contract.destinationKey)
+                                          }
+                                          onChange={(e) =>
+                                            handleManualProposalChange(
+                                              contract.destinationKey,
+                                              e.target.value
+                                            )
+                                          }
+                                          style={{
+                                            flex: 1,
+                                            padding: "8px 10px",
+                                            fontSize: "16px",
+                                            border: "1px solid #475569",
+                                            borderRadius: "6px",
+                                            color: "#0f172a"
+                                          }}
+                                        />
+                                      )}
                                       {hasProposalKey && (
                                         <button
                                           type="button"

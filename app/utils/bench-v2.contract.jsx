@@ -1,4 +1,4 @@
-// ==========================================================================
+// == ========================================================================
 // ROCKHOUND STUDIO — BENCH V2 PURE FIELD & DRAWER CONTRACT
 // File: app/utils/bench-v2.contract.jsx
 // Pure browser-safe contract module: zero React hooks/effects, zero storage,
@@ -17,6 +17,7 @@ import {
   TASK_RESTRICTED_READ_ONLY_DESTINATIONS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
   BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
+  BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS,
   BENCH_V2_WRITER_OPT_IN_FIELD,
   BENCH_V2_WRITER_OPT_IN_VALUE,
   BENCH_V2_OPT_IN_UNHELD_BARE_KEYS,
@@ -57,6 +58,7 @@ export {
   TASK_RESTRICTED_READ_ONLY_DESTINATIONS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
   BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
+  BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS,
   BENCH_V2_WRITER_OPT_IN_FIELD,
   BENCH_V2_WRITER_OPT_IN_VALUE,
   BENCH_V2_OPT_IN_UNHELD_BARE_KEYS,
@@ -92,9 +94,36 @@ export {
 
 const COLLECTION_DATE_PLACEHOLDER_REGEX = /^(n\/a|none|unknown)$/i;
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+constPLAIN_TEXT_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isBlankOrWhitespaceOnly = (str) =>
   typeof str !== "string" || str.trim() === "";
+
+// Exact pure string replica of writer `sanitizeDescription` in app/routes/app.meta-injector-api.jsx
+// so proposals that the writer would alter or block are rejected before approval.
+function sanitizeWriterDescriptionHtml(html) {
+  if (!html || typeof html !== "string") return html;
+  let safeHtml = html;
+  const targets = [
+    "/pages/the-shopped-rock",
+    "/collections/the-shopped-rock",
+    "/pages/the-shocked-rock",
+    "/collections/the-shocked-rock"
+  ];
+  for (const target of targets) {
+    const regexNormal = new RegExp(
+      `<a[^>]*href=["']?[^"'>]*${target.replace(/\//g, "\\/")}["']?[^>]*>.*?<\\/a>`,
+      "gi"
+    );
+    safeHtml = safeHtml.replace(regexNormal, "");
+    const regexEscaped = new RegExp(
+      `&lt;a[^&]*href=[&quot;']?[^&quot;'>]*${target.replace(/\//g, "\\/")}[&quot;']?[^&]*&gt;.*?&lt;\\/a&gt;`,
+      "gi"
+    );
+    safeHtml = safeHtml.replace(regexEscaped, "");
+  }
+  return safeHtml;
+}
 
 export function checkExistingWriterStringFidelity(exactProposedValue) {
   if (typeof exactProposedValue !== "string") {
@@ -366,15 +395,72 @@ export function validateBatch1ProposedValue({
       /gid:\/\/shopify\//i.test(exactValue) ||
       /^shopify:\/\/metaobject/i.test(trimmedForShapeCheck) ||
       /^metaobject[:/]/i.test(trimmedForShapeCheck) ||
+      PLAIN_TEXT_UUID_REGEX.test(trimmedForShapeCheck) ||
       ((trimmedForShapeCheck.startsWith("[") && trimmedForShapeCheck.endsWith("]")) ||
         (trimmedForShapeCheck.startsWith("{") && trimmedForShapeCheck.endsWith("}")))
     ) {
       return {
         valid: false,
         code: "invalid_plain_text_shape",
-        reason: `Rejected reference, GID, or JSON-container shape for plain-text destination "${contract.destinationKey}".`
+        reason: `Rejected reference, GID, UUID, or JSON-container shape for plain-text destination "${contract.destinationKey}".`
       };
     }
+  } else if (verifiedActualType === "multi_line_text_field") {
+    if (contract.maxLength !== null && exactValue.length > contract.maxLength) {
+      return {
+        valid: false,
+        code: "exceeds_max_length",
+        reason: `Value for "${contract.destinationKey}" (${exactValue.length} chars) exceeds the ${contract.maxLength}-character limit.`
+      };
+    }
+
+    if (contract.destinationKey === "custom.generated_description") {
+      if (sanitizeWriterDescriptionHtml(exactValue) !== exactValue) {
+        return {
+          valid: false,
+          code: "disallowed_description_anchor_links",
+          reason:
+            "Rejected custom.generated_description proposal containing disallowed anchor links (/pages/the-shopped-rock, /collections/the-shopped-rock, /pages/the-shocked-rock, or /collections/the-shocked-rock) that the writer blocks on save."
+        };
+      }
+    }
+  } else if (verifiedActualType === "native") {
+    if (
+      contract.owner !== "PRODUCT" ||
+      contract.namespace !== "native" ||
+      !BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(contract.destinationKey)
+    ) {
+      return {
+        valid: false,
+        code: "unsupported_native_destination",
+        reason: `Native destination "${contract.destinationKey}" is not in the connected product native allowlist.`
+      };
+    }
+
+    if (contract.maxLength !== null && exactValue.length > contract.maxLength) {
+      return {
+        valid: false,
+        code: "exceeds_max_length",
+        reason: `Value for "${contract.destinationKey}" (${exactValue.length} chars) exceeds the ${contract.maxLength}-character limit.`
+      };
+    }
+
+    if (contract.destinationKey === "native_description") {
+      if (sanitizeWriterDescriptionHtml(exactValue) !== exactValue) {
+        return {
+          valid: false,
+          code: "disallowed_description_anchor_links",
+          reason:
+            "Native product description contains disallowed anchor links (/pages/the-shopped-rock, /collections/the-shopped-rock, /pages/the-shocked-rock, or /collections/the-shocked-rock) that alter approved content; remove disallowed links before approving."
+        };
+      }
+    }
+  } else {
+    return {
+      valid: false,
+      code: "unsupported_verified_type",
+      reason: `Unsupported verified type "${String(verifiedActualType)}" for "${contract.destinationKey}".`
+    };
   }
 
   if (
@@ -774,7 +860,9 @@ export function evaluateBenchV2FieldRow({
         connectionStatus =
           contract.owner === "PRODUCTVARIANT"
             ? `Blocked (Variant Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`
-            : `Blocked (Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`;
+            : contract.namespace === "native"
+              ? "Blocked (Native Field Baseline Read Incomplete)"
+              : `Blocked (Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`;
       } else {
         connectionStatus =
           contract.owner === "PRODUCTVARIANT"
@@ -823,7 +911,9 @@ export function evaluateBenchV2FieldRow({
       connectionStatus =
         contract.owner === "PRODUCTVARIANT"
           ? `Connected (Single-Variant Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`
-          : `Connected (Batch 1 Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`;
+          : contract.namespace === "native"
+            ? `Connected (Native Product Field Writable — ${contract.expectedType})`
+            : `Connected (Batch 1 Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`;
     }
   } else if (
     contract.batchStage === BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR ||
@@ -853,7 +943,9 @@ export function evaluateBenchV2FieldRow({
       statusReason =
         contract.owner === "PRODUCTVARIANT"
           ? `Variant metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`
-          : `Metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`;
+          : contract.namespace === "native"
+            ? `Native baseline field "${contract.destinationKey}" was not verified during product load; reload product data before editing.`
+            : `Metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`;
     } else if (baselineObs.presence === "multiple_variants_hold") {
       reviewStatus = "Held (Multiple Variants)";
       statusReason = `Product has multiple variants; "${contract.destinationKey}" is held read-only unless a single unambiguous variant is present.`;

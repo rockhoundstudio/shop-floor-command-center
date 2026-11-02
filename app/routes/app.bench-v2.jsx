@@ -7,11 +7,17 @@
 // Conditional Setting & Hardware, Geology [12 active custom.* destinations +
 // read-only compatibility custom.geological_era], and Channel Attributes
 // [PRODUCT custom.google_product_category + single-variant PRODUCTVARIANT
-// mm-google-shopping.age_group, condition, gender]), Drawer 10 (18 retained
-// shopify.* standardized reference attributes with automatic read-only choice
-// loading, category constraint eligibility, verified restricted Metaobject
-// definition membership, and exact-value approval), plus read-only Drawers 9
-// and 11 (Parked & Protected inventory), with Sidekick live bench snapshot sync.
+// mm-google-shopping.age_group, condition, gender]), Drawer 9 (6 connected
+// product-owned text/SEO destinations: manual-only native_title,
+// native_description, custom.generated_description, native_seo_description;
+// independently reviewed native_seo_title and custom.seo_title, while
+// per-image media alts and custom.alt_text remain read-only descriptors and
+// price/shipping weight remain task-restricted read-only), Drawer 10 (18
+// retained shopify.* standardized reference attributes with automatic
+// read-only choice loading, category constraint eligibility, verified
+// restricted Metaobject definition membership, and exact-value approval),
+// plus read-only Drawer 11 (Parked & Protected inventory), with Sidekick
+// live bench snapshot sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -23,6 +29,7 @@ import {
   BENCH_V2_DRAWER_GROUPS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
+  BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
   isManualOnlyNoAiDestination,
@@ -815,67 +822,102 @@ export default function BenchV2Route() {
       if (bareKey === "price") destKey = "native_price";
       else if (bareKey === "poetic_hook") destKey = "native_seo_description";
 
-      const propEntry = currentProposedMap[destKey];
-      const hasHumanDraft = Boolean(
-        propEntry &&
-          typeof propEntry === "object" &&
-          propEntry.origin === "Manual" &&
-          typeof propEntry.value === "string" &&
-          propEntry.value.trim() !== ""
-      );
+      const isSeoTitleDualKey = bareKey === "seo_title";
+      const candidateDestKeys = isSeoTitleDualKey
+        ? ["custom.seo_title", "native_seo_title"]
+        : [destKey];
 
-      const approvalRec = currentApprovalsMap[destKey];
-      const hasValidApproval = Boolean(
-        approvalRec &&
-          propEntry &&
-          isExactValueApprovalValid({
-            approvalRecord: approvalRec,
-            productId: activeProductId,
-            destinationKey: destKey,
-            currentProposedValue:
-              typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
-            baselineSnapshot: currentBaseline
-          })
-      );
+      let lockedHumanVal = "";
+      let hasLockedHumanOrKeepOriginal = false;
 
-      const keepOrigRec = currentKeepOriginalMap[destKey];
-      const hasValidKeepOriginal = Boolean(
-        keepOrigRec &&
+      for (const checkDest of candidateDestKeys) {
+        const propEntry = currentProposedMap[checkDest];
+        const hasHumanDraft = Boolean(
           propEntry &&
-          isKeepOriginalRecordValid({
-            keepOriginalRecord: keepOrigRec,
-            productId: activeProductId,
-            destinationKey: destKey,
-            currentProposedValue:
-              typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
-            baselineSnapshot: currentBaseline
-          })
-      );
+            typeof propEntry === "object" &&
+            propEntry.origin === "Manual" &&
+            typeof propEntry.value === "string" &&
+            propEntry.value.trim() !== ""
+        );
+
+        const approvalRec = currentApprovalsMap[checkDest];
+        const hasValidApproval = Boolean(
+          approvalRec &&
+            propEntry &&
+            isExactValueApprovalValid({
+              approvalRecord: approvalRec,
+              productId: activeProductId,
+              destinationKey: checkDest,
+              currentProposedValue:
+                typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
+              baselineSnapshot: currentBaseline
+            })
+        );
+
+        const keepOrigRec = currentKeepOriginalMap[checkDest];
+        const hasValidKeepOriginal = Boolean(
+          keepOrigRec &&
+            propEntry &&
+            isKeepOriginalRecordValid({
+              keepOriginalRecord: keepOrigRec,
+              productId: activeProductId,
+              destinationKey: checkDest,
+              currentProposedValue:
+                typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
+              baselineSnapshot: currentBaseline
+            })
+        );
+
+        if (hasHumanDraft || hasValidApproval) {
+          const humanVal =
+            typeof propEntry === "object" ? propEntry.value.trim() : String(propEntry || "").trim();
+          if (humanVal !== "") {
+            lockedHumanVal = humanVal;
+            hasLockedHumanOrKeepOriginal = true;
+            break;
+          }
+        }
+
+        if (hasValidKeepOriginal) {
+          const storedForCheck =
+            checkDest === "native_seo_title"
+              ? String(currentBaseline.nativeTargets?.seo?.title ?? "").trim()
+              : checkDest === "native_price"
+                ? String(currentBaseline.nativeTargets?.price ?? "").trim()
+                : checkDest === "native_seo_description"
+                  ? String(currentBaseline.nativeTargets?.seo?.description ?? "").trim()
+                  : String(currentBaseline.currentMetafields?.[checkDest] ?? "").trim();
+          if (storedForCheck !== "") {
+            lockedHumanVal = storedForCheck;
+            hasLockedHumanOrKeepOriginal = true;
+            break;
+          }
+        }
+      }
+
+      if (hasLockedHumanOrKeepOriginal && lockedHumanVal !== "") {
+        operatorLockedList.push(bareKey);
+        contextKeyValues[bareKey] = lockedHumanVal;
+        continue;
+      }
 
       let storedVal = "";
       if (bareKey === "price") {
         storedVal = currentBaseline.nativeTargets?.price || "";
       } else if (bareKey === "poetic_hook") {
         storedVal = currentBaseline.nativeTargets?.seo?.description || "";
+      } else if (bareKey === "seo_title") {
+        const rawCustomSeo = currentBaseline.currentMetafields?.["custom.seo_title"];
+        const rawNativeSeo = currentBaseline.nativeTargets?.seo?.title;
+        storedVal =
+          rawCustomSeo !== undefined && rawCustomSeo !== null && String(rawCustomSeo).trim() !== ""
+            ? String(rawCustomSeo).trim()
+            : rawNativeSeo !== undefined && rawNativeSeo !== null
+              ? String(rawNativeSeo).trim()
+              : "";
       } else {
         const rawMf = currentBaseline.currentMetafields?.[`custom.${bareKey}`];
         storedVal = rawMf !== undefined && rawMf !== null ? String(rawMf).trim() : "";
-      }
-
-      if (hasHumanDraft || hasValidApproval) {
-        const humanVal =
-          typeof propEntry === "object" ? propEntry.value.trim() : String(propEntry || "").trim();
-        if (humanVal !== "") {
-          operatorLockedList.push(bareKey);
-          contextKeyValues[bareKey] = humanVal;
-          continue;
-        }
-      }
-
-      if (hasValidKeepOriginal && storedVal !== "") {
-        operatorLockedList.push(bareKey);
-        contextKeyValues[bareKey] = storedVal;
-        continue;
       }
 
       if (storedVal !== "") {
@@ -1447,8 +1489,23 @@ export default function BenchV2Route() {
       submittedVariantTargetId &&
       responseVariantTarget === submittedVariantTargetId
     );
+    const returnedNativeTargets =
+      rawResponse.nativeTargets &&
+      typeof rawResponse.nativeTargets === "object" &&
+      !Array.isArray(rawResponse.nativeTargets) &&
+      (!rawResponse.nativeTargets.productId ||
+        rawResponse.nativeTargets.productId === submittedProductId)
+        ? rawResponse.nativeTargets
+        : null;
+    const hasVerifiedNativeDestination = verifiedList.some((vDest) =>
+      BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)
+    );
 
-    if (hasReturnedProductMetafields || hasReturnedVariantMetafields) {
+    if (
+      hasReturnedProductMetafields ||
+      hasReturnedVariantMetafields ||
+      (hasVerifiedNativeDestination && returnedNativeTargets)
+    ) {
       setBaselineByProduct((prev) => {
         const existingSnap = prev[submittedProductId];
         if (!existingSnap || existingSnap.productId !== submittedProductId) return prev;
@@ -1467,13 +1524,68 @@ export default function BenchV2Route() {
           : null;
         let nextVariantReadComplete = existingSnap.variantMetafieldsReadComplete === true;
 
+        const existingNativeTargets =
+          existingSnap.nativeTargets && typeof existingSnap.nativeTargets === "object"
+            ? existingSnap.nativeTargets
+            : {};
+        let updatedNativeTargets = {
+          ...existingNativeTargets,
+          seo:
+            existingNativeTargets.seo && typeof existingNativeTargets.seo === "object"
+              ? { ...existingNativeTargets.seo }
+              : { title: null, description: null }
+        };
+        let nextProductTitle = existingSnap.productTitle;
+
         for (const vDest of verifiedList) {
           const contract = getFieldContractByDestination(vDest);
           const isVariantDest =
             contract?.owner === "PRODUCTVARIANT" ||
             BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
 
-          if (isVariantDest) {
+          if (BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)) {
+            if (!returnedNativeTargets) continue;
+            const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
+              ? returnedNativeTargets.unverifiedFields
+              : [];
+
+            if (
+              vDest === "native_title" &&
+              !unverifiedNativeList.includes("productTitle") &&
+              typeof returnedNativeTargets.productTitle === "string"
+            ) {
+              updatedNativeTargets.productTitle = returnedNativeTargets.productTitle;
+              nextProductTitle = returnedNativeTargets.productTitle;
+            } else if (
+              vDest === "native_description" &&
+              !unverifiedNativeList.includes("descriptionHtml") &&
+              typeof returnedNativeTargets.descriptionHtml === "string"
+            ) {
+              updatedNativeTargets.descriptionHtml = returnedNativeTargets.descriptionHtml;
+            } else if (
+              vDest === "native_seo_title" &&
+              !unverifiedNativeList.includes("seo") &&
+              returnedNativeTargets.seo &&
+              typeof returnedNativeTargets.seo === "object" &&
+              typeof returnedNativeTargets.seo.title === "string"
+            ) {
+              updatedNativeTargets.seo = {
+                ...(updatedNativeTargets.seo || {}),
+                title: returnedNativeTargets.seo.title
+              };
+            } else if (
+              vDest === "native_seo_description" &&
+              !unverifiedNativeList.includes("seo") &&
+              returnedNativeTargets.seo &&
+              typeof returnedNativeTargets.seo === "object" &&
+              typeof returnedNativeTargets.seo.description === "string"
+            ) {
+              updatedNativeTargets.seo = {
+                ...(updatedNativeTargets.seo || {}),
+                description: returnedNativeTargets.seo.description
+              };
+            }
+          } else if (isVariantDest) {
             if (
               hasReturnedVariantMetafields &&
               existingSnap.primaryVariantId === submittedVariantTargetId &&
@@ -1518,6 +1630,8 @@ export default function BenchV2Route() {
           ...prev,
           [submittedProductId]: {
             ...existingSnap,
+            productTitle: nextProductTitle,
+            nativeTargets: updatedNativeTargets,
             currentMetafields: updatedMetafields,
             currentMetafieldTypes: updatedTypes,
             currentVariantMetafields: updatedVariantMetafields,
@@ -1528,6 +1642,29 @@ export default function BenchV2Route() {
           }
         };
       });
+
+      if (
+        verifiedSet.has("native_title") &&
+        returnedNativeTargets &&
+        typeof returnedNativeTargets.productTitle === "string" &&
+        returnedNativeTargets.productTitle.trim() !== ""
+      ) {
+        const verifiedTitle = returnedNativeTargets.productTitle;
+        setKnownProductsById((prev) => {
+          const existing = prev[submittedProductId] || {
+            id: submittedProductId,
+            title: verifiedTitle,
+            pieceName: null
+          };
+          return {
+            ...prev,
+            [submittedProductId]: {
+              ...existing,
+              title: verifiedTitle
+            }
+          };
+        });
+      }
     }
 
     if (verifiedSet.size > 0) {
@@ -1542,6 +1679,36 @@ export default function BenchV2Route() {
             responseVariantTarget === submittedVariantTargetId &&
             rawResponse.variantMetafieldsReadComplete === true
           );
+        }
+        if (BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)) {
+          if (!returnedNativeTargets) return false;
+          const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
+            ? returnedNativeTargets.unverifiedFields
+            : [];
+          if (vDest === "native_title") {
+            return (
+              !unverifiedNativeList.includes("productTitle") &&
+              typeof returnedNativeTargets.productTitle === "string"
+            );
+          }
+          if (vDest === "native_description") {
+            return (
+              !unverifiedNativeList.includes("descriptionHtml") &&
+              typeof returnedNativeTargets.descriptionHtml === "string"
+            );
+          }
+          if (vDest === "native_seo_title") {
+            return (
+              !unverifiedNativeList.includes("seo") &&
+              typeof returnedNativeTargets.seo?.title === "string"
+            );
+          }
+          if (vDest === "native_seo_description") {
+            return (
+              !unverifiedNativeList.includes("seo") &&
+              typeof returnedNativeTargets.seo?.description === "string"
+            );
+          }
         }
         return true;
       };
@@ -1908,7 +2075,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 8 or Drawer 10 (where ready on this product) and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 10 (where ready on this product) and check Approve before clicking Save."
         ]
       });
       return;
@@ -1916,6 +2083,7 @@ export default function BenchV2Route() {
 
     const prevalidationErrors = [];
     const safePlanToSubmit = {};
+    const safeNativeChangesToSubmit = {};
     let requiredVariantTargetId = null;
 
     for (const [destKey, approvalRec] of approvalEntries) {
@@ -2020,6 +2188,10 @@ export default function BenchV2Route() {
         requiredVariantTargetId = baselinePrimaryVariantId;
       }
 
+      if (destKey === "native_title") {
+        safeNativeChangesToSubmit.title = validation.normalizedValue;
+      }
+
       safePlanToSubmit[destKey] = validation.normalizedValue;
     }
 
@@ -2051,6 +2223,7 @@ export default function BenchV2Route() {
       variantTargetId: requiredVariantTargetId,
       submittedDestinations,
       submittedValuesByDestination: { ...safePlanToSubmit },
+      submittedNativeChanges: { ...safeNativeChangesToSubmit },
       startedAt: new Date().toISOString()
     };
 
@@ -2064,7 +2237,7 @@ export default function BenchV2Route() {
       formData.append("variantTargetId", requiredVariantTargetId);
     }
     formData.append("repairPlan", JSON.stringify(safePlanToSubmit));
-    formData.append("nativeChanges", JSON.stringify({}));
+    formData.append("nativeChanges", JSON.stringify(safeNativeChangesToSubmit));
     formData.append("legacyKeysToRemove", JSON.stringify([]));
 
     writerFetcher.submit(formData, {

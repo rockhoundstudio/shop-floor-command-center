@@ -93,6 +93,17 @@ export const BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS = Object.freeze(
   )
 );
 
+// Explicit replacement-bench-local allowlist of the 4 verified Drawer 9 PRODUCT
+// native text/HTML/SEO destinations connected for exact-value approval.
+export const BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS = Object.freeze(
+  new Set([
+    "native_title",
+    "native_description",
+    "native_seo_title",
+    "native_seo_description"
+  ])
+);
+
 // Explicit Bench V2 writer opt-in markers and unheld custom destination sets
 // shared with app/routes/app.meta-injector-api.jsx.
 export const BENCH_V2_WRITER_OPT_IN_FIELD = "benchV2OptIn";
@@ -280,9 +291,9 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     drawerNumber: 9,
     heading: "9. Native, SEO, Description & Media Alts",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    isImplementedInBatch1: false,
-    description: "Future Batch 3 descriptor: independent native/metafield descriptions and SEO titles, SEO description, per-image media alts, and task-restricted read-only price/shipping weight."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Partial Drawer 9 text & SEO connection: 6 product-owned destinations connected for exact-value approval (manual-only native_title, native_description, custom.generated_description, native_seo_description; independently reviewed native_seo_title and custom.seo_title), while per-image media alts (native_image_alt) and custom.alt_text remain read-only descriptors and price/shipping weight remain task-restricted read-only."
   }),
   Object.freeze({
     drawerId: "standardized_attributes",
@@ -447,6 +458,9 @@ function defineFieldContract(spec) {
 
   const isEligibleOwnerAndDestination =
     (spec.owner === "PRODUCT" && spec.namespace === "custom") ||
+    (spec.owner === "PRODUCT" &&
+      spec.namespace === "native" &&
+      BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(spec.destinationKey)) ||
     (spec.owner === "PRODUCT" &&
       spec.namespace === "shopify" &&
       SUPPORTED_STANDARDIZED_KEY_SET.has(spec.key) &&
@@ -1111,7 +1125,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "Inspectable product-level custom.target_gender compatibility value; never auto-migrated or copied."
   ),
 
-  // DRAWER 9: NATIVE, SEO, DESCRIPTION & MEDIA ALTS (SUB_HARNESS_4 — FUTURE BATCH 3)
+  // DRAWER 9: NATIVE, SEO, DESCRIPTION & MEDIA ALTS (SUB_HARNESS_4 — TEXT/SEO CONNECTED, MEDIA & PRICE/WEIGHT READ-ONLY)
   defineFieldContract({
     destinationKey: "native_title",
     namespace: "native",
@@ -1120,10 +1134,13 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "native_seo_description_media",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "native_title",
-    maxLength: 255
+    allowedTypes: ["native", "native_title"],
+    maxLength: 255,
+    purposeNote: "Native Shopify product title (product.title, max 255 chars). Distinct from custom.piece_name; manual entry and exact-value approval only."
   }),
   defineFieldContract({
     destinationKey: "native_description",
@@ -1133,12 +1150,14 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "native_seo_description_media",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "native_html",
+    allowedTypes: ["native", "native_html"],
     maxLength: 10000,
     control: "multiline",
-    purposeNote: "Independent destination from custom.generated_description; requires its own exact-value approval."
+    purposeNote: "Independent destination from custom.generated_description; manual entry and exact-value approval only (max 10,000 chars)."
   }),
   defineFieldContract({
     destinationKey: "custom.generated_description",
@@ -1148,13 +1167,15 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "native_seo_description_media",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "multi_line_text_field",
+    allowedTypes: ["multi_line_text_field"],
     maxLength: 10000,
     control: "multiline",
     canonicalTarget: "native_description",
-    purposeNote: "Independent destination from native_description; requires its own exact-value approval."
+    purposeNote: "Independent destination from native_description; requires live definition or stored type multi_line_text_field and its own exact-value approval (max 10,000 chars)."
   }),
   defineFieldContract({
     destinationKey: "native_seo_title",
@@ -1164,11 +1185,12 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "native_seo_description_media",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "native_seo_title",
+    allowedTypes: ["native", "native_seo_title"],
     maxLength: 70,
-    purposeNote: "Independent destination from custom.seo_title; requires its own exact-value approval."
+    purposeNote: "Independent destination from custom.seo_title (max 70 chars); requires its own exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "custom.seo_title",
@@ -1178,12 +1200,13 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "native_seo_description_media",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
     expectedType: "single_line_text_field",
+    allowedTypes: ["single_line_text_field"],
     maxLength: 70,
     canonicalTarget: "native_seo_title",
-    purposeNote: "Independent destination from native_seo_title; requires its own exact-value approval."
+    purposeNote: "Independent destination from native_seo_title (max 70 chars); requires its own exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "native_seo_description",
@@ -1193,11 +1216,14 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     owner: "PRODUCT",
     drawerId: "native_seo_description_media",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "native_seo_description",
+    allowedTypes: ["native", "native_seo_description"],
     maxLength: 160,
-    control: "multiline"
+    control: "multiline",
+    purposeNote: "Native Shopify SEO meta description (product.seo.description, max 160 chars). Manual entry and exact-value approval only."
   }),
   defineFieldContract({
     destinationKey: "native_image_alt",
@@ -1390,7 +1416,11 @@ export const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
     "custom.collection_date",
     "mm-google-shopping.age_group",
     "mm-google-shopping.condition",
-    "mm-google-shopping.gender"
+    "mm-google-shopping.gender",
+    "native_title",
+    "native_description",
+    "custom.generated_description",
+    "native_seo_description"
   ])
 );
 
