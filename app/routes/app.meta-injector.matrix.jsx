@@ -75,6 +75,12 @@ import {
   evaluateDescriptionReviewVisibility
 } from "../components/meta-injector.bench-chrome.jsx";
 import {
+  StockBezelCleanupPanel,
+  SidekickLiveSyncStatusBox,
+  DevTemplateAuditCard,
+  CorrectionImportFeedbackBanner
+} from "../components/meta-injector.matrix-panels.jsx";
+import {
   ManifestSectionCard,
   selectManifestSectionRowDescriptors
 } from "../components/meta-injector.manifest-section.jsx";
@@ -1330,7 +1336,7 @@ export function OperationsMatrixTab({ products }) {
         id: `cleanup_fb_${Date.now()}`,
         kind: "no_selection",
         tone: "warning",
-        title: "0 candidates selected â€” nothing staged",
+        title: "0 candidates selected \u2014 nothing staged",
         message: "No previewed cleanup candidates are selected. Expand Candidate Details below and check at least one candidate, or click 'Select All Candidates'."
       });
       return;
@@ -1448,7 +1454,7 @@ export function OperationsMatrixTab({ products }) {
         return;
       }
 
-      // Preserve existing manual edits, explicit approvals, and Keep Original decisions â€” never overwrite them!
+      // Preserve existing manual edits, explicit approvals, and Keep Original decisions \u2014 never overwrite them!
       const prodManualMap = validObj(manualEdits?.[productId]);
       const prodApprovalsMap = validObj(approvals?.[productId]);
       const prodKeepMap = validObj(keepOriginalDecisions?.[productId]);
@@ -1498,7 +1504,7 @@ export function OperationsMatrixTab({ products }) {
           productTitle,
           destinationKey,
           fieldLabel,
-          reason: `Existing diverging proposal ("${liveMeta.propVal.slice(0, 80)}${liveMeta.propVal.length > 80 ? "â€¦" : ""}") preserved; cleanup candidate was not staged over it.`
+          reason: `Existing diverging proposal ("${liveMeta.propVal.slice(0, 80)}${liveMeta.propVal.length > 80 ? "\u2026" : ""}") preserved; cleanup candidate was not staged over it.`
         });
         return;
       }
@@ -1604,12 +1610,12 @@ export function OperationsMatrixTab({ products }) {
     } else if (staleCount > 0 && preservedCount === 0) {
       feedbackTone = "critical";
       feedbackKind = "zero_staged_stale";
-      feedbackTitle = `0 proposals staged â€” ${staleCount} rejected as stale`;
+      feedbackTitle = `0 proposals staged \u2014 ${staleCount} rejected as stale`;
       feedbackMessage = "Underlying product baseline changed since the preview was captured. Click Preview again to refresh.";
     } else {
       feedbackTone = "warning";
       feedbackKind = "zero_staged_preserved";
-      feedbackTitle = `0 proposals staged â€” ${preservedCount} skipped (existing approval, edit, or AI proposal preserved)${staleCount > 0 ? ` | ${staleCount} stale` : ""}`;
+      feedbackTitle = `0 proposals staged \u2014 ${preservedCount} skipped (existing approval, edit, or AI proposal preserved)${staleCount > 0 ? ` | ${staleCount} stale` : ""}`;
       feedbackMessage = "Staging never overwrites an existing approval, manual edit, Keep Original choice, or diverging AI proposal. Expand skipped details below to see which fields were preserved.";
     }
 
@@ -2246,7 +2252,7 @@ export function OperationsMatrixTab({ products }) {
       let detailSummary = " Technically verified and category-eligible proposals are staged for review and exact-value approval below.";
       if (categoryBlockedDestinations.length > 0 || blockedDestList.length > 0) {
         const blockedDisplay = blockedDestList.length > 0 ? blockedDestList : categoryBlockedDestinations;
-        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} â€” candidate evidence and matched entries preserved).`;
+        detailSummary = ` ${readinessCheck.eligibleDestinationKeys.length} proposal(s) unlocked; ${blockedDisplay.length} blocked by category or entry resolution (${blockedDisplay.join(", ")} \u2014 candidate evidence and matched entries preserved).`;
       }
       setReferenceMatchStatusByProduct((prev) => ({
         ...prev,
@@ -3192,127 +3198,13 @@ export function OperationsMatrixTab({ products }) {
   const activeProposedCount = typeof effectiveStatsForSummary?.proposed === "number" ? effectiveStatsForSummary.proposed : 0;
   const activeApprovedWriteCount = typeof effectiveStatsForSummary?.approvedWrite === "number" ? effectiveStatsForSummary.approvedWrite : 0;
 
-  let unsavedWorkingChangesWord = "Not available";
-  let unsavedWorkingChangesDetail = "No baseline loaded";
-  if (isBaselineLoadedBool && activeBenchStats) {
-    const hasUnsavedWorking =
-      activeProposedCount > 0 ||
-      activeManualEditCount > 0 ||
-      activeExplicitApprovalCount > 0 ||
-      activeKeepOriginalCount > 0;
-    unsavedWorkingChangesWord = hasUnsavedWorking ? "Yes" : "No";
-    unsavedWorkingChangesDetail = `Proposals: ${activeProposedCount} | Manual edits: ${activeManualEditCount} | Explicit approvals: ${activeExplicitApprovalCount} | Keep original: ${activeKeepOriginalCount} | Approved for write: ${activeApprovedWriteCount}`;
-  } else if (isUnselectedBlankPreviewActive && unselectedDraftStats) {
-    const hasSeedOrContext =
-      hasMeaningfulValue(draftSourceContext?.rawSeedInput) ||
-      hasMeaningfulValue(draftSourceContext?.explicitTitleOverride) ||
-      hasMeaningfulValue(draftSourceContext?.origin_story);
-    const hasUnsavedDraftWorking =
-      activeProposedCount > 0 ||
-      activeManualEditCount > 0 ||
-      activeExplicitApprovalCount > 0 ||
-      hasSeedOrContext;
-    unsavedWorkingChangesWord = hasUnsavedDraftWorking ? "Yes (Unsaved Draft)" : "No";
-    unsavedWorkingChangesDetail = `Draft proposals: ${activeProposedCount} | Draft manual edits: ${activeManualEditCount} | Draft approvals: ${activeExplicitApprovalCount} (No product selected or saved)`;
-  }
-
-  let verifiedSavedWord = "No";
-  let verifiedSavedDetail = isBenchSelectedBool
-    ? "No repair executed in session"
-    : isUnselectedBlankPreviewActive
-      ? "Unsaved new-product draft (no product selected or saved)"
-      : "No product selected";
-  if (isBenchSelectedBool && activeBenchHistory) {
-    const verifiedDestCount = validArray(activeBenchHistory.verifiedDestinations).length;
-    const attemptedDestCount = validArray(activeBenchHistory.attemptedDestinations).length;
-    const blockedDestCount = Object.keys(validObj(activeBenchHistory.blockedFields)).length;
-    const conflictDestCount = Object.keys(validObj(activeBenchHistory.conflicts)).length;
-    const unresolvedDestCount = Object.keys(validObj(activeBenchHistory.unresolvedChanges)).length;
-    const hasPartialOrUnresolved =
-      activeBenchHistory.status === "PARTIAL_SUCCESS" ||
-      blockedDestCount > 0 ||
-      conflictDestCount > 0 ||
-      unresolvedDestCount > 0 ||
-      (attemptedDestCount > 0 && verifiedDestCount < attemptedDestCount);
-
-    if (activeBenchHistory.readBackVerified === true && verifiedDestCount > 0) {
-      verifiedSavedWord = "Yes";
-      verifiedSavedDetail = hasPartialOrUnresolved
-        ? `Partial (${verifiedDestCount}/${attemptedDestCount || verifiedDestCount} destinations verified at ${activeBenchHistory.completedAt || "Unknown"})`
-        : `${verifiedDestCount} destination(s) verified at ${activeBenchHistory.completedAt || "Unknown"}`;
-    } else if (activeBenchHistory.readBackVerified === false) {
-      verifiedSavedWord = "No";
-      verifiedSavedDetail = `Read-back not verified (${activeBenchHistory.status || "Unknown"} at ${activeBenchHistory.completedAt || "Unknown"})`;
-    } else {
-      verifiedSavedWord = "Unknown";
-      verifiedSavedDetail = `Status: ${activeBenchHistory.status || "Unknown"} at ${activeBenchHistory.completedAt || "Unknown"}`;
-    }
-  }
-
-  const isCurrentProductAckSynced = Boolean(
-    isBenchSelectedBool &&
-    liveBenchSyncStatus.lifecycle === "acknowledged" &&
-    liveBenchSyncStatus.selectionState === "selected" &&
-    liveBenchSyncStatus.productId === selectedBenchId &&
-    liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
-    liveBenchSyncStatus.benchRevision === lastLiveStateRevisionRef.current &&
-    lastLiveStateDigestRef.current !== "" &&
-    lastLiveSyncedDigestRef.current === lastLiveStateDigestRef.current
-  );
-
-  const isUnselectedPreviewAckSynced = Boolean(
+  const hasSeedOrContext = Boolean(
     isUnselectedBlankPreviewActive &&
-    liveBenchSyncStatus.lifecycle === "acknowledged" &&
-    liveBenchSyncStatus.selectionState === "unselected_preview" &&
-    liveBenchSyncStatus.productId === null &&
-    liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
-    liveBenchSyncStatus.benchRevision === lastLiveStateRevisionRef.current &&
-    lastLiveStateDigestRef.current !== "" &&
-    lastLiveSyncedDigestRef.current === lastLiveStateDigestRef.current
+    unselectedDraftStats &&
+    (hasMeaningfulValue(draftSourceContext?.rawSeedInput) ||
+      hasMeaningfulValue(draftSourceContext?.explicitTitleOverride) ||
+      hasMeaningfulValue(draftSourceContext?.origin_story))
   );
-
-  const isClearedAckSynced = Boolean(
-    !isBenchSelectedBool &&
-    !isUnselectedBlankPreviewActive &&
-    liveBenchSyncStatus.lifecycle === "cleared" &&
-    liveBenchSyncStatus.selectionState === "none" &&
-    liveBenchSyncStatus.benchSessionId === benchSessionIdRef.current &&
-    liveBenchSyncStatus.benchRevision === lastLiveStateRevisionRef.current
-  );
-
-  let sidekickLiveSyncWord = "Unknown";
-  let sidekickLiveSyncTone = "info";
-  let sidekickLiveSyncLifecycleLabel = liveBenchSyncStatus.lifecycle || "unavailable";
-
-  if (isCurrentProductAckSynced) {
-    sidekickLiveSyncWord = "Yes";
-    sidekickLiveSyncTone = "success";
-    sidekickLiveSyncLifecycleLabel = "acknowledged (selected product)";
-  } else if (isUnselectedPreviewAckSynced) {
-    sidekickLiveSyncWord = "Yes";
-    sidekickLiveSyncTone = "success";
-    sidekickLiveSyncLifecycleLabel = "acknowledged (unselected draft/preview)";
-  } else if (isClearedAckSynced) {
-    sidekickLiveSyncWord = "No";
-    sidekickLiveSyncTone = "info";
-    sidekickLiveSyncLifecycleLabel = "cleared (no product selected)";
-  } else if (liveBenchSyncStatus.lifecycle === "pending") {
-    sidekickLiveSyncWord = "No";
-    sidekickLiveSyncTone = "attention";
-    sidekickLiveSyncLifecycleLabel = "pending";
-  } else if (liveBenchSyncStatus.lifecycle === "error") {
-    sidekickLiveSyncWord = "No";
-    sidekickLiveSyncTone = "critical";
-    sidekickLiveSyncLifecycleLabel = `error (${liveBenchSyncStatus.errorCode || "unknown"})`;
-  } else if (liveBenchSyncStatus.lifecycle === "unavailable") {
-    sidekickLiveSyncWord = "No";
-    sidekickLiveSyncTone = "info";
-    sidekickLiveSyncLifecycleLabel = "unavailable";
-  } else {
-    sidekickLiveSyncWord = "No";
-    sidekickLiveSyncTone = "attention";
-    sidekickLiveSyncLifecycleLabel = "superseded / awaiting sync";
-  }
 
   const nativeDescriptionMeta = activeBenchData
     ? getFieldMetadata("native_description", activeBenchData, selectedBenchId, approvals, allDynamicConfigFields)
@@ -3883,16 +3775,12 @@ export function OperationsMatrixTab({ products }) {
   );
 
   const loadedManifestCount = Object.keys(manifestData || {}).length;
-  const totalCleanupCandidateCount = stockCleanupPreview?.candidates?.length || 0;
-  const selectedCleanupCandidateCount = stockCleanupPreview?.candidates
-    ? stockCleanupPreview.candidates.filter((c) => stockCleanupSelectedMap[c.candidateId] === true).length
-    : 0;
 
   return (
     <BlockStack gap="600">
       <BlockStack gap="200">
         <Text variant="headingXl" as="h1">Meta Injector</Text>
-        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub â€” Accessible Diagnostic View</Text>
+        <Text variant="headingMd" tone="subdued">Data Integrity & Operations Hub {"\u2014"} Accessible Diagnostic View</Text>
       </BlockStack>
 
       <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: "24px", alignItems: "start", boxSizing: "border-box", maxWidth: "100%" }}>
@@ -4014,566 +3902,63 @@ export function OperationsMatrixTab({ products }) {
                 </div>
 
                 {/* EXPLICIT ONE-TIME CURRENT-STOCK BEZEL CLEANUP PREVIEW & STAGING PANEL */}
-                <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
-                  <BlockStack gap="200">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Badge tone="attention">One-Time Stock Cleanup</Badge>
-                        <Text as="h4" variant="headingSm" fontWeight="bold">
-                          Current-Stock Bezel Claim Cleanup (Glue-On w/ Loop; Pinch Bails Preserved)
-                        </Text>
-                      </InlineStack>
-                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                        <Button
-                          size="slim"
-                          variant="secondary"
-                          onClick={() => handleCaptureStockCleanupPreview("loaded_all")}
-                          disabled={loadedManifestCount === 0 || isLoadingData || isExecuting}
-                        >
-                          {`Preview Loaded Stock (${loadedManifestCount})`}
-                        </Button>
-                        <Button
-                          size="slim"
-                          variant="secondary"
-                          onClick={() => handleCaptureStockCleanupPreview("active_bench")}
-                          disabled={!selectedBenchId || !activeBenchData || isLoadingData || isExecuting}
-                        >
-                          Preview Active Bench Item Only
-                        </Button>
-                        {stockCleanupPreview && (
-                          <Button
-                            size="slim"
-                            tone="critical"
-                            variant="tertiary"
-                            onClick={handleCancelStockCleanupPreview}
-                            disabled={isLoadingData || isExecuting}
-                          >
-                            Cancel / Clear Preview
-                          </Button>
-                        )}
-                      </div>
-                    </InlineStack>
+                <StockBezelCleanupPanel
+                  loadedManifestCount={loadedManifestCount}
+                  selectedBenchId={selectedBenchId}
+                  hasActiveBenchData={Boolean(activeBenchData)}
+                  isLoadingData={isLoadingData}
+                  isExecuting={isExecuting}
+                  stockCleanupPreview={stockCleanupPreview}
+                  stockCleanupSelectedMap={stockCleanupSelectedMap}
+                  stockCleanupOutcomeReport={stockCleanupOutcomeReport}
+                  stockCleanupInlineFeedback={stockCleanupInlineFeedback}
+                  stockCleanupFeedbackRef={stockCleanupFeedbackRef}
+                  onCapturePreview={handleCaptureStockCleanupPreview}
+                  onCancelPreview={handleCancelStockCleanupPreview}
+                  onToggleCandidateSelection={handleToggleStockCleanupCandidateSelection}
+                  onSelectAllCandidates={handleSelectAllStockCleanupCandidates}
+                  onStageSelectedCandidates={handleStageSelectedStockCleanupCandidates}
+                  onDismissFeedback={() => setStockCleanupInlineFeedback(null)}
+                />
 
-                    <details style={{ fontSize: "12px", color: "#475569" }}>
-                      <summary style={{ cursor: "pointer", fontWeight: "600" }}>
-                        Scope &amp; Safety Rules (Click to expand)
-                      </summary>
-                      <div style={{ marginTop: "6px", paddingLeft: "8px", lineHeight: "1.45" }}>
-                        Inspects only the fixed product IDs captured when you click Preview. Never runs on load or rescan, never converts pinch bails (pins through drilled holes) to glue-on, flags ambiguous/contradictory bezel wording instead of guessing, and stages selected replacements as unapproved review proposals. Existing approvals, manual edits, Keep Original choices, and diverging AI proposals are preserved and never overwritten.
-                      </div>
-                    </details>
-
-                    {/* ACCESSIBLE LIVE FEEDBACK IMMEDIATELY BESIDE CONTROLS */}
-                    <div
-                      ref={stockCleanupFeedbackRef}
-                      role={stockCleanupInlineFeedback?.tone === "critical" ? "alert" : "status"}
-                      aria-live={stockCleanupInlineFeedback?.tone === "critical" ? "assertive" : "polite"}
-                      aria-atomic="true"
-                    >
-                      {stockCleanupInlineFeedback && (
-                        <Banner
-                          tone={stockCleanupInlineFeedback.tone || "info"}
-                          title={stockCleanupInlineFeedback.title}
-                          onDismiss={() => setStockCleanupInlineFeedback(null)}
-                        >
-                          <BlockStack gap="150">
-                            <Text as="p" variant="bodySm">
-                              {stockCleanupInlineFeedback.message}
-                            </Text>
-                            {stockCleanupOutcomeReport && (
-                              <InlineStack gap="200" wrap>
-                                <Badge tone={stockCleanupOutcomeReport.stagedEntries.length > 0 ? "success" : "new"}>
-                                  {`Staged: ${stockCleanupOutcomeReport.stagedEntries.length}`}
-                                </Badge>
-                                <Badge tone={stockCleanupOutcomeReport.preservedOperatorEntries.length > 0 ? "warning" : "new"}>
-                                  {`Skipped (Preserved Existing): ${stockCleanupOutcomeReport.preservedOperatorEntries.length}`}
-                                </Badge>
-                                <Badge tone={stockCleanupOutcomeReport.rejectedStaleEntries.length > 0 ? "critical" : "new"}>
-                                  {`Rejected (Stale): ${stockCleanupOutcomeReport.rejectedStaleEntries.length}`}
-                                </Badge>
-                              </InlineStack>
-                            )}
-                          </BlockStack>
-                        </Banner>
-                      )}
-                    </div>
-
-                    {stockCleanupPreview && (
-                      <Box padding="300" background="bg-surface" borderRadius="200" borderColor="border" borderWidth="1">
-                        <BlockStack gap="250">
-                          {/* COMPACT ACTION BAR & SELECTION STATUS */}
-                          <InlineStack align="space-between" blockAlign="center" wrap>
-                            <InlineStack gap="150" blockAlign="center" wrap>
-                              <Badge tone="info">
-                                {`Captured: ${stockCleanupPreview.summary.capturedProductCount} product(s)`}
-                              </Badge>
-                              <Badge tone={totalCleanupCandidateCount > 0 ? "success" : "new"}>
-                                {`Eligible: ${totalCleanupCandidateCount}`}
-                              </Badge>
-                              <Badge tone={selectedCleanupCandidateCount > 0 ? "attention" : "critical"}>
-                                {selectedCleanupCandidateCount > 0
-                                  ? `Selected: ${selectedCleanupCandidateCount} of ${totalCleanupCandidateCount}`
-                                  : `Nothing selected (0 of ${totalCleanupCandidateCount})`}
-                              </Badge>
-                              {stockCleanupPreview.summary.flaggedCount > 0 && (
-                                <Badge tone="warning">
-                                  {`Flagged: ${stockCleanupPreview.summary.flaggedCount}`}
-                                </Badge>
-                              )}
-                              {stockCleanupPreview.summary.skippedCount > 0 && (
-                                <Badge>
-                                  {`Preserved/Clean: ${stockCleanupPreview.summary.skippedCount}`}
-                                </Badge>
-                              )}
-                            </InlineStack>
-
-                            {totalCleanupCandidateCount > 0 && (
-                              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-                                <Button
-                                  size="slim"
-                                  variant="tertiary"
-                                  onClick={() => handleSelectAllStockCleanupCandidates(true)}
-                                  disabled={isLoadingData || isExecuting}
-                                >
-                                  Select All Candidates
-                                </Button>
-                                <Button
-                                  size="slim"
-                                  variant="tertiary"
-                                  onClick={() => handleSelectAllStockCleanupCandidates(false)}
-                                  disabled={isLoadingData || isExecuting}
-                                >
-                                  Deselect All
-                                </Button>
-                                <Button
-                                  size="slim"
-                                  variant="primary"
-                                  onClick={handleStageSelectedStockCleanupCandidates}
-                                  disabled={selectedCleanupCandidateCount === 0 || isLoadingData || isExecuting}
-                                >
-                                  {`Stage Selected Proposals for Review (${selectedCleanupCandidateCount}/${totalCleanupCandidateCount})`}
-                                </Button>
-                              </div>
-                            )}
-                          </InlineStack>
-
-                          {/* EXPANDABLE SKIPPED / STAGED OUTCOME DETAILS RIGHT UNDER THE STAGE BUTTON */}
-                          {stockCleanupOutcomeReport && (
-                            <Box padding="200" background="bg-surface-secondary" borderRadius="150" borderColor="border" borderWidth="1">
-                              <BlockStack gap="150">
-                                {stockCleanupOutcomeReport.stagedEntries.length > 0 && (
-                                  <details>
-                                    <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#166534" }}>
-                                      {`Staged for Review (${stockCleanupOutcomeReport.stagedEntries.length}) â€” Click to view destinations`}
-                                    </summary>
-                                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#166534" }}>
-                                      {stockCleanupOutcomeReport.stagedEntries.map((st, idx) => (
-                                        <div key={`staged-${idx}`} style={{ wordBreak: "break-word" }}>
-                                          â€¢ <strong>{st.productTitle}</strong> (<code>{st.destinationKey}</code>) â€” Staged for explicit approval below.
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </details>
-                                )}
-
-                                {stockCleanupOutcomeReport.preservedOperatorEntries.length > 0 && (
-                                  <details open={stockCleanupOutcomeReport.stagedEntries.length === 0}>
-                                    <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#854d0e" }}>
-                                      {`Skipped to Preserve Existing Approval / Edit / AI Proposal (${stockCleanupOutcomeReport.preservedOperatorEntries.length}) â€” Click to view reasons`}
-                                    </summary>
-                                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#713f12" }}>
-                                      {stockCleanupOutcomeReport.preservedOperatorEntries.map((p, idx) => (
-                                        <div key={`pres-${idx}`} style={{ wordBreak: "break-word" }}>
-                                          â€¢ <strong>{p.productTitle}</strong> â€” <code>{p.destinationKey}</code> ({p.fieldLabel}): {p.reason}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </details>
-                                )}
-
-                                {stockCleanupOutcomeReport.rejectedStaleEntries.length > 0 && (
-                                  <details open={stockCleanupOutcomeReport.stagedEntries.length === 0}>
-                                    <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#991b1b" }}>
-                                      {`Rejected Stale Candidates (${stockCleanupOutcomeReport.rejectedStaleEntries.length}) â€” Click to view reasons`}
-                                    </summary>
-                                    <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#991b1b" }}>
-                                      {stockCleanupOutcomeReport.rejectedStaleEntries.map((r, idx) => (
-                                        <div key={`stale-${idx}`} style={{ wordBreak: "break-word" }}>
-                                          â€¢ <strong>{r.productTitle}</strong> â€” <code>{r.destinationKey}</code> ({r.fieldLabel}): {r.reason}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </details>
-                                )}
-                              </BlockStack>
-                            </Box>
-                          )}
-
-                          {/* 1. EXPANDABLE CANDIDATE SELECTION & FULL BEFORE/AFTER REVIEW TABLE */}
-                          {totalCleanupCandidateCount > 0 ? (
-                            <details style={{ border: "1px solid #cbd5e1", borderRadius: "6px", padding: "8px 10px", backgroundColor: "#f8fafc" }}>
-                              <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "13px", color: "#0f172a" }}>
-                                {`Review & Select Eligible Replacement Candidates (${selectedCleanupCandidateCount} of ${totalCleanupCandidateCount} selected â€” Click to expand Before/After table)`}
-                              </summary>
-                              <div style={{ marginTop: "10px", overflowX: "auto" }}>
-                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", backgroundColor: "#ffffff" }}>
-                                  <thead>
-                                    <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
-                                      <th style={{ padding: "6px 8px" }}>Stage?</th>
-                                      <th style={{ padding: "6px 8px" }}>Product</th>
-                                      <th style={{ padding: "6px 8px" }}>Destination</th>
-                                      <th style={{ padding: "6px 8px" }}>Before (Current Stored)</th>
-                                      <th style={{ padding: "6px 8px" }}>After (Proposed Replacement)</th>
-                                      <th style={{ padding: "6px 8px" }}>Rule / Reason</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {stockCleanupPreview.candidates.map((cand) => {
-                                      const isChecked = stockCleanupSelectedMap[cand.candidateId] === true;
-                                      const isLongBefore = cand.beforeValue.length > 220;
-                                      const isLongAfter = cand.afterValue.length > 220;
-                                      return (
-                                        <tr key={cand.candidateId} style={{ borderBottom: "1px solid #e2e8f0", verticalAlign: "top" }}>
-                                          <td style={{ padding: "6px 8px" }}>
-                                            <input
-                                              type="checkbox"
-                                              checked={isChecked}
-                                              onChange={(e) =>
-                                                handleToggleStockCleanupCandidateSelection(cand.candidateId, e.target.checked)
-                                              }
-                                              aria-label={`Select cleanup candidate ${cand.productTitle} ${cand.destinationKey}`}
-                                            />
-                                          </td>
-                                          <td style={{ padding: "6px 8px", wordBreak: "break-word" }}>
-                                            <div style={{ fontWeight: "600" }}>{cand.productTitle}</div>
-                                            <div style={{ fontFamily: "monospace", color: "#475569" }}>{cand.productId}</div>
-                                          </td>
-                                          <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>
-                                            <div>{cand.destinationKey}</div>
-                                            <div style={{ color: "#475569", fontFamily: "sans-serif" }}>{cand.fieldLabel}</div>
-                                          </td>
-                                          <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#fff5f5" }}>
-                                            {isLongBefore ? (
-                                              <details>
-                                                <summary style={{ cursor: "pointer", fontWeight: "600" }}>
-                                                  {`${cand.beforeValue.slice(0, 180)}â€¦ (Click for full ${cand.beforeValue.length} chars)`}
-                                                </summary>
-                                                <div style={{ marginTop: "6px" }}>{cand.beforeValue}</div>
-                                              </details>
-                                            ) : (
-                                              cand.beforeValue
-                                            )}
-                                          </td>
-                                          <td style={{ padding: "6px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", backgroundColor: "#f0fdf4" }}>
-                                            {isLongAfter ? (
-                                              <details>
-                                                <summary style={{ cursor: "pointer", fontWeight: "600" }}>
-                                                  {`${cand.afterValue.slice(0, 180)}â€¦ (Click for full ${cand.afterValue.length} chars)`}
-                                                </summary>
-                                                <div style={{ marginTop: "6px" }}>{cand.afterValue}</div>
-                                              </details>
-                                            ) : (
-                                              cand.afterValue
-                                            )}
-                                          </td>
-                                          <td style={{ padding: "6px 8px", color: "#334155" }}>{cand.reason}</td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </details>
-                          ) : (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              No unambiguous false bezel replacement candidates were found in the captured product baselines.
-                            </Text>
-                          )}
-
-                          {/* 2. EXPANDABLE FLAGGED ITEMS, STONE-IDENTITY LIMITATIONS & CAPTURED GIDS */}
-                          {(stockCleanupPreview.flaggedItems.length > 0 ||
-                            stockCleanupPreview.stoneIdentityDiagnostics.length > 0 ||
-                            stockCleanupPreview.skippedItems.length > 0 ||
-                            stockCleanupPreview.unavailableProducts.length > 0 ||
-                            stockCleanupPreview.capturedProductIds.length > 0) && (
-                            <details style={{ border: "1px solid #e2e8f0", borderRadius: "6px", padding: "8px 10px", fontSize: "12px" }}>
-                              <summary style={{ cursor: "pointer", fontWeight: "600", color: "#334155" }}>
-                                {`Preview Diagnostics: Flagged (${stockCleanupPreview.flaggedItems.length}) | Stone-Identity Writer Limits (${stockCleanupPreview.stoneIdentityDiagnostics.length}) | Preserved/Clean (${stockCleanupPreview.skippedItems.length}) | Unavailable (${stockCleanupPreview.unavailableProducts.length})`}
-                              </summary>
-                              <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                                <div style={{ color: "#475569", wordBreak: "break-word" }}>
-                                  <strong>Fixed Captured Product GIDs ({stockCleanupPreview.capturedProductIds.length}):</strong>{" "}
-                                  <code>{stockCleanupPreview.capturedProductIds.join(", ") || "None"}</code>
-                                </div>
-
-                                {stockCleanupPreview.flaggedItems.length > 0 && (
-                                  <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
-                                    <BlockStack gap="100">
-                                      <Text as="p" variant="bodySm" fontWeight="bold" tone="critical">
-                                        Flagged Ambiguous or Contradictory Bezel Mentions ({stockCleanupPreview.flaggedItems.length} â€” Not Staged; Resolve Manually):
-                                      </Text>
-                                      {stockCleanupPreview.flaggedItems.map((flg, idx) => (
-                                        <div key={`${flg.productId}-${flg.destinationKey}-${idx}`} style={{ fontSize: "12px", wordBreak: "break-word" }}>
-                                          â€¢ <strong>{flg.productTitle}</strong> (<code>{flg.productId}</code>) â€” <code>{flg.destinationKey}</code>: {flg.reason} [Current: &quot;{flg.beforeValue.length > 160 ? `${flg.beforeValue.slice(0, 160)}â€¦` : flg.beforeValue}&quot;]
-                                        </div>
-                                      ))}
-                                    </BlockStack>
-                                  </Box>
-                                )}
-
-                                {stockCleanupPreview.stoneIdentityDiagnostics.length > 0 && (
-                                  <Box padding="200" background="bg-surface-warning" borderRadius="150" borderColor="border" borderWidth="1">
-                                    <BlockStack gap="100">
-                                      <Text as="p" variant="bodySm" fontWeight="bold">
-                                        Saved Stone-Identity Compatibility Writer Limitation Diagnostics ({stockCleanupPreview.stoneIdentityDiagnostics.length}):
-                                      </Text>
-                                      {stockCleanupPreview.stoneIdentityDiagnostics.map((diag) => (
-                                        <div key={diag.productId} style={{ fontSize: "12px", wordBreak: "break-word" }}>
-                                          â€¢ <strong>{diag.productTitle}</strong> (<code>{diag.productId}</code>) â€” Saved <code>custom.material</code>: <code>{String(diag.savedMaterial ?? "blank")}</code> | Saved <code>custom.primary_medium</code>: <code>{String(diag.savedPrimaryMedium ?? "blank")}</code> | Saved <code>custom.stone_family</code>: <code>{String(diag.savedStoneFamily ?? "blank")}</code>. <strong>Unresolved Writer Limitation:</strong> {diag.compatibilityWriterLimitation}
-                                        </div>
-                                      ))}
-                                    </BlockStack>
-                                  </Box>
-                                )}
-
-                                {stockCleanupPreview.skippedItems.length > 0 && (
-                                  <div style={{ color: "#475569", wordBreak: "break-word" }}>
-                                    <strong>Preserved / Clean Products ({stockCleanupPreview.skippedItems.length}):</strong>{" "}
-                                    {stockCleanupPreview.skippedItems.map((sk) => `${sk.productTitle} (${sk.status}: ${sk.reason})`).join(" | ")}
-                                  </div>
-                                )}
-
-                                {stockCleanupPreview.unavailableProducts.length > 0 && (
-                                  <div style={{ color: "#991b1b", wordBreak: "break-word" }}>
-                                    <strong>Unavailable Baselines ({stockCleanupPreview.unavailableProducts.length}):</strong>{" "}
-                                    {stockCleanupPreview.unavailableProducts.map((un) => `${un.productTitle} (${un.productId}: ${un.reason})`).join(" | ")}
-                                  </div>
-                                )}
-                              </div>
-                            </details>
-                          )}
-                        </BlockStack>
-                      </Box>
-                    )}
-                  </BlockStack>
-                </Box>
-
-                <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderColor="border" borderWidth="1">
-                  <BlockStack gap="150">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="h4" variant="headingSm" fontWeight="bold">
-                        Read-Only Sidekick Live Bench Monitoring Status
-                      </Text>
-                      <Badge tone={sidekickLiveSyncTone}>
-                        {`Sidekick Live Sync: ${sidekickLiveSyncWord} (${sidekickLiveSyncLifecycleLabel})`}
-                      </Badge>
-                    </InlineStack>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px 16px", fontSize: "13px", wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                      <div>
-                        <strong>Bench Selected:</strong>{" "}
-                        {isBenchSelectedBool
-                          ? `Yes (${selectedBenchId})`
-                          : isUnselectedBlankPreviewActive
-                            ? "No (Unselected New-Product Draft / Preview)"
-                            : "No (None)"}
-                      </div>
-                      <div>
-                        <strong>Baseline Loaded:</strong> {isBaselineLoadedBool ? "Yes" : "No"} ({activeBaselineMeta?.loadedAt || "Not available"})
-                      </div>
-                      <div>
-                        <strong>Unsaved Working Changes:</strong> {unsavedWorkingChangesWord} ({unsavedWorkingChangesDetail})
-                      </div>
-                      <div>
-                        <strong>Verified Saved in Session:</strong> {verifiedSavedWord} ({verifiedSavedDetail})
-                      </div>
-                    </div>
-
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      <strong>Session:</strong> {liveBenchSyncStatus.benchSessionId || benchSessionIdRef.current || "Not available"} | <strong>Revision:</strong> {liveBenchSyncStatus.benchRevision !== null ? liveBenchSyncStatus.benchRevision : "Not available"} | <strong>Selection State:</strong> {liveBenchSyncStatus.selectionState || "Not available"} | <strong>Synced Product:</strong> {liveBenchSyncStatus.productId || (liveBenchSyncStatus.selectionState === "unselected_preview" ? "None (Unselected Draft)" : "Not available")} | <strong>Report ID:</strong> {liveBenchSyncStatus.reportId || "Not available"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      <strong>Client State Changed:</strong> {liveBenchSyncStatus.clientStateChangedAt || "Not available"} | <strong>Baseline Loaded At:</strong> {liveBenchSyncStatus.baselineLoadedAt || activeBaselineMeta?.loadedAt || "Not available"} | <strong>Server Received At:</strong> {liveBenchSyncStatus.serverReceivedAt || "Not available"}
-                      {liveBenchSyncStatus.errorMessage ? ` | Error: ${liveBenchSyncStatus.errorMessage}` : ""}
-                    </Text>
-                  </BlockStack>
-                </Box>
+                <SidekickLiveSyncStatusBox
+                  isBenchSelectedBool={isBenchSelectedBool}
+                  selectedBenchId={selectedBenchId}
+                  isUnselectedBlankPreviewActive={isUnselectedBlankPreviewActive}
+                  isBaselineLoadedBool={isBaselineLoadedBool}
+                  activeBaselineMeta={activeBaselineMeta}
+                  activeBenchStats={activeBenchStats}
+                  unselectedDraftStats={unselectedDraftStats}
+                  hasSeedOrContext={hasSeedOrContext}
+                  activeManualEditCount={activeManualEditCount}
+                  activeExplicitApprovalCount={activeExplicitApprovalCount}
+                  activeKeepOriginalCount={activeKeepOriginalCount}
+                  activeProposedCount={activeProposedCount}
+                  activeApprovedWriteCount={activeApprovedWriteCount}
+                  activeBenchHistory={activeBenchHistory}
+                  liveBenchSyncStatus={liveBenchSyncStatus}
+                  benchSessionId={benchSessionIdRef.current}
+                  lastLiveStateRevision={lastLiveStateRevisionRef.current}
+                  lastLiveStateDigest={lastLiveStateDigestRef.current}
+                  lastLiveSyncedDigest={lastLiveSyncedDigestRef.current}
+                />
               </BlockStack>
             </Card>
 
-            {DEV_SHOW_ALL_TEMPLATE_FIELDS && activeFilter !== "Needs review" && (isDevUnselectedPreview || Boolean(activeBenchData)) && (
-              <Card padding="400">
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Badge tone="warning">DEV: Show All Template Fields</Badge>
-                      <Text as="h3" variant="headingMd" fontWeight="bold">
-                        Tab 3 Inspectable Inventory &amp; Rendered Row Audit ({isDevUnselectedPreview ? "Unselected New-Product Draft" : `Active Product: ${selectedBenchId}`} | Filter: {activeFilter})
-                      </Text>
-                    </InlineStack>
-                    <Badge tone={templateAuditSummary.measurementStatus === "complete" ? "success" : "attention"}>
-                      {templateAuditSummary.measurementStatus === "complete"
-                        ? `Measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups)`
-                        : `Measuring (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
-                    </Badge>
-                  </InlineStack>
-
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    <strong>Scope:</strong> Counts below distinguish the complete 93-slot logical inventory (62 working capabilities + 31 parked/excluded entries across 11 drawers), full inventory rows (including per-image media expansion), filtered row descriptors matching <code>{activeFilter}</code>, bay expansion state, and scoped post-commit mounted DOM row elements. Collapsed drawers mount 0 DOM rows while preserving their full logical inventory.
-                  </Text>
-
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-                      <thead>
-                        <tr style={{ backgroundColor: "#f1f5f9", borderBottom: "2px solid #cbd5e1", textAlign: "left" }}>
-                          <th style={{ padding: "8px 10px" }}>Template Group</th>
-                          <th style={{ padding: "8px 10px" }}>Logical Slots</th>
-                          <th style={{ padding: "8px 10px" }}>Running Logical Subtotal</th>
-                          <th style={{ padding: "8px 10px" }}>Full Inventory Rows</th>
-                          <th style={{ padding: "8px 10px" }}>Filtered Descriptors ({activeFilter})</th>
-                          <th style={{ padding: "8px 10px" }}>Bay State</th>
-                          <th style={{ padding: "8px 10px" }}>Mounted DOM Rows</th>
-                          <th style={{ padding: "8px 10px" }}>Running Mounted DOM Subtotal</th>
-                          <th style={{ padding: "8px 10px" }}>Notes / Media Expansion</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(() => {
-                          let runningLogical = 0;
-                          let runningMountedDom = 0;
-                          let allDomMeasuredSoFar = true;
-
-                          return templateAuditSummary.groupSubtotals.map((grp, idx) => {
-                            runningLogical += grp.logicalCount;
-                            const rawSecRec = activeSectionMeasurementsMap[grp.heading] || null;
-                            const filteredGrp = filteredDescriptorAuditSummary.groupSubtotals[idx] || null;
-                            const isGrpMeasured = grp.measurementStatus === "measured" && typeof grp.renderedCount === "number";
-                            const isFilteredMeasured = filteredGrp && filteredGrp.measurementStatus === "measured" && typeof filteredGrp.renderedCount === "number";
-                            const hasDomCount =
-                              rawSecRec &&
-                              typeof rawSecRec.mountedDomRowCount === "number" &&
-                              Number.isFinite(rawSecRec.mountedDomRowCount);
-
-                            if (isGrpMeasured && hasDomCount) {
-                              runningMountedDom += rawSecRec.mountedDomRowCount;
-                            } else {
-                              allDomMeasuredSoFar = false;
-                            }
-
-                            const bayStateLabel =
-                              !isGrpMeasured || typeof rawSecRec?.isExpanded !== "boolean"
-                                ? "Not measured"
-                                : rawSecRec.isExpanded
-                                  ? "Expanded"
-                                  : "Collapsed";
-
-                            let rowNote = grp.heading === TAB3_PARKED_DRAWER_HEADING
-                              ? "31 parked/excluded read-only registry slots"
-                              : "1:1 canonical working rows";
-                            if (!isGrpMeasured) {
-                              rowNote = "Not measured";
-                            } else if (grp.logicalImageAltCount > 0) {
-                              const compatNote =
-                                grp.compatibilityRenderedCount > 0
-                                  ? ` + ${grp.compatibilityRenderedCount} existing custom.alt_text compatibility row`
-                                  : "";
-                              if (templateAuditSummary.mediaControlCount > 0) {
-                                rowNote = `Includes ${templateAuditSummary.mediaControlCount} per-image media alt control(s) from 1 logical native_image_alt capability${compatNote}`;
-                              } else if (templateAuditSummary.hasZeroImagePlaceholder) {
-                                rowNote = `Includes 1 read-only zero-image placeholder row for native_image_alt${compatNote}`;
-                              } else if (compatNote) {
-                                rowNote = `Includes ${compatNote.slice(3)}`;
-                              }
-                            } else if (grp.nonMediaDiscrepancy !== null && grp.nonMediaDiscrepancy !== 0) {
-                              rowNote = `Non-media row delta: ${grp.nonMediaDiscrepancy > 0 ? `+${grp.nonMediaDiscrepancy}` : grp.nonMediaDiscrepancy}`;
-                            }
-
-                            return (
-                              <tr key={grp.heading} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                                <td style={{ padding: "6px 10px", fontWeight: "600" }}>{grp.heading}</td>
-                                <td style={{ padding: "6px 10px", fontFamily: "monospace" }}>{grp.logicalCount}</td>
-                                <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>{runningLogical}</td>
-                                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
-                                  {isGrpMeasured ? grp.renderedCount : "Not measured"}
-                                </td>
-                                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
-                                  {isFilteredMeasured ? filteredGrp.renderedCount : "Not measured"}
-                                </td>
-                                <td style={{ padding: "6px 10px", color: "#475569" }}>
-                                  {bayStateLabel}
-                                </td>
-                                <td style={{ padding: "6px 10px", fontFamily: "monospace", fontWeight: "600" }}>
-                                  {isGrpMeasured && hasDomCount ? rawSecRec.mountedDomRowCount : "Not measured"}
-                                </td>
-                                <td style={{ padding: "6px 10px", fontFamily: "monospace", color: "#475569" }}>
-                                  {allDomMeasuredSoFar ? runningMountedDom : "Not measured (incomplete)"}
-                                </td>
-                                <td style={{ padding: "6px 10px", color: "#475569" }}>{rowNote}</td>
-                              </tr>
-                            );
-                          });
-                        })()}
-                      </tbody>
-                      <tfoot>
-                        {(() => {
-                          let totalMountedDom = 0;
-                          let allGroupsHaveDomCount =
-                            templateAuditSummary.measurementStatus === "complete" &&
-                            templateAuditSummary.totalGroupCount > 0;
-                          if (allGroupsHaveDomCount) {
-                            for (let i = 0; i < templateAuditSummary.groupSubtotals.length; i += 1) {
-                              const gHeading = templateAuditSummary.groupSubtotals[i].heading;
-                              const secRec = activeSectionMeasurementsMap[gHeading];
-                              if (
-                                secRec &&
-                                typeof secRec.mountedDomRowCount === "number" &&
-                                Number.isFinite(secRec.mountedDomRowCount)
-                              ) {
-                                totalMountedDom += secRec.mountedDomRowCount;
-                              } else {
-                                allGroupsHaveDomCount = false;
-                                break;
-                              }
-                            }
-                          }
-                          return (
-                            <tr style={{ backgroundColor: "#e2e8f0", fontWeight: "700", borderTop: "2px solid #94a3b8" }}>
-                              <td style={{ padding: "8px 10px" }}>GRAND TOTAL ({templateAuditSummary.totalGroupCount} Groups)</td>
-                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
-                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{templateAuditSummary.totalLogicalCapabilities}</td>
-                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                                {templateAuditSummary.totalRenderedRows !== null
-                                  ? templateAuditSummary.totalRenderedRows
-                                  : `Not measured (${templateAuditSummary.measuredGroupCount}/${templateAuditSummary.totalGroupCount} groups reported)`}
-                              </td>
-                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                                {filteredDescriptorAuditSummary.totalRenderedRows !== null
-                                  ? filteredDescriptorAuditSummary.totalRenderedRows
-                                  : `Not measured (${filteredDescriptorAuditSummary.measuredGroupCount}/${filteredDescriptorAuditSummary.totalGroupCount} groups reported)`}
-                              </td>
-                              <td style={{ padding: "8px 10px" }}>
-                                {templateAuditSummary.measurementStatus === "complete" ? "Measured" : "Incomplete"}
-                              </td>
-                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                                {allGroupsHaveDomCount ? totalMountedDom : "Not measured"}
-                              </td>
-                              <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>
-                                {allGroupsHaveDomCount ? totalMountedDom : "Not measured"}
-                              </td>
-                              <td style={{ padding: "8px 10px" }}>
-                                {templateAuditSummary.mediaControlCount !== null
-                                  ? `Per-Image Media Controls: ${templateAuditSummary.mediaControlCount} | Zero-Image Placeholder: ${templateAuditSummary.hasZeroImagePlaceholder ? "1 (Active)" : "0"}${templateAuditSummary.compatibilityRowCount ? ` | Compat Rows: ${templateAuditSummary.compatibilityRowCount}` : ""}`
-                                  : "Media breakdown: Not measured"}
-                              </td>
-                            </tr>
-                          );
-                        })()}
-                      </tfoot>
-                    </table>
-                  </div>
-                </BlockStack>
-              </Card>
-            )}
+            <DevTemplateAuditCard
+              show={Boolean(
+                DEV_SHOW_ALL_TEMPLATE_FIELDS &&
+                activeFilter !== "Needs review" &&
+                (isDevUnselectedPreview || Boolean(activeBenchData))
+              )}
+              isDevUnselectedPreview={isDevUnselectedPreview}
+              selectedBenchId={selectedBenchId}
+              activeFilter={activeFilter}
+              parkedDrawerHeading={TAB3_PARKED_DRAWER_HEADING}
+              templateAuditSummary={templateAuditSummary}
+              filteredDescriptorAuditSummary={filteredDescriptorAuditSummary}
+              activeSectionMeasurementsMap={activeSectionMeasurementsMap}
+            />
 
             {!selectedBenchId || !activeBenchData ? (
               <BlockStack gap="600">
@@ -4648,7 +4033,7 @@ export function OperationsMatrixTab({ products }) {
 
                     {isNeedsReviewEmptyState && (
                       <Card padding="400">
-                        <Banner tone="success" title="Review complete â€” no fields currently require review in this view">
+                        <Banner tone="success" title="Review complete \u2014 no fields currently require review in this view">
                           <BlockStack gap="100">
                             <Text as="p" variant="bodyMd">
                               All review items in this unselected draft view are currently resolved. <strong>Review complete does not mean saved to Shopify.</strong>
@@ -4772,63 +4157,11 @@ export function OperationsMatrixTab({ products }) {
                 </div>
 
                 {/* ACCESSIBLE INLINE OUTCOME BANNER FOR JSON CORRECTION IMPORT */}
-                <div
-                  ref={correctionImportFeedbackRef}
-                  role={correctionImportFeedback?.tone === "critical" ? "alert" : "status"}
-                  aria-live={correctionImportFeedback?.tone === "critical" ? "assertive" : "polite"}
-                  aria-atomic="true"
-                >
-                  {correctionImportFeedback && (
-                    <Banner
-                      tone={correctionImportFeedback.tone || "info"}
-                      title={correctionImportFeedback.title}
-                      onDismiss={() => setCorrectionImportFeedback(null)}
-                    >
-                      <BlockStack gap="150">
-                        <Text as="p" variant="bodySm">
-                          {correctionImportFeedback.message}
-                        </Text>
-
-                        {Array.isArray(correctionImportFeedback.appliedItems) &&
-                          correctionImportFeedback.appliedItems.length > 0 && (
-                            <details open>
-                              <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#166534" }}>
-                                {`Staged Corrections (${correctionImportFeedback.appliedItems.length}) â€” Click to inspect field diffs`}
-                              </summary>
-                              <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", color: "#14532d" }}>
-                                {correctionImportFeedback.appliedItems.map((item, idx) => (
-                                  <div key={`corr-app-${idx}`} style={{ wordBreak: "break-word" }}>
-                                    â€¢ <strong>{item.fieldLabel || item.fieldKey}</strong> (<code>{item.fieldKey}</code> &rarr; <code>{item.targetKeyForProposal}</code>):{" "}
-                                    <strong>Proposed:</strong> &quot;{item.normalizedValue.length > 180 ? `${item.normalizedValue.slice(0, 180)}â€¦` : item.normalizedValue}&quot;{" "}
-                                    <span style={{ color: "#475569" }}>
-                                      [Reason: {item.reason}]
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </details>
-                          )}
-
-                        {Array.isArray(correctionImportFeedback.rejectedItems) &&
-                          correctionImportFeedback.rejectedItems.length > 0 && (
-                            <details open>
-                              <summary style={{ cursor: "pointer", fontWeight: "700", fontSize: "12px", color: "#991b1b" }}>
-                                {`Rejected Items (${correctionImportFeedback.rejectedItems.length}) â€” Entire file rejected; 0 fields modified`}
-                              </summary>
-                              <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", color: "#991b1b" }}>
-                                {correctionImportFeedback.rejectedItems.map((rej, idx) => (
-                                  <div key={`corr-rej-${idx}`} style={{ wordBreak: "break-word" }}>
-                                    â€¢ <strong>{rej.fieldKey || `Item #${rej.index ?? idx}`}</strong>{" "}
-                                    (<code>{rej.code}</code>): {rej.reason}
-                                  </div>
-                                ))}
-                              </div>
-                            </details>
-                          )}
-                      </BlockStack>
-                    </Banner>
-                  )}
-                </div>
+                <CorrectionImportFeedbackBanner
+                  correctionImportFeedback={correctionImportFeedback}
+                  correctionImportFeedbackRef={correctionImportFeedbackRef}
+                  onDismiss={() => setCorrectionImportFeedback(null)}
+                />
 
                 <BenchDiagnosticHeader
                   selectedBenchId={selectedBenchId}
@@ -4862,7 +4195,7 @@ export function OperationsMatrixTab({ products }) {
 
                 {isNeedsReviewEmptyState && (
                   <Card padding="400">
-                    <Banner tone="success" title="Review complete â€” no fields currently require review">
+                    <Banner tone="success" title="Review complete \u2014 no fields currently require review">
                       <BlockStack gap="100">
                         <Text as="p" variant="bodyMd">
                           All review items for <code>{selectedBenchId}</code> are resolved in browser state ({activeApprovedWriteCount} field{activeApprovedWriteCount === 1 ? "" : "s"} approved for write, {activeKeepOriginalCount} keep-original decision{activeKeepOriginalCount === 1 ? "" : "s"}). <strong>Review complete does not mean saved to Shopify.</strong>
