@@ -424,25 +424,11 @@ export function evaluateStandardizedReferenceChoicesResponse({
     );
   });
 
-  const allDestRefListsReadComplete =
-    hasCurrentRefListsMap &&
-    activeBareKeys.every((stdKey) => {
-      const destKey = `shopify.${stdKey}`;
-      const refListEntry = rawResponse.currentReferenceLists[destKey];
-      return Boolean(
-        refListEntry &&
-          typeof refListEntry === "object" &&
-          refListEntry.readComplete === true &&
-          refListEntry.parseValid === true
-      );
-    });
-
   if (
     rawResponse.defsReadComplete !== true ||
     !hasResolutionsMap ||
     !hasCurrentRefListsMap ||
     !hasCategoryEligibilityMap ||
-    !allDestRefListsReadComplete ||
     unscopedTopErrors.length > 0
   ) {
     const globalFailureReasons =
@@ -453,9 +439,7 @@ export function evaluateStandardizedReferenceChoicesResponse({
           : [
               rawResponse.defsReadComplete !== true
                 ? "Live PRODUCT metafield definitions read did not complete."
-                : !allDestRefListsReadComplete
-                  ? "Product standardized metafield reference list read or parse did not complete."
-                  : "Top-level resolveStandardizedCandidates prerequisite evidence was missing or incomplete."
+                : "Top-level resolveStandardizedCandidates prerequisite evidence was missing or incomplete."
             ];
 
     return makeFailureRecord(
@@ -486,19 +470,67 @@ export function evaluateStandardizedReferenceChoicesResponse({
       return Boolean(bracketMatch && bracketMatch[1].trim() === destKey);
     });
 
+    const isRefListEntryPresent = Boolean(
+      refListEntry && typeof refListEntry === "object"
+    );
+    const isRefListCompleteAndValid = Boolean(
+      isRefListEntryPresent &&
+        refListEntry.readComplete === true &&
+        refListEntry.parseValid === true
+    );
+
     if (!resObj || typeof resObj !== "object") {
+      const isCategoryIneligibleWithoutResObj = Boolean(
+        isRefListCompleteAndValid &&
+          catEligEntry &&
+          typeof catEligEntry === "object" &&
+          catEligEntry.isComplete === true &&
+          catEligEntry.isEligible === false
+      );
+
+      if (isCategoryIneligibleWithoutResObj) {
+        categoryIneligibleCount += 1;
+        verifiedMapByDest[destKey] = {
+          destination: destKey,
+          attributeKey: stdKey,
+          status: "category_ineligible",
+          isComplete: true,
+          isCategoryEligible: false,
+          categoryEligibility: catEligEntry,
+          currentAssignment: refListEntry,
+          restrictedMetaobjectDefinitionId: expectedDefId,
+          availableEntries: [],
+          errors: catEligEntry.reason ? [catEligEntry.reason] : []
+        };
+        continue;
+      }
+
       incompleteOrBlockedCount += 1;
+      const missingResErrors =
+        scopedTopErrorsForDest.length > 0
+          ? [...scopedTopErrorsForDest]
+          : [`Missing resolution entry for ${destKey}.`];
+      if (!isRefListCompleteAndValid) {
+        const refErrMsg = !isRefListEntryPresent
+          ? `Missing currentReferenceLists entry for ${destKey}.`
+          : refListEntry.parseError ||
+            `Stored reference list read or parse was incomplete on ${destKey}.`;
+        if (!missingResErrors.includes(refErrMsg)) {
+          missingResErrors.push(refErrMsg);
+        }
+      }
+
       verifiedMapByDest[destKey] = {
         destination: destKey,
+        attributeKey: stdKey,
         status: "incomplete",
         isComplete: false,
         isCategoryEligible: false,
+        categoryEligibility: catEligEntry,
+        currentAssignment: refListEntry || null,
         restrictedMetaobjectDefinitionId: expectedDefId,
         availableEntries: [],
-        errors:
-          scopedTopErrorsForDest.length > 0
-            ? scopedTopErrorsForDest
-            : [`Missing resolution entry for ${destKey}.`]
+        errors: missingResErrors
       };
       continue;
     }
@@ -533,13 +565,6 @@ export function evaluateStandardizedReferenceChoicesResponse({
         catEligEntry.isEligible === true &&
         resObj.isCategoryEligible === true &&
         resObj.status !== "category_ineligible"
-    );
-
-    const isRefListCompleteAndValid = Boolean(
-      refListEntry &&
-        typeof refListEntry === "object" &&
-        refListEntry.readComplete === true &&
-        refListEntry.parseValid === true
     );
 
     const rawFieldErrors = Array.isArray(resObj.errors)
@@ -621,8 +646,10 @@ export function evaluateStandardizedReferenceChoicesResponse({
     }
     if (!isRefListCompleteAndValid) {
       mergedFieldErrors.push(
-        refListEntry?.parseError ||
-          `Stored reference list read or parse was incomplete on ${destKey}.`
+        !isRefListEntryPresent
+          ? `Missing currentReferenceLists entry for ${destKey}.`
+          : refListEntry.parseError ||
+              `Stored reference list read or parse was incomplete on ${destKey}.`
       );
     }
     if (
@@ -635,6 +662,7 @@ export function evaluateStandardizedReferenceChoicesResponse({
 
     verifiedMapByDest[destKey] = {
       ...resObj,
+      currentAssignment: refListEntry || resObj.currentAssignment || null,
       restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
       isComplete: isFieldEligibleAndComplete,
       availableEntries: isFieldEligibleAndComplete ? verifiedAvailable : [],

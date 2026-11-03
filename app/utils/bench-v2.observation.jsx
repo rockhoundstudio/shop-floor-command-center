@@ -6,7 +6,6 @@
 // ==========================================================================
 
 import {
-  SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
   isExactMetaobjectGid,
   extractEntryGid,
   extractEntryLabel,
@@ -174,19 +173,6 @@ export function inspectVerifiedReferenceEvidenceForDestination(
         !Array.isArray(topResEnvelope.categoryEligibility)
     );
 
-    const allDestRefListsReadComplete =
-      hasCurrentRefListsMap &&
-      SUPPORTED_STANDARDIZED_REFERENCE_KEYS.every((stdKey) => {
-        const dest = `shopify.${stdKey}`;
-        const refListEntry = topResEnvelope.currentReferenceLists[dest];
-        return Boolean(
-          refListEntry &&
-            typeof refListEntry === "object" &&
-            refListEntry.readComplete === true &&
-            refListEntry.parseValid === true
-        );
-      });
-
     const unscopedOrMatchingTopErrors = topRawErrors.filter((errText) => {
       const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
       if (!bracketMatch) return true;
@@ -210,26 +196,44 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       !hasResolutionsMap ||
       !hasCurrentRefListsMap ||
       !hasCategoryEligibilityMap ||
-      !allDestRefListsReadComplete ||
       !categoryMatchesBaseline ||
       unscopedOrMatchingTopErrors.length > 0
     ) {
       const topErr =
         unscopedOrMatchingTopErrors[0] ||
-        topRawErrors[0] ||
         (!categoryMatchesBaseline
           ? "Product category changed since reference resolution was loaded."
           : topResEnvelope.defsReadComplete !== true
             ? "Live PRODUCT metafield definitions read did not complete."
-            : !allDestRefListsReadComplete
-              ? "Product standardized reference list read or parse did not complete."
-              : "Top-level standardized reference resolution failed prerequisite or identity checks.");
+            : "Top-level standardized reference resolution failed prerequisite or identity checks.");
       return {
         evidenceLoaded: true,
         isComplete: false,
         restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
         entriesByGid: new Map(),
         error: topErr
+      };
+    }
+
+    const destRefListEntry = topResEnvelope.currentReferenceLists[destinationKey];
+    const isDestRefListCompleteAndValid = Boolean(
+      destRefListEntry &&
+        typeof destRefListEntry === "object" &&
+        destRefListEntry.readComplete === true &&
+        destRefListEntry.parseValid === true
+    );
+
+    if (!isDestRefListCompleteAndValid) {
+      const destRefErr = !destRefListEntry || typeof destRefListEntry !== "object"
+        ? `Missing currentReferenceLists entry for "${destinationKey}".`
+        : destRefListEntry.parseError ||
+          `Stored reference list read or parse was incomplete for "${destinationKey}".`;
+      return {
+        evidenceLoaded: true,
+        isComplete: false,
+        restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
+        entriesByGid: new Map(),
+        error: destRefErr
       };
     }
   }
@@ -251,6 +255,28 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       error: topResEnvelope
         ? `Missing resolution entry for "${destinationKey}" in standardized reference response.`
         : `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Load Reference Choices" in Drawer 10 to verify allowed entries.`
+    };
+  }
+
+  const refAssignmentObj =
+    topResEnvelope?.currentReferenceLists?.[destinationKey] ||
+    resolutionEntry.currentAssignment ||
+    null;
+
+  if (
+    !refAssignmentObj ||
+    typeof refAssignmentObj !== "object" ||
+    refAssignmentObj.readComplete !== true ||
+    refAssignmentObj.parseValid !== true
+  ) {
+    return {
+      evidenceLoaded: true,
+      isComplete: false,
+      restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
+      entriesByGid: new Map(),
+      error:
+        refAssignmentObj?.parseError ||
+        `Stored reference list read or parse was incomplete for "${destinationKey}".`
     };
   }
 
@@ -312,27 +338,6 @@ export function inspectVerifiedReferenceEvidenceForDestination(
     };
   }
 
-  const refAssignmentObj =
-    resolutionEntry.currentAssignment ||
-    topResEnvelope?.currentReferenceLists?.[destinationKey] ||
-    null;
-
-  if (
-    refAssignmentObj &&
-    typeof refAssignmentObj === "object" &&
-    (refAssignmentObj.readComplete !== true || refAssignmentObj.parseValid !== true)
-  ) {
-    return {
-      evidenceLoaded: true,
-      isComplete: false,
-      restrictedMetaobjectDefinitionId: resolvedDefId,
-      entriesByGid: new Map(),
-      error:
-        refAssignmentObj.parseError ||
-        `Stored reference list read or parse was incomplete for "${destinationKey}".`
-    };
-  }
-
   const fieldErrors = Array.isArray(resolutionEntry.errors)
     ? resolutionEntry.errors.filter((e) => typeof e === "string" && e.trim() !== "")
     : [];
@@ -391,7 +396,7 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       if (isExactMetaobjectGid(gid) && defId === resolvedDefId) {
         entriesByGid.set(gid, {
           id: gid,
-          label: extractEntryLabel(val) || gid,
+          label,
           definitionId: defId
         });
       }
