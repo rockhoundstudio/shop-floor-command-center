@@ -115,7 +115,10 @@ export const BENCH_V2_OPT_IN_UNHELD_BARE_KEYS = Object.freeze(
     "stone_family",
     "cut_and_shape",
     "stone_shape",
-    "color"
+    "color",
+    "chain_cord_length_in",
+    "accessory_dimensions_mm",
+    "fitting_opening_mm"
   ])
 );
 
@@ -125,7 +128,10 @@ export const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
     "custom.stone_family",
     "custom.cut_and_shape",
     "custom.stone_shape",
-    "custom.color"
+    "custom.color",
+    "custom.chain_cord_length_in",
+    "custom.accessory_dimensions_mm",
+    "custom.fitting_opening_mm"
   ])
 );
 
@@ -149,7 +155,10 @@ export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.chain_material": "single_line_text_field",
   "custom.chain_link_type": "single_line_text_field",
   "custom.jewelry_finding_type": "single_line_text_field",
-  "custom.google_product_category": "single_line_text_field"
+  "custom.google_product_category": "single_line_text_field",
+  "custom.chain_cord_length_in": "single_line_text_field",
+  "custom.accessory_dimensions_mm": "single_line_text_field",
+  "custom.fitting_opening_mm": "single_line_text_field"
 });
 
 // Exact 54 bare provenance keys used by Bench V2 AI Scan (excluding cancelled
@@ -257,7 +266,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Manual bench measurements: dimensions (mm) and stone weight (grams) connected for manual entry and exact-value approval (excluded from AI scan), plus 4 unverified measurement holds (overall-solid-length omitted as cancelled)."
+    description: "Manual bench measurements: stone dimensions (mm), stone weight (grams), chain or cord length (in), accessory exterior dimensions (mm), and fitting/opening/grip dimensions (mm) connected for manual entry and exact-value approval (excluded from AI scan), while actual whole-product weight (g) remains held read-only (overall-solid-length omitted as cancelled)."
   }),
   Object.freeze({
     drawerId: "conditional_setting_accessory",
@@ -837,23 +846,29 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "number_decimal",
     "Capability #59: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
   ),
-  defineMeasurementHoldField(
+  defineBatch1CustomField(
+    "manual_measurements",
+    "SUB_HARNESS_2",
     "chain_cord_length_in",
-    "Chain or Cord Length (in) (Unverified Hold)",
-    "single_line_text_field",
-    "Capability #60: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
+    "Chain or Cord Length (in)",
+    "Manual chain or cord length measurement in inches (single_line_text_field, max 255 chars), preserving adjustable/extender notation. Excluded from AI generation/staging; requires independent exact-value approval.",
+    { isManualOnlyNoAi: true }
   ),
-  defineMeasurementHoldField(
+  defineBatch1CustomField(
+    "manual_measurements",
+    "SUB_HARNESS_2",
     "accessory_dimensions_mm",
-    "Accessory Exterior Dimensions (mm) (Unverified Hold)",
-    "single_line_text_field",
-    "Capability #61: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
+    "Accessory Exterior Dimensions (mm)",
+    "Manual labeled exterior dimensions/width/thickness of accessory or setting in millimeters (single_line_text_field, max 255 chars; distinct from stone custom.dimensions_mm). Excluded from AI generation/staging; requires independent exact-value approval.",
+    { isManualOnlyNoAi: true }
   ),
-  defineMeasurementHoldField(
+  defineBatch1CustomField(
+    "manual_measurements",
+    "SUB_HARNESS_2",
     "fitting_opening_mm",
-    "Fitting / Opening / Grip Dimensions (mm) (Unverified Hold)",
-    "single_line_text_field",
-    "Capability #62: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
+    "Fitting / Opening / Grip Dimensions (mm)",
+    "Manual labeled passage/bail opening/grip/peg/hole measurements in millimeters (single_line_text_field, max 255 chars; distinct from stone custom.dimensions_mm and custom.accessory_dimensions_mm). Excluded from AI generation/staging; requires independent exact-value approval.",
+    { isManualOnlyNoAi: true }
   ),
 
   // DRAWER 6: CONDITIONAL SETTING/ACCESSORY FACTS (SUB_HARNESS_2 — CONNECTED)
