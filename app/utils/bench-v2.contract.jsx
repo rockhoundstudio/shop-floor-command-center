@@ -1,5 +1,5 @@
 // == ========================================================================
-// ROCKHOUND STUDIO — BENCH V2 PURE FIELD & DRAWER CONTRACT
+// ROCKHOUND STUDIO â€” BENCH V2 PURE FIELD & DRAWER CONTRACT
 // File: app/utils/bench-v2.contract.jsx
 // Pure browser-safe contract module: zero React hooks/effects, zero storage,
 // zero GraphQL/network calls, zero server-only imports.
@@ -94,7 +94,7 @@ export {
 
 const COLLECTION_DATE_PLACEHOLDER_REGEX = /^(n\/a|none|unknown)$/i;
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
-constPLAIN_TEXT_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PLAIN_TEXT_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isBlankOrWhitespaceOnly = (str) =>
   typeof str !== "string" || str.trim() === "";
@@ -139,11 +139,11 @@ export function checkExistingWriterStringFidelity(exactProposedValue) {
         "Existing writer (executeRepairPlan) trims leading/trailing whitespace on save, which would alter your exact untrimmed value. Remove leading/trailing whitespace before approving for save."
     };
   }
-  if (/^⚠️\s*/.test(exactProposedValue)) {
+  if (/^âš ï¸\s*/.test(exactProposedValue)) {
     return {
       faithful: false,
       reason:
-        "Existing writer (normalizeMetafieldValue) strips leading '⚠️' prefixes, which would alter your exact approved value. Remove the prefix before approving for save."
+        "Existing writer (normalizeMetafieldValue) strips leading 'âš ï¸' prefixes, which would alter your exact approved value. Remove the prefix before approving for save."
     };
   }
   return {
@@ -851,7 +851,7 @@ export function evaluateBenchV2FieldRow({
   if (contract.isWritableInBatch1) {
     if (!baselineObs.evidenceAvailable) {
       if (baselineObs.presence === "multiple_variants_hold") {
-        connectionStatus = "Held (Multiple Variants — Single-Variant Target Required)";
+        connectionStatus = "Held (Multiple Variants â€” Single-Variant Target Required)";
       } else if (baselineObs.presence === "zero_variants_hold") {
         connectionStatus = "Blocked (Product Has Zero Variants)";
       } else if (baselineObs.presence === "invalid_variant_gid") {
@@ -901,19 +901,19 @@ export function evaluateBenchV2FieldRow({
       }
     } else if (isShopifyReference) {
       if (refEvidence && refEvidence.isComplete) {
-        connectionStatus = `Connected (Standardized Reference Writable — Verified Def: ${baselineObs.restrictedMetaobjectDefinitionId}; ${refEvidence.entriesByGid.size} Verified Choice${refEvidence.entriesByGid.size === 1 ? "" : "s"})`;
+        connectionStatus = `Connected (Standardized Reference Writable â€” Verified Def: ${baselineObs.restrictedMetaobjectDefinitionId}; ${refEvidence.entriesByGid.size} Verified Choice${refEvidence.entriesByGid.size === 1 ? "" : "s"})`;
       } else {
-        connectionStatus = `Connected (Standardized Reference Eligible — Load Reference Choices to Verify ${baselineObs.restrictedMetaobjectDefinitionId} Entries)`;
+        connectionStatus = `Connected (Standardized Reference Eligible â€” Load Reference Choices to Verify ${baselineObs.restrictedMetaobjectDefinitionId} Entries)`;
       }
     } else if (typeAndCompleteness.typeEvidenceSource === "reviewed_exact_contract") {
-      connectionStatus = `Connected (Batch 1 Writable — Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
+      connectionStatus = `Connected (Batch 1 Writable â€” Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
     } else {
       connectionStatus =
         contract.owner === "PRODUCTVARIANT"
-          ? `Connected (Single-Variant Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`
+          ? `Connected (Single-Variant Writable â€” Verified Type: ${typeAndCompleteness.verifiedActualType})`
           : contract.namespace === "native"
-            ? `Connected (Native Product Field Writable — ${contract.expectedType})`
-            : `Connected (Batch 1 Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`;
+            ? `Connected (Native Product Field Writable â€” ${contract.expectedType})`
+            : `Connected (Batch 1 Writable â€” Verified Type: ${typeAndCompleteness.verifiedActualType})`;
     }
   } else if (
     contract.batchStage === BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR ||
