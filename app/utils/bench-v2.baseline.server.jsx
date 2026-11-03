@@ -80,7 +80,7 @@ export function evaluateStandardizedCategoryEligibility({
   }
 
   const constraintInfo = liveDef.constraints;
-  if (!constraintInfo || constraintInfo.isComplete !== true || constraintInfo.error) {
+  if (!constraintInfo || typeof constraintInfo !== "object" || Array.isArray(constraintInfo)) {
     return {
       destination,
       isComplete: false,
@@ -88,16 +88,106 @@ export function evaluateStandardizedCategoryEligibility({
       status: "incomplete_constraints",
       productCategory: productCategory || null,
       normalizedProductCategoryCode: normalizedProductCategoryCode || null,
-      constraintKey: constraintInfo?.key || null,
-      permittedCategoryValues: constraintInfo?.values || [],
-      continuation: constraintInfo?.continuation || null,
-      reason: constraintInfo?.error || `Incomplete constraint enumeration on ${destination}.`
+      constraintKey: null,
+      permittedCategoryValues: [],
+      continuation: null,
+      reason: `Incomplete constraint enumeration on ${destination}.`
     };
   }
 
   const permittedValues = Array.isArray(constraintInfo.values) ? constraintInfo.values : [];
+  const rawConstraintKey =
+    typeof constraintInfo.key === "string" && constraintInfo.key.trim() !== ""
+      ? constraintInfo.key.trim()
+      : null;
+  const isSupportedCategoryConstraintKey =
+    rawConstraintKey === "category" ||
+    (rawConstraintKey === null && permittedValues.length > 0);
+  const continuation =
+    constraintInfo.continuation &&
+    typeof constraintInfo.continuation === "object" &&
+    !Array.isArray(constraintInfo.continuation)
+      ? constraintInfo.continuation
+      : null;
+  const isCleanBoundedPageCapStop =
+    constraintInfo.isComplete === false &&
+    !constraintInfo.error &&
+    isSupportedCategoryConstraintKey &&
+    continuation?.hasNextPage === true &&
+    continuation?.stopReason === "max_pages_reached" &&
+    typeof continuation.pagesFetched === "number" &&
+    continuation.pagesFetched >= MAX_CONSTRAINT_PAGES &&
+    typeof continuation.endCursor === "string" &&
+    continuation.endCursor.trim() !== "";
+
+  if (constraintInfo.error || (constraintInfo.isComplete !== true && !isCleanBoundedPageCapStop)) {
+    return {
+      destination,
+      isComplete: false,
+      isEligible: false,
+      status: "incomplete_constraints",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
+      constraintKey: constraintInfo.key || null,
+      permittedCategoryValues: permittedValues,
+      continuation,
+      reason: constraintInfo.error || `Incomplete constraint enumeration on ${destination}.`
+    };
+  }
+
+  if (isCleanBoundedPageCapStop) {
+    const boundedLimitReason = `Constraint values pagination for ${destination} reached bounded limit (${MAX_CONSTRAINT_PAGES} pages; endCursor: ${continuation.endCursor || "none"}).`;
+
+    if (!catId || !normalizedProductCategoryCode) {
+      return {
+        destination,
+        isComplete: true,
+        isEligible: false,
+        status: "missing_product_category",
+        productCategory: productCategory || null,
+        normalizedProductCategoryCode: null,
+        constraintKey: rawConstraintKey || "category",
+        permittedCategoryValues: permittedValues,
+        continuation,
+        reason: `Product has no assigned taxonomy category, but ${destination} requires category constraint (${rawConstraintKey || "category"}: [${permittedValues.join(", ")}]).`
+      };
+    }
+
+    const matchedBoundedConstraintVal =
+      permittedValues.find((val) => doesCategoryMatchConstraintValue(catId, val)) || null;
+
+    if (matchedBoundedConstraintVal) {
+      return {
+        destination,
+        isComplete: true,
+        isEligible: true,
+        status: "eligible",
+        productCategory: productCategory || null,
+        normalizedProductCategoryCode,
+        constraintKey: rawConstraintKey || "category",
+        permittedCategoryValues: permittedValues,
+        matchedConstraintValue: matchedBoundedConstraintVal,
+        continuation,
+        reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedBoundedConstraintVal}).`
+      };
+    }
+
+    return {
+      destination,
+      isComplete: false,
+      isEligible: false,
+      status: "incomplete_constraints",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode,
+      constraintKey: rawConstraintKey || "category",
+      permittedCategoryValues: permittedValues,
+      continuation,
+      reason: boundedLimitReason
+    };
+  }
+
   const hasCategoryConstraint = Boolean(
-    constraintInfo.hasConstraints || constraintInfo.key || permittedValues.length > 0
+    constraintInfo.hasConstraints || rawConstraintKey || permittedValues.length > 0
   );
 
   if (!hasCategoryConstraint) {
@@ -114,6 +204,21 @@ export function evaluateStandardizedCategoryEligibility({
     };
   }
 
+  if (!isSupportedCategoryConstraintKey) {
+    return {
+      destination,
+      isComplete: false,
+      isEligible: false,
+      status: "incomplete_constraints",
+      productCategory: productCategory || null,
+      normalizedProductCategoryCode: normalizedProductCategoryCode || null,
+      constraintKey: rawConstraintKey,
+      permittedCategoryValues: permittedValues,
+      continuation,
+      reason: `Unsupported constraint key "${rawConstraintKey}" on ${destination}.`
+    };
+  }
+
   if (!catId || !normalizedProductCategoryCode) {
     return {
       destination,
@@ -122,9 +227,9 @@ export function evaluateStandardizedCategoryEligibility({
       status: "missing_product_category",
       productCategory: productCategory || null,
       normalizedProductCategoryCode: null,
-      constraintKey: constraintInfo.key || "category",
+      constraintKey: rawConstraintKey || "category",
       permittedCategoryValues: permittedValues,
-      reason: `Product has no assigned taxonomy category, but ${destination} requires category constraint (${constraintInfo.key || "category"}: [${permittedValues.join(", ")}]).`
+      reason: `Product has no assigned taxonomy category, but ${destination} requires category constraint (${rawConstraintKey || "category"}: [${permittedValues.join(", ")}]).`
     };
   }
 
@@ -136,9 +241,9 @@ export function evaluateStandardizedCategoryEligibility({
       status: "empty_constraint_values",
       productCategory: productCategory || null,
       normalizedProductCategoryCode,
-      constraintKey: constraintInfo.key || "category",
+      constraintKey: rawConstraintKey || "category",
       permittedCategoryValues: [],
-      reason: `Metafield definition ${destination} declares constraint key "${constraintInfo.key}" with zero permitted values.`
+      reason: `Metafield definition ${destination} declares constraint key "${rawConstraintKey}" with zero permitted values.`
     };
   }
 
@@ -154,7 +259,7 @@ export function evaluateStandardizedCategoryEligibility({
       status: "category_ineligible",
       productCategory: productCategory || null,
       normalizedProductCategoryCode,
-      constraintKey: constraintInfo.key || "category",
+      constraintKey: rawConstraintKey || "category",
       permittedCategoryValues: permittedValues,
       matchedConstraintValue: null,
       reason: `Category constraint mismatch on ${destination}: product category "${catDesc}" is not permitted by definition constraints [${permittedValues.join(", ")}].`
@@ -168,7 +273,7 @@ export function evaluateStandardizedCategoryEligibility({
     status: "eligible",
     productCategory: productCategory || null,
     normalizedProductCategoryCode,
-    constraintKey: constraintInfo.key || "category",
+    constraintKey: rawConstraintKey || "category",
     permittedCategoryValues: permittedValues,
     matchedConstraintValue: matchedConstraintVal,
     reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedConstraintVal}).`
@@ -301,105 +406,130 @@ export async function readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, 
               constraintError = `Malformed constraint values connection on ${fullKey}.`;
               constraintErrorsByDestination[fullKey] = constraintError;
             } else {
+              let hasMalformedConstraintValueNode = false;
               for (const vNode of valConn.nodes) {
-                if (typeof vNode?.value === "string" && vNode.value.trim() !== "") {
-                  const trimmedVal = vNode.value.trim();
-                  if (!seenConstraintValues.has(trimmedVal)) {
-                    seenConstraintValues.add(trimmedVal);
-                    constraintValues.push(trimmedVal);
+                if (!vNode || typeof vNode.value !== "string" || vNode.value.trim() === "") {
+                  hasMalformedConstraintValueNode = true;
+                  break;
+                }
+                const trimmedVal = vNode.value.trim();
+                if (!seenConstraintValues.has(trimmedVal)) {
+                  seenConstraintValues.add(trimmedVal);
+                  constraintValues.push(trimmedVal);
+                }
+              }
+
+              if (hasMalformedConstraintValueNode) {
+                constraintsComplete = false;
+                constraintError = `Malformed constraint value node on ${fullKey} (page 1).`;
+                constraintErrorsByDestination[fullKey] = constraintError;
+              } else {
+                let cPageInfo = valConn.pageInfo;
+                let cPagesFetched = 1;
+                const seenRequestedCursors = new Set();
+                const seenReturnedCursors = new Set();
+                if (typeof cPageInfo.endCursor === "string" && cPageInfo.endCursor.trim() !== "") {
+                  seenReturnedCursors.add(cPageInfo.endCursor.trim());
+                }
+
+                while (cPageInfo.hasNextPage && cPagesFetched < MAX_CONSTRAINT_PAGES) {
+                  if (!node.id) {
+                    constraintsComplete = false;
+                    constraintContinuation = {
+                      hasNextPage: true,
+                      endCursor: cPageInfo.endCursor ?? null,
+                      pagesFetched: cPagesFetched,
+                      stopReason: "missing_definition_id"
+                    };
+                    constraintError = `Constraint value pagination stopped on ${fullKey}: missing definition ID at page ${cPagesFetched}.`;
+                    constraintErrorsByDestination[fullKey] = constraintError;
+                    break;
                   }
-                }
-              }
 
-              let cPageInfo = valConn.pageInfo;
-              let cPagesFetched = 1;
-              const seenRequestedCursors = new Set();
-              const seenReturnedCursors = new Set();
-              if (typeof cPageInfo.endCursor === "string" && cPageInfo.endCursor.trim() !== "") {
-                seenReturnedCursors.add(cPageInfo.endCursor.trim());
-              }
+                  const requestedCursor =
+                    typeof cPageInfo.endCursor === "string" ? cPageInfo.endCursor.trim() : "";
+                  if (!requestedCursor) {
+                    constraintsComplete = false;
+                    constraintContinuation = {
+                      hasNextPage: true,
+                      endCursor: cPageInfo.endCursor ?? null,
+                      pagesFetched: cPagesFetched,
+                      stopReason: "missing_end_cursor"
+                    };
+                    constraintError = `Constraint value pagination stopped on ${fullKey}: hasNextPage is true after page ${cPagesFetched}, but endCursor is missing or blank.`;
+                    constraintErrorsByDestination[fullKey] = constraintError;
+                    break;
+                  }
 
-              while (cPageInfo.hasNextPage && cPagesFetched < MAX_CONSTRAINT_PAGES) {
-                if (!node.id) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    endCursor: cPageInfo.endCursor ?? null,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "missing_definition_id"
-                  };
-                  constraintError = `Constraint value pagination stopped on ${fullKey}: missing definition ID at page ${cPagesFetched}.`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
+                  if (seenRequestedCursors.has(requestedCursor)) {
+                    constraintsComplete = false;
+                    constraintContinuation = {
+                      hasNextPage: true,
+                      endCursor: requestedCursor,
+                      pagesFetched: cPagesFetched,
+                      stopReason: "repeated_requested_cursor"
+                    };
+                    constraintError = `Constraint value pagination stopped on ${fullKey}: cursor "${requestedCursor}" was already requested (page ${cPagesFetched}).`;
+                    constraintErrorsByDestination[fullKey] = constraintError;
+                    break;
+                  }
 
-                const requestedCursor =
-                  typeof cPageInfo.endCursor === "string" ? cPageInfo.endCursor.trim() : "";
-                if (!requestedCursor) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    endCursor: cPageInfo.endCursor ?? null,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "missing_end_cursor"
-                  };
-                  constraintError = `Constraint value pagination stopped on ${fullKey}: hasNextPage is true after page ${cPagesFetched}, but endCursor is missing or blank.`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
+                  seenRequestedCursors.add(requestedCursor);
+                  cPagesFetched++;
 
-                if (seenRequestedCursors.has(requestedCursor)) {
-                  constraintsComplete = false;
-                  constraintContinuation = {
-                    hasNextPage: true,
-                    endCursor: requestedCursor,
-                    pagesFetched: cPagesFetched,
-                    stopReason: "repeated_requested_cursor"
-                  };
-                  constraintError = `Constraint value pagination stopped on ${fullKey}: cursor "${requestedCursor}" was already requested (page ${cPagesFetched}).`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
-                }
-
-                seenRequestedCursors.add(requestedCursor);
-                cPagesFetched++;
-
-                try {
-                  const moreRes = await admin.graphql(
-                    `
-                    query getMetafieldDefConstraintValues($id: ID!, $cursor: String!) {
-                      metafieldDefinition(id: $id) {
-                        id
-                        constraints {
-                          key
-                          values(first: 250, after: $cursor) {
-                            nodes { value }
-                            pageInfo { hasNextPage endCursor }
+                  try {
+                    const moreRes = await admin.graphql(
+                      `
+                      query getMetafieldDefConstraintValues($id: ID!, $cursor: String!) {
+                        metafieldDefinition(id: $id) {
+                          id
+                          constraints {
+                            key
+                            values(first: 250, after: $cursor) {
+                              nodes { value }
+                              pageInfo { hasNextPage endCursor }
+                            }
                           }
                         }
                       }
+                    `,
+                      { variables: { id: node.id, cursor: requestedCursor } }
+                    );
+
+                    const moreJson = await moreRes.json();
+                    if (moreJson.errors?.length) {
+                      throw new Error(moreJson.errors.map((e) => e.message).join("; "));
                     }
-                  `,
-                    { variables: { id: node.id, cursor: requestedCursor } }
-                  );
 
-                  const moreJson = await moreRes.json();
-                  if (moreJson.errors?.length) {
-                    throw new Error(moreJson.errors.map((e) => e.message).join("; "));
-                  }
+                    const moreDefNode = moreJson?.data?.metafieldDefinition;
+                    const moreConstraints = moreDefNode?.constraints;
+                    const moreConn = moreConstraints?.values;
+                    if (
+                      !moreDefNode ||
+                      moreDefNode.id !== node.id ||
+                      !moreConstraints ||
+                      typeof moreConstraints !== "object" ||
+                      Array.isArray(moreConstraints) ||
+                      !moreConn ||
+                      !Array.isArray(moreConn.nodes) ||
+                      typeof moreConn.pageInfo?.hasNextPage !== "boolean"
+                    ) {
+                      throw new Error(`Malformed paginated constraint values response for ${fullKey}.`);
+                    }
 
-                  const moreConn = moreJson?.data?.metafieldDefinition?.constraints?.values;
-                  if (
-                    !moreConn ||
-                    !Array.isArray(moreConn.nodes) ||
-                    typeof moreConn.pageInfo?.hasNextPage !== "boolean"
-                  ) {
-                    throw new Error(`Malformed paginated constraint values response for ${fullKey}.`);
-                  }
+                    const pagedConstraintKey =
+                      typeof moreConstraints.key === "string" ? moreConstraints.key : null;
+                    if (pagedConstraintKey !== constraintKey) {
+                      throw new Error(
+                        `Constraint key mismatch during pagination on ${fullKey} (expected "${String(constraintKey)}", got "${String(pagedConstraintKey)}").`
+                      );
+                    }
 
-                  let newUniqueValuesOnPage = 0;
-                  for (const vNode of moreConn.nodes) {
-                    if (typeof vNode?.value === "string" && vNode.value.trim() !== "") {
+                    let newUniqueValuesOnPage = 0;
+                    for (const vNode of moreConn.nodes) {
+                      if (!vNode || typeof vNode.value !== "string" || vNode.value.trim() === "") {
+                        throw new Error(`Malformed constraint value node on ${fullKey} (page ${cPagesFetched}).`);
+                      }
                       const trimmedVal = vNode.value.trim();
                       if (!seenConstraintValues.has(trimmedVal)) {
                         seenConstraintValues.add(trimmedVal);
@@ -407,88 +537,90 @@ export async function readMetafieldDefinitionsByOwnerTypeWithConstraints(admin, 
                         newUniqueValuesOnPage++;
                       }
                     }
+
+                    const nextPageInfo = moreConn.pageInfo;
+                    const returnedCursor =
+                      typeof nextPageInfo.endCursor === "string" ? nextPageInfo.endCursor.trim() : "";
+
+                    if (nextPageInfo.hasNextPage) {
+                      if (!returnedCursor) {
+                        constraintsComplete = false;
+                        constraintContinuation = {
+                          hasNextPage: true,
+                          requestedCursor,
+                          endCursor: nextPageInfo.endCursor ?? null,
+                          pagesFetched: cPagesFetched,
+                          stopReason: "missing_returned_cursor"
+                        };
+                        constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} reported hasNextPage:true with a missing endCursor.`;
+                        constraintErrorsByDestination[fullKey] = constraintError;
+                        break;
+                      }
+
+                      if (
+                        returnedCursor === requestedCursor ||
+                        seenReturnedCursors.has(returnedCursor) ||
+                        seenRequestedCursors.has(returnedCursor)
+                      ) {
+                        constraintsComplete = false;
+                        constraintContinuation = {
+                          hasNextPage: true,
+                          requestedCursor,
+                          endCursor: returnedCursor,
+                          pagesFetched: cPagesFetched,
+                          stopReason: "repeated_returned_cursor"
+                        };
+                        constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} returned repeated cursor "${returnedCursor}" while hasNextPage:true.`;
+                        constraintErrorsByDestination[fullKey] = constraintError;
+                        break;
+                      }
+
+                      if (newUniqueValuesOnPage === 0) {
+                        constraintsComplete = false;
+                        constraintContinuation = {
+                          hasNextPage: true,
+                          requestedCursor,
+                          endCursor: returnedCursor,
+                          pagesFetched: cPagesFetched,
+                          stopReason: "no_new_values_with_has_next_page"
+                        };
+                        constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} returned hasNextPage:true (cursor "${returnedCursor}") but yielded zero new constraint values.`;
+                        constraintErrorsByDestination[fullKey] = constraintError;
+                        break;
+                      }
+
+                      seenReturnedCursors.add(returnedCursor);
+                    }
+
+                    cPageInfo = nextPageInfo;
+                  } catch (cErr) {
+                    constraintsComplete = false;
+                    constraintContinuation = {
+                      hasNextPage: true,
+                      requestedCursor,
+                      endCursor: cPageInfo.endCursor ?? null,
+                      pagesFetched: cPagesFetched,
+                      stopReason: "query_error"
+                    };
+                    constraintError = `Constraint value pagination failed for ${fullKey} on page ${cPagesFetched}: ${cErr.message}`;
+                    constraintErrorsByDestination[fullKey] = constraintError;
+                    break;
                   }
+                }
 
-                  const nextPageInfo = moreConn.pageInfo;
-                  const returnedCursor =
-                    typeof nextPageInfo.endCursor === "string" ? nextPageInfo.endCursor.trim() : "";
-
-                  if (nextPageInfo.hasNextPage) {
-                    if (!returnedCursor) {
-                      constraintsComplete = false;
-                      constraintContinuation = {
-                        hasNextPage: true,
-                        requestedCursor,
-                        endCursor: nextPageInfo.endCursor ?? null,
-                        pagesFetched: cPagesFetched,
-                        stopReason: "missing_returned_cursor"
-                      };
-                      constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} reported hasNextPage:true with a missing endCursor.`;
-                      constraintErrorsByDestination[fullKey] = constraintError;
-                      break;
-                    }
-
-                    if (
-                      returnedCursor === requestedCursor ||
-                      seenReturnedCursors.has(returnedCursor) ||
-                      seenRequestedCursors.has(returnedCursor)
-                    ) {
-                      constraintsComplete = false;
-                      constraintContinuation = {
-                        hasNextPage: true,
-                        requestedCursor,
-                        endCursor: returnedCursor,
-                        pagesFetched: cPagesFetched,
-                        stopReason: "repeated_returned_cursor"
-                      };
-                      constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} returned repeated cursor "${returnedCursor}" while hasNextPage:true.`;
-                      constraintErrorsByDestination[fullKey] = constraintError;
-                      break;
-                    }
-
-                    if (newUniqueValuesOnPage === 0) {
-                      constraintsComplete = false;
-                      constraintContinuation = {
-                        hasNextPage: true,
-                        requestedCursor,
-                        endCursor: returnedCursor,
-                        pagesFetched: cPagesFetched,
-                        stopReason: "no_new_values_with_has_next_page"
-                      };
-                      constraintError = `Constraint value pagination stopped on ${fullKey}: page ${cPagesFetched} returned hasNextPage:true (cursor "${returnedCursor}") but yielded zero new constraint values.`;
-                      constraintErrorsByDestination[fullKey] = constraintError;
-                      break;
-                    }
-
-                    seenReturnedCursors.add(returnedCursor);
-                  }
-
-                  cPageInfo = nextPageInfo;
-                } catch (cErr) {
+                if (cPageInfo.hasNextPage && !constraintError) {
                   constraintsComplete = false;
                   constraintContinuation = {
                     hasNextPage: true,
-                    requestedCursor,
                     endCursor: cPageInfo.endCursor ?? null,
                     pagesFetched: cPagesFetched,
-                    stopReason: "query_error"
+                    stopReason: "max_pages_reached"
                   };
-                  constraintError = `Constraint value pagination failed for ${fullKey} on page ${cPagesFetched}: ${cErr.message}`;
-                  constraintErrorsByDestination[fullKey] = constraintError;
-                  break;
+                  if (normalizedOwnerType !== "PRODUCT") {
+                    constraintError = `Constraint values pagination for ${fullKey} reached bounded limit (${MAX_CONSTRAINT_PAGES} pages; endCursor: ${cPageInfo.endCursor || "none"}).`;
+                    constraintErrorsByDestination[fullKey] = constraintError;
+                  }
                 }
-              }
-
-              if (cPageInfo.hasNextPage && !constraintError) {
-                constraintsComplete = false;
-                constraintContinuation = {
-                  hasNextPage: true,
-                  endCursor: cPageInfo.endCursor ?? null,
-                  pagesFetched: cPagesFetched,
-                  stopReason: "max_pages_reached"
-                };
-                constraintError = `Constraint values pagination for ${fullKey} reached bounded limit (${MAX_CONSTRAINT_PAGES} pages; endCursor: ${cPageInfo.endCursor || "none"}).`;
-                constraintErrorsByDestination[fullKey] = constraintError;
               }
             }
           }
