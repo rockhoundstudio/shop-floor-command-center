@@ -116,6 +116,7 @@ export const BENCH_V2_OPT_IN_UNHELD_BARE_KEYS = Object.freeze(
     "cut_and_shape",
     "stone_shape",
     "color",
+    "whole_product_weight_grams",
     "chain_cord_length_in",
     "accessory_dimensions_mm",
     "fitting_opening_mm"
@@ -129,6 +130,7 @@ export const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
     "custom.cut_and_shape",
     "custom.stone_shape",
     "custom.color",
+    "custom.whole_product_weight_grams",
     "custom.chain_cord_length_in",
     "custom.accessory_dimensions_mm",
     "custom.fitting_opening_mm"
@@ -156,6 +158,7 @@ export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.chain_link_type": "single_line_text_field",
   "custom.jewelry_finding_type": "single_line_text_field",
   "custom.google_product_category": "single_line_text_field",
+  "custom.whole_product_weight_grams": "number_decimal",
   "custom.chain_cord_length_in": "single_line_text_field",
   "custom.accessory_dimensions_mm": "single_line_text_field",
   "custom.fitting_opening_mm": "single_line_text_field"
@@ -266,7 +269,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Manual bench measurements: stone dimensions (mm), stone weight (grams), chain or cord length (in), accessory exterior dimensions (mm), and fitting/opening/grip dimensions (mm) connected for manual entry and exact-value approval (excluded from AI scan), while actual whole-product weight (g) remains held read-only (overall-solid-length omitted as cancelled)."
+    description: "Manual bench measurements: stone dimensions (mm), stone weight (grams), actual whole-product weight (g), chain or cord length (in), accessory exterior dimensions (mm), and fitting/opening/grip dimensions (mm) connected for manual entry and exact-value approval (excluded from AI scan; overall-solid-length omitted as cancelled)."
   }),
   Object.freeze({
     drawerId: "conditional_setting_accessory",
@@ -500,8 +503,11 @@ function defineFieldContract(spec) {
     spec.namespace === "custom" &&
     spec.destinationKey !== "custom.is_ooak" &&
     allowedTypes.length === 1 &&
-    allowedTypes[0] === "single_line_text_field" &&
-    rawReviewedContractType === "single_line_text_field"
+    ((allowedTypes[0] === "single_line_text_field" &&
+      rawReviewedContractType === "single_line_text_field") ||
+      (spec.destinationKey === "custom.whole_product_weight_grams" &&
+        allowedTypes[0] === "number_decimal" &&
+        rawReviewedContractType === "number_decimal"))
       ? rawReviewedContractType
       : null;
 
@@ -840,11 +846,18 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
       maxLength: null
     }
   ),
-  defineMeasurementHoldField(
+  defineBatch1CustomField(
+    "manual_measurements",
+    "SUB_HARNESS_2",
     "whole_product_weight_grams",
-    "Actual Whole-Product Weight (g) (Unverified Hold)",
-    "number_decimal",
-    "Capability #59: storageVerified=false, writerVerified=false. Held read-only pending supported Shopify definition and writer evidence."
+    "Actual Whole-Product Weight (g)",
+    "Manual scale weight of the complete assembled piece in grams (number_decimal; distinct from stone custom.weight_grams and shipping weight). Excluded from AI generation/staging; requires canonical finite non-negative decimal representation matching writer serialization and independent exact-value approval.",
+    {
+      isManualOnlyNoAi: true,
+      expectedType: "number_decimal",
+      allowedTypes: ["number_decimal"],
+      maxLength: null
+    }
   ),
   defineBatch1CustomField(
     "manual_measurements",

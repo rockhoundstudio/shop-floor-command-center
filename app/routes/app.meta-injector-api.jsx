@@ -39,6 +39,7 @@ import {
 
 const ALLOWED_TAB3_KEYS = [
   "shopify_title", "piece_name", "stone_family", "price", "weight_grams",
+  "whole_product_weight_grams", "custom.whole_product_weight_grams",
   "shipping_weight_oz", "is_ooak", "dimensions_mm",
   "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character",
   "jewelry_type", "wire_material",
@@ -80,7 +81,8 @@ const STRICT_CUSTOM_KEYS = [
   "rock_composition", "geological_age", "target_gender",
   "official_name", "stone_story", "cut_type", "secondary_colors",
   "tenacity", "age_group", "condition", "custom_product",
-  "found_object", "collection_date", "wire_material"
+  "found_object", "collection_date", "wire_material",
+  "whole_product_weight_grams"
 ];
 
 const RETIRED_KEYS = [
@@ -89,6 +91,8 @@ const RETIRED_KEYS = [
   "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
   "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
 ];
+
+const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
 const ALL_STANDARDIZED_META_KEYS = Array.from(
   new Set(
@@ -294,7 +298,7 @@ function canonicalizeDescriptionHtmlForReadBack(html) {
       continue;
     }
 
-    const tagMatch = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?=[\t\n\f\\r />])/.exec(html.slice(i));
+    const tagMatch = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?=[\t\n\f\r />])/.exec(html.slice(i));
     if (!tagMatch) {
       return null;
     }
@@ -2125,12 +2129,21 @@ export const action = async ({ request }) => {
           continue;
         }
 
+        const isWholeProductWeightGramsTarget =
+          ns === "custom" &&
+          canonicalDestinationKey === "custom.whole_product_weight_grams";
+
         const isBenchV2UnheldCustomTarget =
           isBenchV2OptIn &&
           ns === "custom" &&
-          BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS.has(canonicalDestinationKey);
+          (BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS.has(canonicalDestinationKey) ||
+            isWholeProductWeightGramsTarget);
 
-        if (isBenchV2OptIn && BENCH_V2_OPT_IN_UNHELD_BARE_KEYS.has(key) && ns !== "custom") {
+        if (
+          isBenchV2OptIn &&
+          (BENCH_V2_OPT_IN_UNHELD_BARE_KEYS.has(key) || key === "whole_product_weight_grams") &&
+          ns !== "custom"
+        ) {
             unsupportedKeys.push(fullKey);
             continue;
         }
@@ -2182,7 +2195,7 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        if (isBenchV2OptIn && !defsReadComplete) {
+        if ((isBenchV2OptIn || isWholeProductWeightGramsTarget) && !defsReadComplete) {
             blockedFields[fullKey] = `Live PRODUCT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`;
             continue;
         }
@@ -2218,17 +2231,19 @@ export const action = async ({ request }) => {
           def?.error ||
           null;
 
-        if (isBenchV2OptIn && destinationDefErr) {
+        if ((isBenchV2OptIn || isWholeProductWeightGramsTarget) && destinationDefErr) {
             blockedFields[fullKey] = `Definition or constraint error on ${canonicalDestinationKey}: ${destinationDefErr}`;
             continue;
         }
 
-        const reviewedContractType = Object.prototype.hasOwnProperty.call(
-          REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
-          canonicalDestinationKey
-        )
-          ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[canonicalDestinationKey]
-          : null;
+        const reviewedContractType = isWholeProductWeightGramsTarget
+          ? "number_decimal"
+          : Object.prototype.hasOwnProperty.call(
+              REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
+              canonicalDestinationKey
+            )
+            ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[canonicalDestinationKey]
+            : null;
 
         const benchV2Contract = isBenchV2OptIn
           ? getFieldContractByDestination(canonicalDestinationKey)
@@ -2245,9 +2260,12 @@ export const action = async ({ request }) => {
           benchV2Contract?.isWritableInBatch1 === true &&
           benchV2Contract?.owner === "PRODUCT" &&
           benchV2Contract?.namespace === "custom" &&
-          benchV2Contract?.reviewedExactContractType === "single_line_text_field" &&
-          reviewedContractType === "single_line_text_field"
-            ? benchV2Contract.reviewedExactContractType
+          ((benchV2Contract?.reviewedExactContractType === "single_line_text_field" &&
+            reviewedContractType === "single_line_text_field") ||
+            (isWholeProductWeightGramsTarget &&
+              benchV2Contract?.expectedType === "number_decimal" &&
+              reviewedContractType === "number_decimal"))
+            ? reviewedContractType
             : null;
 
         if (def && storedType && def.type !== storedType) {
@@ -2276,10 +2294,20 @@ export const action = async ({ request }) => {
             continue;
         }
 
+        if (isWholeProductWeightGramsTarget && resolvedType !== "number_decimal") {
+            blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected number_decimal.`;
+            continue;
+        }
+
         if (isBenchV2UnheldCustomTarget) {
             if (canonicalDestinationKey === "custom.is_ooak") {
                 if (resolvedType !== "single_line_text_field" && resolvedType !== "boolean") {
                     blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected single_line_text_field or boolean.`;
+                    continue;
+                }
+            } else if (isWholeProductWeightGramsTarget) {
+                if (resolvedType !== "number_decimal") {
+                    blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected number_decimal.`;
                     continue;
                 }
             } else if (resolvedType !== "single_line_text_field") {
@@ -2303,6 +2331,31 @@ export const action = async ({ request }) => {
         }
 
         let resolvedValue = normalizeMetafieldValue(key, valStr);
+
+        if (isWholeProductWeightGramsTarget) {
+            if (typeof val !== "string") {
+                blockedFields[fullKey] = `Rejected non-string proposal for ${canonicalDestinationKey} (no implicit coercion).`;
+                continue;
+            }
+            if (resolvedValue !== val) {
+                blockedFields[fullKey] = `Proposal for ${canonicalDestinationKey} contains leading/trailing whitespace or warning prefixes that would alter the exact approved value.`;
+                continue;
+            }
+            if (!CANONICAL_DECIMAL_NUMBER_REGEX.test(resolvedValue)) {
+                blockedFields[fullKey] = `Destination "${canonicalDestinationKey}" requires a non-negative decimal number without units, spaces, or leading zeros (e.g. "14.5" or "28"; received "${resolvedValue}").`;
+                continue;
+            }
+            const parsedExactDecimal = Number(resolvedValue);
+            const writerSerializedDecimal = String(parseFloat(resolvedValue));
+            if (!Number.isFinite(parsedExactDecimal) || parsedExactDecimal < 0) {
+                blockedFields[fullKey] = `Destination "${canonicalDestinationKey}" requires a finite non-negative decimal number (received "${resolvedValue}").`;
+                continue;
+            }
+            if (writerSerializedDecimal !== resolvedValue) {
+                blockedFields[fullKey] = `Existing writer serializes "${resolvedValue}" as "${writerSerializedDecimal}" on save. Enter "${writerSerializedDecimal}" so your exact approved value is stored without alteration.`;
+                continue;
+            }
+        }
 
         if (
           reviewedContractType === "single_line_text_field" ||
@@ -3169,7 +3222,7 @@ export const action = async ({ request }) => {
          let expStr = String(m.value).trim();
          let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
 
-         if (isBenchV2OptIn && actualProdType !== m.type) {
+         if ((isBenchV2OptIn || dotKey === "custom.whole_product_weight_grams") && actualProdType !== m.type) {
              readBackVerified = false;
              unresolvedChanges[dotKey] = {
                  owner: "PRODUCT",
