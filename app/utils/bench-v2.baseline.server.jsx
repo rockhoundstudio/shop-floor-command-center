@@ -167,7 +167,7 @@ export function evaluateStandardizedCategoryEligibility({
         constraintKey: rawConstraintKey || "category",
         permittedCategoryValues: permittedValues,
         matchedConstraintValue: matchedBoundedConstraintVal,
-        continuation,
+        continuation: null,
         reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedBoundedConstraintVal}).`
       };
     }
@@ -276,6 +276,7 @@ export function evaluateStandardizedCategoryEligibility({
     constraintKey: rawConstraintKey || "category",
     permittedCategoryValues: permittedValues,
     matchedConstraintValue: matchedConstraintVal,
+    continuation: null,
     reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedConstraintVal}).`
   };
 }
