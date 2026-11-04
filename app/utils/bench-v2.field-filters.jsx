@@ -5,6 +5,8 @@
 
 import {
   BENCH_V2_DRAWER_GROUPS,
+  isParkedOrProtectedDrawerId,
+  isManualOnlyNoAiDestination,
   checkExistingWriterStringFidelity,
   evaluateDestinationTypeAndCompleteness,
   evaluateBenchV2FieldRow
@@ -85,17 +87,22 @@ export function formatReadableSavedValue(baselineObs, usesMeaningDisplay, baseli
 }
 
 export const PLAIN_DRAWER_TITLES = Object.freeze({
-  identity: "1. Identity",
-  origin_and_collection: "2. Origin and Collection",
-  treatment: "3. Treatment",
-  appearance_and_character: "4. Appearance and Character",
-  manual_measurements: "5. Manual Measurements",
-  conditional_setting_accessory: "6. Setting and Hardware",
-  geology: "7. Geology",
-  other_channel: "8. Channel Attributes",
-  native_seo_description_media: "9. Title, Description, SEO and Photo Alts",
-  standardized_attributes: "10. Standardized Attributes",
-  parked_excluded_protected: "11. Parked and Protected Fields"
+  manual_stone_scale_price: "1. Manual Stone Measurements & Price Baseline",
+  manual_fit_and_chain_measurements: "2. Manual Chain, Fit & Opening Measurements",
+  manual_title_and_collection_date: "3. Manual Product Title & Collection Date",
+  identity_and_classification: "4. Piece Identity, Material & OOAK",
+  appearance_color_and_shape: "5. Appearance, Cut, Color & Finish",
+  treatment_and_disclosure: "6. Treatment & Disclosure",
+  origin_and_provenance: "7. Origin, Collection & Provenance",
+  setting_and_hardware: "8. Setting, Chain & Hardware",
+  seo_and_media_alts: "9. SEO Titles, Meta Description & Photo Alts",
+  descriptions_and_narrative: "10. Product Descriptions (Substantive Text)",
+  geology_physical_properties: "11. Geology: Physical & Optical Properties",
+  geology_composition_and_time: "12. Geology: Class, Composition, Formation & Deep Time",
+  channel_and_demographic: "13. Google Channel & Demographic Attributes",
+  parked_story_and_bench_notes: "14. Parked Story, Character & Studio Notes (Read-Only)",
+  parked_legacy_product_exclusions: "15. Parked Legacy Product & Taxonomy Exclusions (Read-Only)",
+  parked_variant_and_protected_apps: "16. Parked Variant Customs/MPN & Protected App Fields (Read-Only)"
 });
 
 export function cleanFieldHeading(rawLabel) {
@@ -364,7 +371,7 @@ export function matchesBenchV2Filter(row, activeFilter) {
 
   if (activeFilter === "Needs review") {
     if (hasSaveErrorOrConflict) return true;
-    if (contract.drawerId === "parked_excluded_protected") return false;
+    if (isParkedOrProtectedDrawerId(contract.drawerId)) return false;
     if (isRequiredMissing) return true;
     if (Boolean(heldAiAlternative)) return true;
     if (isKeepOriginal) return false;
@@ -423,47 +430,128 @@ export function matchesBenchV2Filter(row, activeFilter) {
 
 export function getDrawerConnectionSubtitle(drawer) {
   if (!drawer) return "Read-only in Batch 1";
-  if (drawer.drawerId === "parked_excluded_protected") {
-    return "Read-only parked and protected fields (includes excluded custom & standardized authenticity/rarity)";
+
+  const rows = Array.isArray(drawer.evaluatedRows) ? drawer.evaluatedRows : [];
+
+  if (isParkedOrProtectedDrawerId(drawer.drawerId)) {
+    const parkedCount = rows.filter(
+      (r) =>
+        r.contract.batchStage === "PARKED_EXCLUDED_READ_ONLY" ||
+        r.contract.writeCapability === "PARKED_EXCLUDED_NO_WRITE"
+    ).length;
+    const protectedCount = rows.filter(
+      (r) =>
+        r.contract.batchStage === "PROTECTED_READ_ONLY" ||
+        r.contract.writeCapability === "PROTECTED_NO_WRITE"
+    ).length;
+
+    if (parkedCount > 0 && protectedCount > 0) {
+      return `Read-only parked (${parkedCount}) and protected app (${protectedCount}) fields — zero writes`;
+    }
+    if (protectedCount > 0) {
+      return `Read-only protected third-party app fields (${protectedCount}) — zero writes`;
+    }
+    return `Read-only parked and excluded fields (${parkedCount || rows.length}) — zero writes`;
   }
-  if (drawer.drawerId === "identity") {
-    return "Detailed custom.* identity fields connected (standardized companion shopify.material in Drawer 10 is connected with live reference verification)";
-  }
-  if (drawer.drawerId === "appearance_and_character") {
-    return "Detailed custom.* appearance fields connected (standardized companion shopify.color-pattern in Drawer 10 is connected with live reference verification)";
-  }
-  if (drawer.drawerId === "manual_measurements") {
-    const writableCount = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1).length;
-    const heldCount = drawer.evaluatedRows.length - writableCount;
-    return `Manual-only (${writableCount} connected for manual entry, ${heldCount} unverified on hold — no AI scan staging)`;
-  }
-  if (drawer.drawerId === "conditional_setting_accessory") {
-    return "Connected for manual entry, AI Scan hardware suggestions & exact approval";
-  }
-  if (drawer.drawerId === "geology") {
-    const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
-    const readyCount = writableRows.filter((r) => r.typeAndCompleteness?.ready === true).length;
-    return `Detailed custom.* geology paths connected (${readyCount}/${writableRows.length} ready on product; legacy custom.geological_era is read-only; authoritative ERA dropdown shopify.geological-era + 4 standardized geology reference companions are connected in Drawer 10)`;
-  }
-  if (drawer.drawerId === "other_channel") {
-    const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
-    const readyCount = writableRows.filter((r) => r.typeAndCompleteness?.ready === true).length;
-    return `4 channel destinations wired (${readyCount}/${writableRows.length} ready on current product: PRODUCT custom.google_product_category + manual/preset single-variant PRODUCTVARIANT mm-google-shopping.age_group, condition, gender; mm-google-shopping.custom_product held; legacy google.* variant slots & custom.target_gender read-only)`;
-  }
-  if (drawer.drawerId === "standardized_attributes") {
-    const writableRows = drawer.evaluatedRows.filter((r) => r.contract.isWritableInBatch1);
-    const categoryEligibleRows = writableRows.filter(
-      (r) => r.typeAndCompleteness?.ready === true
+
+  const writableRows = rows.filter((r) => r.contract.isWritableInBatch1 === true);
+  const readOnlyRows = rows.filter((r) => r.contract.isWritableInBatch1 !== true);
+
+  const nonRefWritableRows = writableRows.filter((r) => r.contract.namespace !== "shopify");
+  const refWritableRows = writableRows.filter((r) => r.contract.namespace === "shopify");
+
+  const nonRefReadyCount = nonRefWritableRows.filter(
+    (r) => r.typeAndCompleteness?.ready === true
+  ).length;
+  const nonRefManualOnlyCount = nonRefWritableRows.filter((r) =>
+    isManualOnlyNoAiDestination(r.contract.destinationKey, r.contract)
+  ).length;
+  const variantWritableCount = nonRefWritableRows.filter(
+    (r) => r.contract.owner === "PRODUCTVARIANT"
+  ).length;
+
+  const refEligibleRows = refWritableRows.filter(
+    (r) => r.typeAndCompleteness?.ready === true
+  );
+  const refVerifiedChoiceRows = refEligibleRows.filter(
+    (r) =>
+      r.referenceEvidence?.isComplete === true &&
+      r.referenceEvidence.entriesByGid.size > 0
+  );
+  const refEmptyChoiceRows = refEligibleRows.filter(
+    (r) =>
+      r.referenceEvidence?.isComplete === true &&
+      r.referenceEvidence.entriesByGid.size === 0
+  );
+  const refBlockedByCategoryCount = refWritableRows.length - refEligibleRows.length;
+
+  const taskRestrictedRows = readOnlyRows.filter(
+    (r) =>
+      r.contract.batchStage === "TASK_RESTRICTED_READ_ONLY" ||
+      r.contract.writeCapability === "TASK_RESTRICTED_NO_WRITE"
+  );
+  const compatRows = readOnlyRows.filter(
+    (r) =>
+      r.contract.batchStage === "READ_ONLY_COMPATIBILITY" ||
+      r.contract.writeCapability === "COMPATIBILITY_INSPECTION_ONLY"
+  );
+  const holdRows = readOnlyRows.filter(
+    (r) =>
+      r.contract.batchStage === "READ_ONLY_HOLD" ||
+      r.contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD"
+  );
+  const futureDescriptorRows = readOnlyRows.filter(
+    (r) =>
+      r.contract.batchStage === "FUTURE_BATCH_2_DESCRIPTOR" ||
+      r.contract.batchStage === "FUTURE_BATCH_3_DESCRIPTOR"
+  );
+
+  const segments = [];
+
+  if (nonRefWritableRows.length > 0) {
+    const allNonRefManual = nonRefManualOnlyCount === nonRefWritableRows.length;
+    const modeLabel = allNonRefManual
+      ? "manual-only"
+      : nonRefManualOnlyCount > 0
+        ? `direct (${nonRefManualOnlyCount} manual-only)`
+        : "direct";
+    const variantNote =
+      variantWritableCount > 0 ? `, ${variantWritableCount} single-variant` : "";
+    segments.push(
+      `${nonRefReadyCount}/${nonRefWritableRows.length} ${modeLabel} ready${variantNote}`
     );
-    const verifiedChoiceRows = categoryEligibleRows.filter(
-      (r) => r.referenceEvidence?.isComplete === true && r.referenceEvidence.entriesByGid.size > 0
-    );
-    const emptyChoiceRows = categoryEligibleRows.filter(
-      (r) => r.referenceEvidence?.isComplete === true && r.referenceEvidence.entriesByGid.size === 0
-    );
-    const blockedByCategoryCount = writableRows.length - categoryEligibleRows.length;
-    return `18 retained shopify.* reference attributes wired (${categoryEligibleRows.length}/${writableRows.length} category/definition-eligible on product, ${blockedByCategoryCount} blocked by category/definition, ${verifiedChoiceRows.length} with verified choices ready for approval${emptyChoiceRows.length > 0 ? `, ${emptyChoiceRows.length} with 0 entries` : ""})`;
   }
+
+  if (refWritableRows.length > 0) {
+    const emptyNote =
+      refEmptyChoiceRows.length > 0 ? `, ${refEmptyChoiceRows.length} with 0 entries` : "";
+    segments.push(
+      `${refWritableRows.length} shopify.* ref (${refEligibleRows.length} eligible, ${refVerifiedChoiceRows.length} verified choices${emptyNote}, ${refBlockedByCategoryCount} blocked)`
+    );
+  }
+
+  const roNotes = [];
+  if (taskRestrictedRows.length > 0) {
+    roNotes.push(`${taskRestrictedRows.length} price/shipping task-restricted read-only`);
+  }
+  if (compatRows.length > 0) {
+    roNotes.push(`${compatRows.length} compat read-only`);
+  }
+  if (holdRows.length > 0) {
+    roNotes.push(`${holdRows.length} on hold`);
+  }
+  if (futureDescriptorRows.length > 0) {
+    roNotes.push(`${futureDescriptorRows.length} photo-alt descriptor read-only`);
+  }
+
+  if (roNotes.length > 0) {
+    segments.push(roNotes.join(", "));
+  }
+
+  if (segments.length > 0) {
+    return segments.join(" • ");
+  }
+
   if (drawer.isImplementedInBatch1) {
     return "Connected in Batch 1";
   }

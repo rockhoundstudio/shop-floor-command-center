@@ -2,22 +2,15 @@
 // ROCKHOUND STUDIO — REPLACEMENT BENCH V2
 // File: app/routes/app.bench-v2.jsx
 //
-// Connects Drawers 1 to 8 (Identity, Origin & Collection, Treatment,
-// Appearance & Character, Manual Measurements [dimensions_mm, weight_grams],
-// Conditional Setting & Hardware, Geology [12 active custom.* destinations +
-// read-only compatibility custom.geological_era], and Channel Attributes
-// [PRODUCT custom.google_product_category + single-variant PRODUCTVARIANT
-// mm-google-shopping.age_group, condition, gender]), Drawer 9 (6 connected
-// product-owned text/SEO destinations: manual-only native_title,
-// native_description, custom.generated_description, native_seo_description;
-// independently reviewed native_seo_title and custom.seo_title, while
-// per-image media alts and custom.alt_text remain read-only descriptors and
-// price/shipping weight remain task-restricted read-only), Drawer 10 (18
-// retained shopify.* standardized reference attributes with automatic
-// read-only choice loading, category constraint eligibility, verified
-// restricted Metaobject definition membership, and exact-value approval),
-// plus read-only Drawer 11 (Parked & Protected inventory), with Sidekick
-// live bench snapshot sync.
+// Connects the reorganized Bench V2 workflow drawers (manual measurements &
+// task-restricted price/shipping baselines first, manual title & collection
+// date, identity/material/OOAK + standardized companions, appearance/color +
+// standardized companion, treatment, origin & provenance, setting/hardware +
+// standardized companions, SEO & photo alts, substantive descriptions,
+// physical/optical geology, composition/formation/deep-time geology, Google
+// channel & demographic attributes, and split read-only parked/protected
+// drawers), with per-drawer copy controls and Sidekick live bench snapshot
+// sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -32,6 +25,7 @@ import {
   BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  isManualMeasurementDestination,
   isManualOnlyNoAiDestination,
   checkExistingWriterStringFidelity,
   isExactProductGid,
@@ -971,7 +965,7 @@ export default function BenchV2Route() {
     const humanPieceName =
       contextKeyValues.piece_name ||
       currentBaseline.currentMetafields?.["custom.piece_name"] ||
-      ("");
+      "";
     if (humanPieceName) {
       formData.append("pieceName", String(humanPieceName));
       formData.append("humanPieceId", String(humanPieceName));
@@ -1132,12 +1126,11 @@ export default function BenchV2Route() {
 
       if (isManualOnlyNoAiDestination(destKey, contract)) {
         ignoredManualOnlyCount++;
-        const manualReason =
-          contract?.drawerId === "manual_measurements"
-            ? "Manual measurement field — excluded from AI staging; enter physical measurement manually."
-            : contract?.owner === "PRODUCTVARIANT"
-              ? "Manual/preset variant channel field — excluded from AI staging."
-              : "Manual-only field — excluded from AI staging.";
+        const manualReason = isManualMeasurementDestination(destKey)
+          ? "Manual measurement field — excluded from AI staging; enter physical measurement manually."
+          : contract?.owner === "PRODUCTVARIANT"
+            ? "Manual/preset variant channel field — excluded from AI staging."
+            : "Manual-only field — excluded from AI staging.";
         proposalsByDestination[destKey] = {
           value: rawValue,
           source: reportedSource,
@@ -1802,7 +1795,7 @@ export default function BenchV2Route() {
   /**
    * Preserves both existing saved Metaobject GIDs on the product AND any valid
    * Metaobject GIDs already staged in the current proposal when selecting a preset
-   * reference option in Drawer 10, so selecting a second choice appends rather than
+   * reference option, so selecting a second choice appends rather than
    * silently replacing a prior staged addition.
    */
   const handleSelectPresetOption = (row, selectedOptionValue) => {
@@ -2075,7 +2068,7 @@ export default function BenchV2Route() {
         tone: "warning",
         title: "Nothing approved to save",
         reasons: [
-          "No fields are approved for this product. Edit or review a connected field in Drawers 1 to 10 (where ready on this product) and check Approve before clicking Save."
+          "No fields are approved for this product. Edit or review a connected field (where ready on this product) and check Approve before clicking Save."
         ]
       });
       return;
@@ -2336,7 +2329,10 @@ export default function BenchV2Route() {
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
           totalVisibleFilteredRowCount={totalVisibleFilteredRowCount}
+          activeProductId={activeProductId}
           activeProductTitle={activeProductTitle}
+          benchSessionId={benchSessionIdRef.current}
+          telemetrySyncStatus={telemetrySyncStatus}
           validApprovedRowsCount={validApprovedRows.length}
           keepOriginalRowsCount={keepOriginalRows.length}
           visibleDrawerGroups={visibleDrawerGroups}

@@ -13,6 +13,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   BENCH_V2_CONTRACT_VERSION,
+  BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
+  isManualMeasurementDestination,
   isManualOnlyNoAiDestination,
   isExactProductGid
 } from "./bench-v2.contract.jsx";
@@ -146,7 +148,7 @@ export function resolveFieldRegistryAndApplicabilityMeta(contract) {
     } else if (contract.batchStage === "READ_ONLY_COMPATIBILITY") {
       registryRole = "COMPAT_REP";
     } else if (
-      contract.drawerId === "manual_measurements" &&
+      isManualMeasurementDestination(destKey) &&
       contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD"
     ) {
       registryRole = "APPROVED_MEASUREMENT_ADDITION";
@@ -984,19 +986,35 @@ export function useBenchV2LiveTelemetryPublisher({
       (r) => r.contract.destinationKey
     );
 
-    const drawer10Group = evaluatedDrawerGroups.find(
-      (d) => d.drawerId === "standardized_attributes"
+    // Aggregate across all 18 retained standardized reference rows (matching old Drawer 10 scope:
+    // non-parked/excluded shopify.* reference rows, including both connected and any held rows).
+    const drawer10Rows = allEvaluatedRows.filter(
+      (r) =>
+        r.contract.namespace === "shopify" &&
+        r.contract.batchStage !== "PARKED_EXCLUDED_READ_ONLY" &&
+        r.contract.writeCapability !== "PARKED_EXCLUDED_NO_WRITE" &&
+        (BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(r.contract.destinationKey) ||
+          r.contract.isWritableInBatch1 === true ||
+          r.contract.writeCapability === "STANDARDIZED_REFERENCE_LOCKED")
     );
-    const drawer10Rows = drawer10Group ? drawer10Group.evaluatedRows : [];
     const eligibleStandardizedDestKeys = drawer10Rows
-      .filter((r) => r.typeAndCompleteness?.ready === true)
+      .filter(
+        (r) =>
+          r.contract.isWritableInBatch1 === true &&
+          r.typeAndCompleteness?.ready === true
+      )
       .map((r) => r.contract.destinationKey);
     const blockedStandardizedDestKeys = drawer10Rows
-      .filter((r) => r.typeAndCompleteness?.ready !== true)
+      .filter(
+        (r) =>
+          r.contract.isWritableInBatch1 !== true ||
+          r.typeAndCompleteness?.ready !== true
+      )
       .map((r) => r.contract.destinationKey);
     const verifiedChoiceReadyDestKeys = drawer10Rows
       .filter(
         (r) =>
+          r.contract.isWritableInBatch1 === true &&
           r.typeAndCompleteness?.ready === true &&
           r.referenceEvidence?.isComplete === true &&
           r.referenceEvidence.entriesByGid.size > 0
@@ -1005,6 +1023,7 @@ export function useBenchV2LiveTelemetryPublisher({
     const emptyChoiceEligibleDestKeys = drawer10Rows
       .filter(
         (r) =>
+          r.contract.isWritableInBatch1 === true &&
           r.typeAndCompleteness?.ready === true &&
           r.referenceEvidence?.isComplete === true &&
           r.referenceEvidence.entriesByGid.size === 0
@@ -1013,7 +1032,8 @@ export function useBenchV2LiveTelemetryPublisher({
     const incompleteChoiceDestKeys = drawer10Rows
       .filter(
         (r) =>
-          (r.typeAndCompleteness?.ready === true &&
+          (r.contract.isWritableInBatch1 === true &&
+            r.typeAndCompleteness?.ready === true &&
             r.referenceEvidence?.evidenceLoaded === true &&
             r.referenceEvidence?.isComplete !== true) ||
           r.typeAndCompleteness?.code === "category_eligibility_incomplete" ||
@@ -1030,7 +1050,7 @@ export function useBenchV2LiveTelemetryPublisher({
 
     let standardizedReadinessState = "choices_not_loaded";
     let standardizedReadinessReason =
-      `18 retained shopify.* reference attributes connected (${eligibleStandardizedDestKeys.length} category/definition-eligible on product, ${blockedStandardizedDestKeys.length} blocked by category/definition). Reference choices load automatically when the product baseline is ready.`;
+      `${drawer10Rows.length} retained shopify.* reference attributes connected (${eligibleStandardizedDestKeys.length} category/definition-eligible on product, ${blockedStandardizedDestKeys.length} blocked by category/definition). Reference choices load automatically when the product baseline is ready.`;
 
     if (isRefChoicesBusy) {
       standardizedReadinessState = "loading_reference_choices";

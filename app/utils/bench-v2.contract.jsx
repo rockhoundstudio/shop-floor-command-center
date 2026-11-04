@@ -1,5 +1,5 @@
 // == ========================================================================
-// ROCKHOUND STUDIO â€” BENCH V2 PURE FIELD & DRAWER CONTRACT
+// ROCKHOUND STUDIO — BENCH V2 PURE FIELD & DRAWER CONTRACT
 // File: app/utils/bench-v2.contract.jsx
 // Pure browser-safe contract module: zero React hooks/effects, zero storage,
 // zero GraphQL/network calls, zero server-only imports.
@@ -24,13 +24,18 @@ import {
   BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS,
+  BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS,
+  isParkedOrProtectedDrawerId,
   BENCH_V2_DRAWERS,
   BENCH_V2_OPTIONS_BY_KEY,
   BENCH_V2_FIELD_CONTRACTS,
   BENCH_V2_CONTRACTS_BY_DESTINATION,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
+  MANUAL_MEASUREMENT_DESTINATIONS,
   MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS,
+  isManualMeasurementDestination,
   isManualOnlyNoAiDestination,
   BENCH_V2_DRAWER_GROUPS,
   getFieldContractByDestination
@@ -65,13 +70,18 @@ export {
   BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS,
+  BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS,
+  isParkedOrProtectedDrawerId,
   BENCH_V2_DRAWERS,
   BENCH_V2_OPTIONS_BY_KEY,
   BENCH_V2_FIELD_CONTRACTS,
   BENCH_V2_CONTRACTS_BY_DESTINATION,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
+  MANUAL_MEASUREMENT_DESTINATIONS,
   MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS,
+  isManualMeasurementDestination,
   isManualOnlyNoAiDestination,
   BENCH_V2_DRAWER_GROUPS,
   getFieldContractByDestination,
@@ -139,11 +149,11 @@ export function checkExistingWriterStringFidelity(exactProposedValue) {
         "Existing writer (executeRepairPlan) trims leading/trailing whitespace on save, which would alter your exact untrimmed value. Remove leading/trailing whitespace before approving for save."
     };
   }
-  if (/^âš ï¸\s*/.test(exactProposedValue)) {
+  if (/^⚠️\s*/.test(exactProposedValue)) {
     return {
       faithful: false,
       reason:
-        "Existing writer (normalizeMetafieldValue) strips leading 'âš ï¸' prefixes, which would alter your exact approved value. Remove the prefix before approving for save."
+        "Existing writer (normalizeMetafieldValue) strips leading '⚠️' prefixes, which would alter your exact approved value. Remove the prefix before approving for save."
     };
   }
   return {
@@ -313,7 +323,7 @@ export function validateBatch1ProposedValue({
         code: "reference_entries_not_verified",
         reason:
           refEvidence.error ||
-          `Verified Metaobject entries for "${contract.destinationKey}" have not been loaded. Click "Load Reference Choices" in Drawer 10 before approving.`
+          `Verified Metaobject entries for "${contract.destinationKey}" have not been loaded. Click "Retry Reference Choices" in this drawer before approving.`
       };
     }
 
@@ -851,7 +861,7 @@ export function evaluateBenchV2FieldRow({
   if (contract.isWritableInBatch1) {
     if (!baselineObs.evidenceAvailable) {
       if (baselineObs.presence === "multiple_variants_hold") {
-        connectionStatus = "Held (Multiple Variants â€” Single-Variant Target Required)";
+        connectionStatus = "Held (Multiple Variants — Single-Variant Target Required)";
       } else if (baselineObs.presence === "zero_variants_hold") {
         connectionStatus = "Blocked (Product Has Zero Variants)";
       } else if (baselineObs.presence === "invalid_variant_gid") {
@@ -901,19 +911,19 @@ export function evaluateBenchV2FieldRow({
       }
     } else if (isShopifyReference) {
       if (refEvidence && refEvidence.isComplete) {
-        connectionStatus = `Connected (Standardized Reference Writable â€” Verified Def: ${baselineObs.restrictedMetaobjectDefinitionId}; ${refEvidence.entriesByGid.size} Verified Choice${refEvidence.entriesByGid.size === 1 ? "" : "s"})`;
+        connectionStatus = `Connected (Standardized Reference Writable — Verified Def: ${baselineObs.restrictedMetaobjectDefinitionId}; ${refEvidence.entriesByGid.size} Verified Choice${refEvidence.entriesByGid.size === 1 ? "" : "s"})`;
       } else {
-        connectionStatus = `Connected (Standardized Reference Eligible â€” Load Reference Choices to Verify ${baselineObs.restrictedMetaobjectDefinitionId} Entries)`;
+        connectionStatus = `Connected (Standardized Reference Eligible — Load Reference Choices to Verify ${baselineObs.restrictedMetaobjectDefinitionId} Entries)`;
       }
     } else if (typeAndCompleteness.typeEvidenceSource === "reviewed_exact_contract") {
-      connectionStatus = `Connected (Batch 1 Writable â€” Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
+      connectionStatus = `Connected (Batch 1 Writable — Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
     } else {
       connectionStatus =
         contract.owner === "PRODUCTVARIANT"
-          ? `Connected (Single-Variant Writable â€” Verified Type: ${typeAndCompleteness.verifiedActualType})`
+          ? `Connected (Single-Variant Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`
           : contract.namespace === "native"
-            ? `Connected (Native Product Field Writable â€” ${contract.expectedType})`
-            : `Connected (Batch 1 Writable â€” Verified Type: ${typeAndCompleteness.verifiedActualType})`;
+            ? `Connected (Native Product Field Writable — ${contract.expectedType})`
+            : `Connected (Batch 1 Writable — Verified Type: ${typeAndCompleteness.verifiedActualType})`;
     }
   } else if (
     contract.batchStage === BENCH_V2_BATCH_STAGE.FUTURE_BATCH_2_DESCRIPTOR ||
@@ -988,7 +998,7 @@ export function evaluateBenchV2FieldRow({
   } else if (isShopifyReference && typeAndCompleteness?.ready && (!refEvidence || !refEvidence.isComplete)) {
     statusReason =
       refEvidence?.error ||
-      `Click "Load Reference Choices" in Drawer 10 to verify allowed Metaobject entries for ${baselineObs.restrictedMetaobjectDefinitionId}.`;
+      `Click "Retry Reference Choices" in this drawer to verify allowed Metaobject entries for ${baselineObs.restrictedMetaobjectDefinitionId}.`;
   }
 
   const baselineDisplayValue = usesMeaningDisplay

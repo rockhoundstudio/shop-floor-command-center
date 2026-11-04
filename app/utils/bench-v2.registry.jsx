@@ -85,7 +85,7 @@ export const BENCH_V2_CONNECTED_VARIANT_DESTINATIONS = Object.freeze(
   ])
 );
 
-// Explicit replacement-bench-local allowlist of finite retained Drawer 10 PRODUCT
+// Explicit replacement-bench-local allowlist of finite retained PRODUCT
 // standardized reference destinations (18 keys; excludes authenticity, necklace-design, rarity).
 export const BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS = Object.freeze(
   new Set(
@@ -93,7 +93,7 @@ export const BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS = Object.freeze(
   )
 );
 
-// Explicit replacement-bench-local allowlist of the 4 verified Drawer 9 PRODUCT
+// Explicit replacement-bench-local allowlist of the 4 verified PRODUCT
 // native text/HTML/SEO destinations connected for exact-value approval.
 export const BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS = Object.freeze(
   new Set([
@@ -164,7 +164,7 @@ export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.fitting_opening_mm": "single_line_text_field"
 });
 
-// Exact 54 bare provenance keys used by Bench V2 AI Scan (excluding cancelled
+// Exact bare provenance keys used by Bench V2 AI Scan (excluding cancelled
 // overall_solid_length_in and legacy geological_era).
 export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "color_pattern",
@@ -225,105 +225,219 @@ export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "geological_age"
 ]);
 
+// Explicit accounting of non-rendered registry records (historical duplicate aliases,
+// product-level channel shadow representations superseded by variant/canonical slots,
+// and the four unverified historical adapters not yet verified in observation/baseline).
+export const BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS = Object.freeze({
+  unverifiedHistoricalAdapters: Object.freeze([
+    Object.freeze({
+      owner: "PRODUCT",
+      identity: "global.title_tag",
+      role: "COMPAT_REP",
+      canonicalTarget: "native_seo_title",
+      status: "unverified_historical_adapter_not_in_active_controls"
+    }),
+    Object.freeze({
+      owner: "PRODUCT",
+      identity: "global.description_tag",
+      role: "COMPAT_REP",
+      canonicalTarget: "native_seo_description",
+      status: "unverified_historical_adapter_not_in_active_controls"
+    }),
+    Object.freeze({
+      owner: "PRODUCT",
+      identity: "mc-facebook.google_product_category",
+      role: "COMPAT_REP",
+      canonicalTarget: "custom.google_product_category",
+      status: "unverified_historical_adapter_not_in_active_controls"
+    }),
+    Object.freeze({
+      owner: "PRODUCT",
+      identity: "mm-google-shopping.google_product_category",
+      role: "COMPAT_REP",
+      canonicalTarget: "custom.google_product_category",
+      status: "unverified_historical_adapter_not_in_active_controls"
+    })
+  ]),
+  productLevelChannelShadowCompatReps: Object.freeze([
+    Object.freeze({ owner: "PRODUCT", identity: "google.age_group", role: "COMPAT_REP", activeCanonicalOrVariantOwner: "PRODUCTVARIANT:mm-google-shopping.age_group" }),
+    Object.freeze({ owner: "PRODUCT", identity: "google.condition", role: "COMPAT_REP", activeCanonicalOrVariantOwner: "PRODUCTVARIANT:mm-google-shopping.condition" }),
+    Object.freeze({ owner: "PRODUCT", identity: "google.target_gender", role: "COMPAT_REP", activeCanonicalOrVariantOwner: "PRODUCTVARIANT:mm-google-shopping.gender" }),
+    Object.freeze({ owner: "PRODUCT", identity: "mm-google-shopping.age_group", role: "COMPAT_REP", activeCanonicalOrVariantOwner: "PRODUCTVARIANT:mm-google-shopping.age_group" }),
+    Object.freeze({ owner: "PRODUCT", identity: "mm-google-shopping.condition", role: "COMPAT_REP", activeCanonicalOrVariantOwner: "PRODUCTVARIANT:mm-google-shopping.condition" })
+  ]),
+  nonRenderedDuplicateAliases: Object.freeze([
+    Object.freeze({ owner: "PRODUCT", identity: "custom.badge", role: "DUPLICATE_ALIAS" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.crystal-system", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.crystal_system" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.geological-era", role: "DUPLICATE_ALIAS", canonicalTarget: "shopify.geological-era" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.mineral-class", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.mineral_class" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.necklace-design", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.necklace_design" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.review_widget_data", role: "DUPLICATE_ALIAS" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.rock-composition", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.rock_composition" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.rock-formation", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.rock_formation" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.widget", role: "DUPLICATE_ALIAS" }),
+    Object.freeze({ owner: "PRODUCT", identity: "shopify_title", role: "DUPLICATE_ALIAS", canonicalTarget: "native_title" })
+  ])
+});
+
+export const BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS = Object.freeze(
+  new Set([
+    "parked_excluded_protected",
+    "parked_story_and_bench_notes",
+    "parked_legacy_product_exclusions",
+    "parked_variant_and_protected_apps"
+  ])
+);
+
+export function isParkedOrProtectedDrawerId(drawerId) {
+  if (typeof drawerId !== "string" || !drawerId.trim()) return false;
+  return BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS.has(drawerId.trim());
+}
+
 export const BENCH_V2_DRAWERS = Object.freeze([
   Object.freeze({
-    drawerId: "identity",
+    drawerId: "manual_stone_scale_price",
     drawerNumber: 1,
-    heading: "1. Identity",
-    subHarness: "SUB_HARNESS_1",
+    heading: "1. Manual Stone Measurements & Price Baseline",
+    subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Core piece identity, dominant material, base stone family (custom.stone_family), and both intentional one-of-a-kind destinations (custom.is_one_of_a_kind and custom.is_ooak), plus distinct read-only inspection rows."
+    description: "Manual caliper and scale measurements (stone dimensions mm, stone weight g, actual whole-product weight g) connected for manual entry and exact-value approval, plus task-restricted read-only price and shipping weight baselines (manual price entry remains restricted/unfinished in this batch; overall_solid_length_in remains cancelled)."
   }),
   Object.freeze({
-    drawerId: "origin_and_collection",
+    drawerId: "manual_fit_and_chain_measurements",
     drawerNumber: 2,
-    heading: "2. Origin and collection",
-    subHarness: "SUB_HARNESS_1",
+    heading: "2. Manual Chain, Fit & Opening Measurements",
+    subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Origin location, origin page handle, collection name/location/date, and found-object provenance."
+    description: "Manual chain or cord length (in), accessory exterior dimensions (mm), and fitting/opening/grip dimensions (mm) connected for manual entry and exact-value approval (excluded from AI scan; overall_solid_length_in omitted as cancelled)."
   }),
   Object.freeze({
-    drawerId: "treatment",
+    drawerId: "manual_title_and_collection_date",
     drawerNumber: 3,
-    heading: "3. Treatment",
-    subHarness: "SUB_HARNESS_1",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    isImplementedInBatch1: true,
-    description: "Lapidary treatment status and treated classification."
-  }),
-  Object.freeze({
-    drawerId: "appearance_and_character",
-    drawerNumber: 4,
-    heading: "4. Appearance and character",
-    subHarness: "SUB_HARNESS_1",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    isImplementedInBatch1: true,
-    description: "Cut and shape, stone shape, surface finish, color, primary/secondary colors, and color pattern (with legacy retirement conflict resolved)."
-  }),
-  Object.freeze({
-    drawerId: "manual_measurements",
-    drawerNumber: 5,
-    heading: "5. Manual measurements",
-    subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    isImplementedInBatch1: true,
-    description: "Manual bench measurements: stone dimensions (mm), stone weight (grams), actual whole-product weight (g), chain or cord length (in), accessory exterior dimensions (mm), and fitting/opening/grip dimensions (mm) connected for manual entry and exact-value approval (excluded from AI scan; overall-solid-length omitted as cancelled)."
-  }),
-  Object.freeze({
-    drawerId: "conditional_setting_accessory",
-    drawerNumber: 6,
-    heading: "6. Conditional setting/accessory facts",
-    subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    isImplementedInBatch1: true,
-    description: "Connected setting and hardware facts: secondary medium, jewelry type, setting ready, bail included, chain material, chain link type, jewelry finding type, and wire material."
-  }),
-  Object.freeze({
-    drawerId: "geology",
-    drawerNumber: 7,
-    heading: "7. Geology",
-    subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    isImplementedInBatch1: true,
-    description: "Connected geology facts: 12 deterministic custom.* geology destinations connected for manual edit, lookup staging, and exact-value approval, plus read-only compatibility inspection for custom.geological_era (authoritative ERA dropdown is shopify.geological-era)."
-  }),
-  Object.freeze({
-    drawerId: "other_channel",
-    drawerNumber: 8,
-    heading: "8. Other & Channel Attributes",
-    subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    isImplementedInBatch1: true,
-    description: "Connected channel attributes: product Google product category (custom.google_product_category) and single-variant Google channel attributes (mm-google-shopping.age_group, mm-google-shopping.condition, mm-google-shopping.gender), plus read-only holds (mm-google-shopping.custom_product) and compatibility inspection rows (google.* variant slots and custom.target_gender)."
-  }),
-  Object.freeze({
-    drawerId: "native_seo_description_media",
-    drawerNumber: 9,
-    heading: "9. Native, SEO, Description & Media Alts",
+    heading: "3. Manual Product Title & Collection Date",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Partial Drawer 9 text & SEO connection: 6 product-owned destinations connected for exact-value approval (manual-only native_title, native_description, custom.generated_description, native_seo_description; independently reviewed native_seo_title and custom.seo_title), while per-image media alts (native_image_alt) and custom.alt_text remain read-only descriptors and price/shipping weight remain task-restricted read-only."
+    description: "Native Shopify product title (native_title) and collection date (custom.collection_date). Existing manual-only restrictions are preserved."
   }),
   Object.freeze({
-    drawerId: "standardized_attributes",
-    drawerNumber: 10,
-    heading: "10. Standardized Attributes (shopify.*)",
-    subHarness: "SUB_HARNESS_5",
+    drawerId: "identity_and_classification",
+    drawerNumber: 4,
+    heading: "4. Piece Identity, Material & OOAK",
+    subHarness: "SUB_HARNESS_1",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Connected standardized taxonomy reference attributes (18 retained shopify.* destinations): requires complete reads, live PRODUCT list.metaobject_reference definition, product category constraint eligibility, verified restricted Metaobject definition membership for all proposed GIDs, and exact-value approval."
+    description: "Core piece identity (custom.piece_name), dominant material (custom.material), base stone family (custom.stone_family), both independent one-of-a-kind destinations (custom.is_one_of_a_kind and custom.is_ooak), related standardized reference attributes (shopify.material, shopify.product-classification, shopify.product-use, shopify.material-origin), and read-only custom.primary_medium compatibility inspection."
   }),
   Object.freeze({
-    drawerId: "parked_excluded_protected",
+    drawerId: "appearance_color_and_shape",
+    drawerNumber: 5,
+    heading: "5. Appearance, Cut, Color & Finish",
+    subHarness: "SUB_HARNESS_1",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Cut and shape, stone shape, surface finish, color, primary/secondary colors, color pattern, related standardized reference attribute (shopify.color-pattern), and read-only custom.cut_type compatibility inspection."
+  }),
+  Object.freeze({
+    drawerId: "treatment_and_disclosure",
+    drawerNumber: 6,
+    heading: "6. Treatment & Disclosure",
+    subHarness: "SUB_HARNESS_1",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Lapidary treatment status (custom.treatment_status) and treated classification (custom.treated)."
+  }),
+  Object.freeze({
+    drawerId: "origin_and_provenance",
+    drawerNumber: 7,
+    heading: "7. Origin, Collection & Provenance",
+    subHarness: "SUB_HARNESS_1",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Origin location, canonical origin page handle (custom.origin_page_handle), collection name, collection location, found-object provenance, and read-only custom.origin_handle alias inspection."
+  }),
+  Object.freeze({
+    drawerId: "setting_and_hardware",
+    drawerNumber: 8,
+    heading: "8. Setting, Chain & Hardware",
+    subHarness: "SUB_HARNESS_2",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Connected setting and hardware facts (custom.secondary_medium, custom.jewelry_type, custom.setting_ready, custom.bail_included, custom.chain_material, custom.chain_link_type, custom.jewelry_finding_type, custom.wire_material) plus related standardized reference attributes (shopify.jewelry-type, shopify.jewelry-material, shopify.jewelry-finding-type, shopify.chain-link-type, shopify.construction)."
+  }),
+  Object.freeze({
+    drawerId: "seo_and_media_alts",
+    drawerNumber: 9,
+    heading: "9. SEO Titles, Meta Description & Photo Alts",
+    subHarness: "SUB_HARNESS_4",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Independently reviewed SEO title destinations (native_seo_title and custom.seo_title) and native SEO meta description (native_seo_description, existing manual-only restriction preserved), plus read-only per-image media alt capability descriptor (native_image_alt) and custom.alt_text."
+  }),
+  Object.freeze({
+    drawerId: "descriptions_and_narrative",
+    drawerNumber: 10,
+    heading: "10. Product Descriptions (Substantive Text)",
+    subHarness: "SUB_HARNESS_4",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Independent substantive product description destinations (native_description and custom.generated_description) isolated for clean review and drawer copy parts, preserving existing manual-only restrictions and independent exact-value approvals."
+  }),
+  Object.freeze({
+    drawerId: "geology_physical_properties",
     drawerNumber: 11,
-    heading: "11. Parked, Excluded & Protected Inventory (Read-Only)",
+    heading: "11. Geology: Physical & Optical Properties",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Physical and optical mineralogical properties: Mohs hardness, specific gravity, crystal system (custom.crystal_system and standardized shopify.crystal-system), luster, cleavage, fracture pattern, diaphaneity, and tenacity."
+  }),
+  Object.freeze({
+    drawerId: "geology_composition_and_time",
+    drawerNumber: 12,
+    heading: "12. Geology: Class, Composition, Formation & Deep Time",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Mineral class, rock composition, and rock formation (custom.* text and standardized shopify.* references), library geological age text (custom.geological_age), authoritative standardized geological era (shopify.geological-era), and read-only legacy custom.geological_era compatibility inspection."
+  }),
+  Object.freeze({
+    drawerId: "channel_and_demographic",
+    drawerNumber: 13,
+    heading: "13. Google Channel & Demographic Attributes",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    isImplementedInBatch1: true,
+    description: "Product Google product category (custom.google_product_category), single-variant Google channel attributes (PRODUCTVARIANT mm-google-shopping.age_group, condition, gender), related standardized demographic/condition references (shopify.age-group, shopify.condition, shopify.target-gender), read-only hold (mm-google-shopping.custom_product), and legacy compatibility inspection rows (PRODUCTVARIANT google.age_group, google.condition, google.target_gender and PRODUCT custom.target_gender)."
+  }),
+  Object.freeze({
+    drawerId: "parked_story_and_bench_notes",
+    drawerNumber: 14,
+    heading: "14. Parked Story, Character & Studio Notes (Read-Only)",
     subHarness: "SUB_HARNESS_6",
     batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
     isImplementedInBatch1: true,
-    description: "Read-only inspection of parked/excluded product and variant fields plus protected third-party app metafields. Zero writes, zero deletions."
+    description: "Read-only inspection of parked story context, flaw/character notes, studio bench notes, and provenance notes (origin_story, honest_flaws_and_character, character_marks, rescued_by, official_name, stone_story, artist_notes, bench_notes, handcrafted_by, story_theme). Zero writes, zero deletions."
+  }),
+  Object.freeze({
+    drawerId: "parked_legacy_product_exclusions",
+    drawerNumber: 15,
+    heading: "15. Parked Legacy Product & Taxonomy Exclusions (Read-Only)",
+    subHarness: "SUB_HARNESS_6",
+    batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
+    isImplementedInBatch1: true,
+    description: "Read-only inspection of excluded product-level custom fields, excluded standardized attributes (shopify.authenticity, shopify.necklace-design, shopify.rarity), and parked app conversation starters. Zero writes, zero deletions."
+  }),
+  Object.freeze({
+    drawerId: "parked_variant_and_protected_apps",
+    drawerNumber: 16,
+    heading: "16. Parked Variant Customs/MPN & Protected App Fields (Read-Only)",
+    subHarness: "SUB_HARNESS_6",
+    batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
+    isImplementedInBatch1: true,
+    description: "Read-only inspection of parked/excluded PRODUCTVARIANT fields (harmonized_system_code, mpn, custom_label_0..4, size_system, size_type) and protected third-party app metafields (Shopify eligibility and Judge.me). Zero writes, zero deletions."
   })
 ]);
 
@@ -426,30 +540,6 @@ export const BENCH_V2_OPTIONS_BY_KEY = Object.freeze({
   google_condition: GOOGLE_CONDITION_OPTIONS,
   google_gender: GOOGLE_GENDER_OPTIONS
 });
-
-const STANDARDIZED_SHOPIFY_KEYS = Object.freeze([
-  "age-group",
-  "authenticity",
-  "chain-link-type",
-  "color-pattern",
-  "condition",
-  "construction",
-  "crystal-system",
-  "geological-era",
-  "jewelry-finding-type",
-  "jewelry-material",
-  "jewelry-type",
-  "material",
-  "material-origin",
-  "mineral-class",
-  "necklace-design",
-  "product-classification",
-  "product-use",
-  "rarity",
-  "rock-composition",
-  "rock-formation",
-  "target-gender"
-]);
 
 const VISION_CANDIDATE_STANDARDIZED_KEYS = new Set(ALLOWED_VISION_CANDIDATE_KEYS);
 const SUPPORTED_STANDARDIZED_KEY_SET = new Set(SUPPORTED_STANDARDIZED_REFERENCE_KEYS);
@@ -575,31 +665,42 @@ function defineCompatField(drawerId, subHarness, owner, namespace, key, label, c
   });
 }
 
-function defineMeasurementHoldField(key, label, expectedType, purposeNote) {
+function defineStandardizedShopifyField(drawerId, subHarness, k, canonicalTarget = null) {
+  const isVisionCandidateKey = VISION_CANDIDATE_STANDARDIZED_KEYS.has(k);
+  const isSupportedRefKey = SUPPORTED_STANDARDIZED_KEY_SET.has(k);
   return defineFieldContract({
-    destinationKey: `custom.${key}`,
-    namespace: "custom",
-    key,
-    label,
+    destinationKey: `shopify.${k}`,
+    namespace: "shopify",
+    key: k,
+    label: `Shopify Standardized: ${k}`,
     owner: "PRODUCT",
-    drawerId: "manual_measurements",
-    subHarness: "SUB_HARNESS_2",
-    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
-    isManualOnlyNoAi: true,
-    expectedType,
-    purposeNote
+    drawerId,
+    subHarness,
+    batchStage: isSupportedRefKey
+      ? BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED
+      : BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
+    writeCapability: isSupportedRefKey
+      ? BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL
+      : BENCH_V2_WRITE_CAPABILITY.STANDARDIZED_REFERENCE_LOCKED,
+    isManualOnlyNoAi: !isVisionCandidateKey,
+    expectedType: "list.metaobject_reference",
+    allowedTypes: ["list.metaobject_reference"],
+    maxLength: null,
+    canonicalTarget,
+    purposeNote: isSupportedRefKey
+      ? "Standardized taxonomy reference attribute (list.metaobject_reference). Requires complete reads, live PRODUCT definition, category constraint eligibility, verified restricted Metaobject definition membership for all proposed GIDs, and exact-value approval."
+      : "Read-only standardized taxonomy attribute."
   });
 }
 
-function defineParkedField(owner, namespace, key, label, expectedType = "single_line_text_field", overrides = {}) {
+function defineParkedField(drawerId, owner, namespace, key, label, expectedType = "single_line_text_field", overrides = {}) {
   return defineFieldContract({
     destinationKey: `${namespace}.${key}`,
     namespace,
     key,
     label,
     owner,
-    drawerId: "parked_excluded_protected",
+    drawerId,
     subHarness: "SUB_HARNESS_6",
     batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.PARKED_EXCLUDED_NO_WRITE,
@@ -608,14 +709,14 @@ function defineParkedField(owner, namespace, key, label, expectedType = "single_
   });
 }
 
-function defineProtectedAppField(namespace, key, label) {
+function defineProtectedAppField(drawerId, namespace, key, label) {
   return defineFieldContract({
     destinationKey: `${namespace}.${key}`,
     namespace,
     key,
     label,
     owner: "PRODUCT",
-    drawerId: "parked_excluded_protected",
+    drawerId,
     subHarness: "SUB_HARNESS_6",
     batchStage: BENCH_V2_BATCH_STAGE.PROTECTED_READ_ONLY,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.PROTECTED_NO_WRITE,
@@ -624,209 +725,13 @@ function defineProtectedAppField(namespace, key, label) {
 }
 
 // ==========================================================================
-// AUTHORITATIVE FIELD CONTRACTS (ALL 11 DRAWERS)
+// AUTHORITATIVE FIELD CONTRACTS (ALL 16 FOCUSED DRAWERS)
 // ==========================================================================
 
 export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
-  // DRAWER 1: IDENTITY (SUB_HARNESS_1 — BATCH 1 IMPLEMENTED)
+  // DRAWER 1: MANUAL STONE MEASUREMENTS & PRICE BASELINE (6 CONTRACTS)
   defineBatch1CustomField(
-    "identity",
-    "SUB_HARNESS_1",
-    "piece_name",
-    "Piece Name",
-    "Individual piece identifier (never the full 3-part Shopify marketing title)."
-  ),
-  defineBatch1CustomField(
-    "identity",
-    "SUB_HARNESS_1",
-    "material",
-    "Dominant Material",
-    "Dominant material of the piece (distinct from custom.stone_family; preserves existing option list; never auto-populated from stone_family and never overwritten with hardware/metal/plating strings).",
-    { optionsKey: "stone_family" }
-  ),
-  defineBatch1CustomField(
-    "identity",
-    "SUB_HARNESS_1",
-    "is_one_of_a_kind",
-    "Is One of a Kind (custom.is_one_of_a_kind)",
-    "Intentional OOAK destination #1 (single_line_text_field). Uses the same factual OOAK answer as custom.is_ooak with no second lookup; requires its own exact-value approval with no automatic companion write.",
-    {
-      usesYesNoMeaningDisplay: true,
-      allowedTypes: ["single_line_text_field"],
-      optionsKey: "is_one_of_a_kind"
-    }
-  ),
-  defineBatch1CustomField(
-    "identity",
-    "SUB_HARNESS_1",
-    "is_ooak",
-    "Is OOAK (custom.is_ooak)",
-    "Intentional OOAK destination #2. Preserves actual observed storage/definition type on each product ('boolean' accepts exact 'true'/'false'; 'single_line_text_field' preserves exact text) while displaying user-facing Yes/No convention. Requires its own exact-value approval with no automatic companion write.",
-    {
-      usesYesNoMeaningDisplay: true,
-      allowedTypes: ["single_line_text_field", "boolean"],
-      optionsKey: "is_ooak"
-    }
-  ),
-  defineBatch1CustomField(
-    "identity",
-    "SUB_HARNESS_1",
-    "stone_family",
-    "Stone Family",
-    "Base stone family (e.g. Red Jasper -> Jasper). Distinct from Dominant Material (custom.material) and Primary Medium (custom.primary_medium); requires its own exact-value approval and never auto-populates or overwrites those other destinations.",
-    { optionsKey: "stone_family", canonicalTarget: null }
-  ),
-  defineCompatField(
-    "identity",
-    "SUB_HARNESS_1",
-    "PRODUCT",
-    "custom",
-    "primary_medium",
-    "Primary Medium (Saved Compatibility — Read-Only)",
-    "custom.material",
-    "Inspectable saved primary_medium value. Never dual-written or promoted into custom.material if contaminated with hardware terms."
-  ),
-
-  // DRAWER 2: ORIGIN AND COLLECTION (SUB_HARNESS_1 — BATCH 1 IMPLEMENTED)
-  defineBatch1CustomField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "origin_location",
-    "Origin Location",
-    "Geological or geographic origin location of the material."
-  ),
-  defineBatch1CustomField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "origin_page_handle",
-    "Origin Page Handle",
-    "Sole canonical editable origin page handle."
-  ),
-  defineBatch1CustomField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "collection_name",
-    "Collection Name",
-    "Studio collection or series name.",
-    { optionsKey: "collection_name" }
-  ),
-  defineBatch1CustomField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "collection_location",
-    "Collection Location",
-    "Specific field/river/ranch collecting location."
-  ),
-  defineBatch1CustomField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "found_object",
-    "Found Object",
-    "Wild-found vs. purchased provenance.",
-    { usesYesNoMeaningDisplay: true, optionsKey: "found_object" }
-  ),
-  defineBatch1CustomField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "collection_date",
-    "Collection Date",
-    "Collection date string. Blank/absent stays absent; placeholder tokens ('N/A', 'None', 'Unknown') are rejected at source.",
-    { isManualOnlyNoAi: true }
-  ),
-  defineCompatField(
-    "origin_and_collection",
-    "SUB_HARNESS_1",
-    "PRODUCT",
-    "custom",
-    "origin_handle",
-    "Origin Handle (Saved Compatibility — Read-Only)",
-    "custom.origin_page_handle",
-    "Inspectable legacy alias; canonical writes target custom.origin_page_handle only."
-  ),
-
-  // DRAWER 3: TREATMENT (SUB_HARNESS_1 — BATCH 1 IMPLEMENTED)
-  defineBatch1CustomField(
-    "treatment",
-    "SUB_HARNESS_1",
-    "treatment_status",
-    "Treatment Status",
-    "Detailed treatment disclosure text.",
-    { usesYesNoMeaningDisplay: true }
-  ),
-  defineBatch1CustomField(
-    "treatment",
-    "SUB_HARNESS_1",
-    "treated",
-    "Treated",
-    "Standardized studio treatment value (e.g. Untreated — Natural).",
-    { usesYesNoMeaningDisplay: true, optionsKey: "treated" }
-  ),
-
-  // DRAWER 4: APPEARANCE AND CHARACTER (SUB_HARNESS_1 — BATCH 1 IMPLEMENTED)
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "cut_and_shape",
-    "Cut and Shape",
-    "Detailed cut and shape description (distinct from broader custom.stone_shape). Resolved from legacy API retirement list; requires live definition or stored type verification on save."
-  ),
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "stone_shape",
-    "Stone Shape",
-    "Broader stone shape classification. Resolved from legacy API retirement list; requires live definition or stored type verification on save."
-  ),
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "surface_finish",
-    "Surface Finish",
-    "Lapidary surface polish/finish.",
-    { optionsKey: "surface_finish" }
-  ),
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "color",
-    "Color",
-    "General color descriptor. Resolved from legacy API retirement list; requires live definition or stored type verification on save."
-  ),
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "primary_color",
-    "Primary Color",
-    "Dominant visual color of the piece."
-  ),
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "secondary_colors",
-    "Secondary Colors",
-    "Secondary/accent colors as plain text (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "color_pattern",
-    "Color Pattern",
-    "Visual patterning (banding, brecciated, dendritic, etc.) as plain text."
-  ),
-  defineCompatField(
-    "appearance_and_character",
-    "SUB_HARNESS_1",
-    "PRODUCT",
-    "custom",
-    "cut_type",
-    "Cut Type (Saved Compatibility — Read-Only)",
-    "custom.cut_and_shape",
-    "Inspectable compatibility field; canonical writes target custom.cut_and_shape."
-  ),
-
-  // DRAWER 5: MANUAL MEASUREMENTS (SUB_HARNESS_2 — CONNECTED FOR MANUAL ENTRY)
-  defineBatch1CustomField(
-    "manual_measurements",
+    "manual_stone_scale_price",
     "SUB_HARNESS_2",
     "dimensions_mm",
     "Dimensions (mm)",
@@ -834,7 +739,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     { isManualOnlyNoAi: true }
   ),
   defineBatch1CustomField(
-    "manual_measurements",
+    "manual_stone_scale_price",
     "SUB_HARNESS_2",
     "weight_grams",
     "Weight (grams)",
@@ -847,7 +752,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     }
   ),
   defineBatch1CustomField(
-    "manual_measurements",
+    "manual_stone_scale_price",
     "SUB_HARNESS_2",
     "whole_product_weight_grams",
     "Actual Whole-Product Weight (g)",
@@ -859,8 +764,50 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
       maxLength: null
     }
   ),
+  defineFieldContract({
+    destinationKey: "native_price",
+    namespace: "native",
+    key: "native_price",
+    label: "Variant Price (Task-Restricted Read-Only)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "manual_stone_scale_price",
+    subHarness: "SUB_HARNESS_4",
+    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
+    expectedType: "money",
+    purposeNote: "Price changes are task-restricted read-only in this batch (moving this control to Drawer 1 does not unlock manual price writes; inspectable baseline only)."
+  }),
+  defineFieldContract({
+    destinationKey: "native_shipping_weight",
+    namespace: "native",
+    key: "native_shipping_weight",
+    label: "Inventory Shipping Weight (Task-Restricted Read-Only)",
+    owner: "INVENTORYITEM",
+    drawerId: "manual_stone_scale_price",
+    subHarness: "SUB_HARNESS_4",
+    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
+    expectedType: "weight_ounces",
+    purposeNote: "Shipping-weight changes are task-restricted read-only in this batch; inspectable baseline only."
+  }),
+  defineFieldContract({
+    destinationKey: "custom.shipping_weight_oz",
+    namespace: "custom",
+    key: "shipping_weight_oz",
+    label: "Shipping Weight Oz Metafield (Task-Restricted Read-Only)",
+    owner: "PRODUCT",
+    drawerId: "manual_stone_scale_price",
+    subHarness: "SUB_HARNESS_4",
+    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
+    expectedType: "number_decimal",
+    canonicalTarget: "native_shipping_weight",
+    purposeNote: "Shipping-weight changes are task-restricted read-only in this batch; inspectable baseline only."
+  }),
+
+  // DRAWER 2: MANUAL CHAIN, FIT & OPENING MEASUREMENTS (3 CONTRACTS; overall_solid_length_in CANCELLED)
   defineBatch1CustomField(
-    "manual_measurements",
+    "manual_fit_and_chain_measurements",
     "SUB_HARNESS_2",
     "chain_cord_length_in",
     "Chain or Cord Length (in)",
@@ -868,7 +815,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     { isManualOnlyNoAi: true }
   ),
   defineBatch1CustomField(
-    "manual_measurements",
+    "manual_fit_and_chain_measurements",
     "SUB_HARNESS_2",
     "accessory_dimensions_mm",
     "Accessory Exterior Dimensions (mm)",
@@ -876,7 +823,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     { isManualOnlyNoAi: true }
   ),
   defineBatch1CustomField(
-    "manual_measurements",
+    "manual_fit_and_chain_measurements",
     "SUB_HARNESS_2",
     "fitting_opening_mm",
     "Fitting / Opening / Grip Dimensions (mm)",
@@ -884,283 +831,14 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     { isManualOnlyNoAi: true }
   ),
 
-  // DRAWER 6: CONDITIONAL SETTING/ACCESSORY FACTS (SUB_HARNESS_2 — CONNECTED)
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "secondary_medium",
-    "Secondary Medium",
-    "Secondary medium (setting/hardware metal or material) when applicable; never overwrites stone identity."
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "jewelry_type",
-    "Jewelry Type",
-    "Jewelry type classification (e.g. Pendant, Necklace, Artisan jewelry, N/A)."
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "setting_ready",
-    "Setting Ready",
-    "Whether the piece is setting-ready or mounted/ready to wear (preserves exact descriptive text or boolean-like text values).",
-    { usesYesNoMeaningDisplay: true, optionsKey: "setting_ready" }
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "bail_included",
-    "Bail Included",
-    "Whether a bail is included and/or its specific descriptive type (e.g. Silver Plated Pinch Bail).",
-    { usesYesNoMeaningDisplay: true, optionsKey: "bail_included" }
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "chain_material",
-    "Chain Material",
-    "Included necklace chain or cord material.",
-    { optionsKey: "chain_material" }
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "chain_link_type",
-    "Chain Link Type",
-    "Chain link or cord type (e.g. Cord, Snake Chain)."
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "jewelry_finding_type",
-    "Jewelry Finding Type",
-    "Specific finding or mounting hardware (e.g. Silver Plated Pinch Bail, Glue-On Bail, Assorted Glue-In Setting)."
-  ),
-  defineBatch1CustomField(
-    "conditional_setting_accessory",
-    "SUB_HARNESS_2",
-    "wire_material",
-    "Wire Material",
-    "Wire material when wire-wrapped."
-  ),
-
-  // DRAWER 7: GEOLOGY (SUB_HARNESS_3 — CONNECTED)
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "mohs_hardness",
-    "Mohs Hardness",
-    "Mohs hardness scale value or range (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "specific_gravity",
-    "Specific Gravity",
-    "Specific gravity value or range (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "crystal_system",
-    "Crystal System",
-    "Crystal system classification as plain text (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "luster",
-    "Luster",
-    "Mineralogical luster (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "cleavage",
-    "Cleavage",
-    "Mineralogical cleavage (single_line_text_field; 'None' is a valid mineralogical value)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "fracture_pattern",
-    "Fracture Pattern",
-    "Mineralogical fracture pattern (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "diaphaneity",
-    "Diaphaneity",
-    "Light transmission / diaphaneity (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "tenacity",
-    "Tenacity",
-    "Mineralogical tenacity (single_line_text_field, e.g. Brittle)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "mineral_class",
-    "Mineral Class",
-    "Mineral class as plain text (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "rock_composition",
-    "Rock Composition",
-    "Rock or mineral composition as plain text (single_line_text_field)."
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "rock_formation",
-    "Rock Formation",
-    "Geological rock formation as plain text (single_line_text_field)."
-  ),
-  defineCompatField(
-    "geology",
-    "SUB_HARNESS_3",
-    "PRODUCT",
-    "custom",
-    "geological_era",
-    "Geological Era (Saved Compatibility — Read-Only)",
-    "shopify.geological-era",
-    "Legacy custom geological_era field kept read-only for inspection only; authoritative ERA dropdown is shopify.geological-era and AGE text is custom.geological_age.",
-    { maxLength: 255 }
-  ),
-  defineBatch1CustomField(
-    "geology",
-    "SUB_HARNESS_3",
-    "geological_age",
-    "Geological Age",
-    "Library geological age text (single_line_text_field; distinct from shopify.geological-era and custom.geological_era; 'Variable' can be valid)."
-  ),
-
-  // DRAWER 8: OTHER & CHANNEL ATTRIBUTES (SUB_HARNESS_3 — CONNECTED IN BENCH V2)
-  defineBatch1CustomField(
-    "other_channel",
-    "SUB_HARNESS_3",
-    "google_product_category",
-    "Google Product Category",
-    "Product-level Google product category text (custom.google_product_category). Requires live definition or stored type verification and exact-value approval.",
-    { optionsKey: "google_product_category" }
-  ),
-  defineFieldContract({
-    destinationKey: "mm-google-shopping.custom_product",
-    namespace: "mm-google-shopping",
-    key: "custom_product",
-    label: "Google Shopping Custom Product (Read-Only Hold)",
-    owner: "PRODUCT",
-    drawerId: "other_channel",
-    subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
-    expectedType: "boolean",
-    purposeNote: "Held read-only: no live PRODUCT or PRODUCTVARIANT definition or stored boolean exists on the store, and legacy custom.custom_product text ('true') does not verify channel boolean polarity."
-  }),
-  defineFieldContract({
-    destinationKey: "mm-google-shopping.age_group",
-    namespace: "mm-google-shopping",
-    key: "age_group",
-    label: "Google: Age Group (mm-google-shopping.age_group)",
-    owner: "PRODUCTVARIANT",
-    drawerId: "other_channel",
-    subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
-    isManualOnlyNoAi: true,
-    expectedType: "single_line_text_field",
-    maxLength: 255,
-    optionsKey: "google_age_group",
-    purposeNote: "Variant-owned Google age group (PRODUCTVARIANT mm-google-shopping.age_group, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
-  }),
-  defineFieldContract({
-    destinationKey: "mm-google-shopping.condition",
-    namespace: "mm-google-shopping",
-    key: "condition",
-    label: "Google: Condition (mm-google-shopping.condition)",
-    owner: "PRODUCTVARIANT",
-    drawerId: "other_channel",
-    subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
-    isManualOnlyNoAi: true,
-    expectedType: "single_line_text_field",
-    maxLength: 255,
-    optionsKey: "google_condition",
-    purposeNote: "Variant-owned Google condition (PRODUCTVARIANT mm-google-shopping.condition, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
-  }),
-  defineFieldContract({
-    destinationKey: "mm-google-shopping.gender",
-    namespace: "mm-google-shopping",
-    key: "gender",
-    label: "Google: Gender (mm-google-shopping.gender)",
-    owner: "PRODUCTVARIANT",
-    drawerId: "other_channel",
-    subHarness: "SUB_HARNESS_3",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
-    isManualOnlyNoAi: true,
-    expectedType: "single_line_text_field",
-    maxLength: 255,
-    optionsKey: "google_gender",
-    purposeNote: "Variant-owned Google gender (PRODUCTVARIANT mm-google-shopping.gender, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
-  }),
-  defineCompatField(
-    "other_channel",
-    "SUB_HARNESS_3",
-    "PRODUCTVARIANT",
-    "google",
-    "age_group",
-    "Google Age Group (Legacy Variant Compatibility — Read-Only)",
-    "mm-google-shopping.age_group",
-    "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.age_group definition; active variant definition is mm-google-shopping.age_group)."
-  ),
-  defineCompatField(
-    "other_channel",
-    "SUB_HARNESS_3",
-    "PRODUCTVARIANT",
-    "google",
-    "condition",
-    "Google Condition (Legacy Variant Compatibility — Read-Only)",
-    "mm-google-shopping.condition",
-    "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.condition definition; active variant definition is mm-google-shopping.condition)."
-  ),
-  defineCompatField(
-    "other_channel",
-    "SUB_HARNESS_3",
-    "PRODUCTVARIANT",
-    "google",
-    "target_gender",
-    "Google Target Gender (Legacy Variant Compatibility — Read-Only)",
-    "mm-google-shopping.gender",
-    "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.target_gender definition; active variant definition is mm-google-shopping.gender)."
-  ),
-  defineCompatField(
-    "other_channel",
-    "SUB_HARNESS_3",
-    "PRODUCT",
-    "custom",
-    "target_gender",
-    "Target Gender (Custom Compatibility — Read-Only)",
-    "google.target_gender",
-    "Inspectable product-level custom.target_gender compatibility value; never auto-migrated or copied."
-  ),
-
-  // DRAWER 9: NATIVE, SEO, DESCRIPTION & MEDIA ALTS (SUB_HARNESS_4 — TEXT/SEO CONNECTED, MEDIA & PRICE/WEIGHT READ-ONLY)
+  // DRAWER 3: MANUAL PRODUCT TITLE & COLLECTION DATE (2 CONTRACTS)
   defineFieldContract({
     destinationKey: "native_title",
     namespace: "native",
     key: "native_title",
     label: "Native Product Title (product.title)",
     owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
+    drawerId: "manual_title_and_collection_date",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
@@ -1168,50 +846,284 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     expectedType: "native_title",
     allowedTypes: ["native", "native_title"],
     maxLength: 255,
-    purposeNote: "Native Shopify product title (product.title, max 255 chars). Distinct from custom.piece_name; manual entry and exact-value approval only."
+    purposeNote: "Native Shopify product title (product.title, max 255 chars). Distinct from custom.piece_name; existing manual-only restriction and exact-value approval preserved."
   }),
-  defineFieldContract({
-    destinationKey: "native_description",
-    namespace: "native",
-    key: "native_description",
-    label: "Native Product Description HTML (product.descriptionHtml)",
-    owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
-    subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
-    isManualOnlyNoAi: true,
-    expectedType: "native_html",
-    allowedTypes: ["native", "native_html"],
-    maxLength: 10000,
-    control: "multiline",
-    purposeNote: "Independent destination from custom.generated_description; manual entry and exact-value approval only (max 10,000 chars)."
-  }),
-  defineFieldContract({
-    destinationKey: "custom.generated_description",
-    namespace: "custom",
-    key: "generated_description",
-    label: "Generated Description Metafield (custom.generated_description)",
-    owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
-    subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
-    isManualOnlyNoAi: true,
-    expectedType: "multi_line_text_field",
-    allowedTypes: ["multi_line_text_field"],
-    maxLength: 10000,
-    control: "multiline",
-    canonicalTarget: "native_description",
-    purposeNote: "Independent destination from native_description; requires live definition or stored type multi_line_text_field and its own exact-value approval (max 10,000 chars)."
-  }),
+  defineBatch1CustomField(
+    "manual_title_and_collection_date",
+    "SUB_HARNESS_1",
+    "collection_date",
+    "Collection Date",
+    "Collection date string. Blank/absent stays absent; placeholder tokens ('N/A', 'None', 'Unknown') are rejected at source.",
+    { isManualOnlyNoAi: true }
+  ),
+
+  // DRAWER 4: PIECE IDENTITY, MATERIAL & OOAK (10 CONTRACTS)
+  defineBatch1CustomField(
+    "identity_and_classification",
+    "SUB_HARNESS_1",
+    "piece_name",
+    "Piece Name",
+    "Individual piece identifier (never the full 3-part Shopify marketing title)."
+  ),
+  defineBatch1CustomField(
+    "identity_and_classification",
+    "SUB_HARNESS_1",
+    "material",
+    "Dominant Material",
+    "Dominant material of the piece (distinct from custom.stone_family; preserves existing option list; never auto-populated from stone_family and never overwritten with hardware/metal/plating strings).",
+    { optionsKey: "stone_family" }
+  ),
+  defineBatch1CustomField(
+    "identity_and_classification",
+    "SUB_HARNESS_1",
+    "stone_family",
+    "Stone Family",
+    "Base stone family (e.g. Red Jasper -> Jasper). Distinct from Dominant Material (custom.material) and Primary Medium (custom.primary_medium); requires its own exact-value approval and never auto-populates or overwrites those other destinations.",
+    { optionsKey: "stone_family", canonicalTarget: null }
+  ),
+  defineBatch1CustomField(
+    "identity_and_classification",
+    "SUB_HARNESS_1",
+    "is_one_of_a_kind",
+    "Is One of a Kind (custom.is_one_of_a_kind)",
+    "Intentional OOAK destination #1 (single_line_text_field). Uses the same factual OOAK answer as custom.is_ooak with no second lookup; requires its own exact-value approval with no automatic companion write.",
+    {
+      usesYesNoMeaningDisplay: true,
+      allowedTypes: ["single_line_text_field"],
+      optionsKey: "is_one_of_a_kind"
+    }
+  ),
+  defineBatch1CustomField(
+    "identity_and_classification",
+    "SUB_HARNESS_1",
+    "is_ooak",
+    "Is OOAK (custom.is_ooak)",
+    "Intentional OOAK destination #2. Preserves actual observed storage/definition type on each product ('boolean' accepts exact 'true'/'false'; 'single_line_text_field' preserves exact text) while displaying user-facing Yes/No convention. Requires its own exact-value approval with no automatic companion write.",
+    {
+      usesYesNoMeaningDisplay: true,
+      allowedTypes: ["single_line_text_field", "boolean"],
+      optionsKey: "is_ooak"
+    }
+  ),
+  defineStandardizedShopifyField("identity_and_classification", "SUB_HARNESS_5", "material", "custom.material"),
+  defineStandardizedShopifyField("identity_and_classification", "SUB_HARNESS_5", "product-classification"),
+  defineStandardizedShopifyField("identity_and_classification", "SUB_HARNESS_5", "product-use"),
+  defineStandardizedShopifyField("identity_and_classification", "SUB_HARNESS_5", "material-origin"),
+  defineCompatField(
+    "identity_and_classification",
+    "SUB_HARNESS_1",
+    "PRODUCT",
+    "custom",
+    "primary_medium",
+    "Primary Medium (Saved Compatibility — Read-Only)",
+    "custom.material",
+    "Inspectable saved primary_medium value. Never dual-written or promoted into custom.material if contaminated with hardware terms."
+  ),
+
+  // DRAWER 5: APPEARANCE, CUT, COLOR & FINISH (9 CONTRACTS)
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "cut_and_shape",
+    "Cut and Shape",
+    "Detailed cut and shape description (distinct from broader custom.stone_shape). Resolved from legacy API retirement list; requires live definition or stored type verification on save."
+  ),
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "stone_shape",
+    "Stone Shape",
+    "Broader stone shape classification. Resolved from legacy API retirement list; requires live definition or stored type verification on save."
+  ),
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "surface_finish",
+    "Surface Finish",
+    "Lapidary surface polish/finish.",
+    { optionsKey: "surface_finish" }
+  ),
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "color",
+    "Color",
+    "General color descriptor. Resolved from legacy API retirement list; requires live definition or stored type verification on save."
+  ),
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "primary_color",
+    "Primary Color",
+    "Dominant visual color of the piece."
+  ),
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "secondary_colors",
+    "Secondary Colors",
+    "Secondary/accent colors as plain text (single_line_text_field)."
+  ),
+  defineBatch1CustomField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "color_pattern",
+    "Color Pattern",
+    "Visual patterning (banding, brecciated, dendritic, etc.) as plain text."
+  ),
+  defineStandardizedShopifyField("appearance_color_and_shape", "SUB_HARNESS_5", "color-pattern", "custom.color_pattern"),
+  defineCompatField(
+    "appearance_color_and_shape",
+    "SUB_HARNESS_1",
+    "PRODUCT",
+    "custom",
+    "cut_type",
+    "Cut Type (Saved Compatibility — Read-Only)",
+    "custom.cut_and_shape",
+    "Inspectable compatibility field; canonical writes target custom.cut_and_shape."
+  ),
+
+  // DRAWER 6: TREATMENT & DISCLOSURE (2 CONTRACTS)
+  defineBatch1CustomField(
+    "treatment_and_disclosure",
+    "SUB_HARNESS_1",
+    "treatment_status",
+    "Treatment Status",
+    "Detailed treatment disclosure text.",
+    { usesYesNoMeaningDisplay: true }
+  ),
+  defineBatch1CustomField(
+    "treatment_and_disclosure",
+    "SUB_HARNESS_1",
+    "treated",
+    "Treated",
+    "Standardized studio treatment value (e.g. Untreated — Natural).",
+    { usesYesNoMeaningDisplay: true, optionsKey: "treated" }
+  ),
+
+  // DRAWER 7: ORIGIN, COLLECTION & PROVENANCE (6 CONTRACTS)
+  defineBatch1CustomField(
+    "origin_and_provenance",
+    "SUB_HARNESS_1",
+    "origin_location",
+    "Origin Location",
+    "Geological or geographic origin location of the material."
+  ),
+  defineBatch1CustomField(
+    "origin_and_provenance",
+    "SUB_HARNESS_1",
+    "origin_page_handle",
+    "Origin Page Handle",
+    "Sole canonical editable origin page handle."
+  ),
+  defineBatch1CustomField(
+    "origin_and_provenance",
+    "SUB_HARNESS_1",
+    "collection_name",
+    "Collection Name",
+    "Studio collection or series name.",
+    { optionsKey: "collection_name" }
+  ),
+  defineBatch1CustomField(
+    "origin_and_provenance",
+    "SUB_HARNESS_1",
+    "collection_location",
+    "Collection Location",
+    "Specific field/river/ranch collecting location."
+  ),
+  defineBatch1CustomField(
+    "origin_and_provenance",
+    "SUB_HARNESS_1",
+    "found_object",
+    "Found Object",
+    "Wild-found vs. purchased provenance.",
+    { usesYesNoMeaningDisplay: true, optionsKey: "found_object" }
+  ),
+  defineCompatField(
+    "origin_and_provenance",
+    "SUB_HARNESS_1",
+    "PRODUCT",
+    "custom",
+    "origin_handle",
+    "Origin Handle (Saved Compatibility — Read-Only)",
+    "custom.origin_page_handle",
+    "Inspectable legacy alias; canonical writes target custom.origin_page_handle only."
+  ),
+
+  // DRAWER 8: SETTING, CHAIN & HARDWARE (13 CONTRACTS)
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "secondary_medium",
+    "Secondary Medium",
+    "Secondary medium (setting/hardware metal or material) when applicable; never overwrites stone identity."
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "jewelry_type",
+    "Jewelry Type",
+    "Jewelry type classification (e.g. Pendant, Necklace, Artisan jewelry, N/A)."
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "setting_ready",
+    "Setting Ready",
+    "Whether the piece is setting-ready or mounted/ready to wear (preserves exact descriptive text or boolean-like text values).",
+    { usesYesNoMeaningDisplay: true, optionsKey: "setting_ready" }
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "bail_included",
+    "Bail Included",
+    "Whether a bail is included and/or its specific descriptive type (e.g. Silver Plated Pinch Bail).",
+    { usesYesNoMeaningDisplay: true, optionsKey: "bail_included" }
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "chain_material",
+    "Chain Material",
+    "Included necklace chain or cord material.",
+    { optionsKey: "chain_material" }
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "chain_link_type",
+    "Chain Link Type",
+    "Chain link or cord type (e.g. Cord, Snake Chain)."
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "jewelry_finding_type",
+    "Jewelry Finding Type",
+    "Specific finding or mounting hardware (e.g. Silver Plated Pinch Bail, Glue-On Bail, Assorted Glue-In Setting)."
+  ),
+  defineBatch1CustomField(
+    "setting_and_hardware",
+    "SUB_HARNESS_2",
+    "wire_material",
+    "Wire Material",
+    "Wire material when wire-wrapped."
+  ),
+  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "jewelry-type", "custom.jewelry_type"),
+  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "jewelry-material", "custom.secondary_medium"),
+  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "jewelry-finding-type", "custom.jewelry_finding_type"),
+  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "chain-link-type", "custom.chain_link_type"),
+  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "construction"),
+
+  // DRAWER 9: SEO TITLES, META DESCRIPTION & PHOTO ALTS (5 CONTRACTS + EXPANDED PHOTO ALTS)
   defineFieldContract({
     destinationKey: "native_seo_title",
     namespace: "native",
     key: "native_seo_title",
     label: "Native SEO Title (product.seo.title)",
     owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
+    drawerId: "seo_and_media_alts",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
@@ -1226,7 +1138,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     key: "seo_title",
     label: "SEO Title Metafield (custom.seo_title)",
     owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
+    drawerId: "seo_and_media_alts",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
@@ -1242,7 +1154,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     key: "native_seo_description",
     label: "Native SEO Meta Description (product.seo.description)",
     owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
+    drawerId: "seo_and_media_alts",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
@@ -1251,7 +1163,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     allowedTypes: ["native", "native_seo_description"],
     maxLength: 160,
     control: "multiline",
-    purposeNote: "Native Shopify SEO meta description (product.seo.description, max 160 chars). Manual entry and exact-value approval only."
+    purposeNote: "Native Shopify SEO meta description (product.seo.description, max 160 chars). Existing manual-only restriction and exact-value approval preserved."
   }),
   defineFieldContract({
     destinationKey: "native_image_alt",
@@ -1259,7 +1171,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     key: "native_image_alt",
     label: "Per-Image Media Alt Text Capability (Expands per MediaImage GID)",
     owner: "MEDIAIMAGE",
-    drawerId: "native_seo_description_media",
+    drawerId: "seo_and_media_alts",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
@@ -1272,7 +1184,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     key: "alt_text",
     label: "General Alt Text Compatibility Metafield (custom.alt_text)",
     owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
+    drawerId: "seo_and_media_alts",
     subHarness: "SUB_HARNESS_4",
     batchStage: BENCH_V2_BATCH_STAGE.FUTURE_BATCH_3_DESCRIPTOR,
     writeCapability: BENCH_V2_WRITE_CAPABILITY.FUTURE_BATCH_UNWIRED_READ_ONLY,
@@ -1281,77 +1193,265 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     canonicalTarget: "native_image_alt",
     purposeNote: "Compatibility metafield; never auto-created when absent and never auto-copied from hero image alt."
   }),
+
+  // DRAWER 10: PRODUCT DESCRIPTIONS (SUBSTANTIVE TEXT — 2 CONTRACTS)
   defineFieldContract({
-    destinationKey: "native_price",
+    destinationKey: "native_description",
     namespace: "native",
-    key: "native_price",
-    label: "Variant Price (Task-Restricted Read-Only)",
-    owner: "PRODUCTVARIANT",
-    drawerId: "native_seo_description_media",
-    subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
-    expectedType: "money",
-    purposeNote: "Price changes are outside this task; inspectable baseline only."
-  }),
-  defineFieldContract({
-    destinationKey: "native_shipping_weight",
-    namespace: "native",
-    key: "native_shipping_weight",
-    label: "Inventory Shipping Weight (Task-Restricted Read-Only)",
-    owner: "INVENTORYITEM",
-    drawerId: "native_seo_description_media",
-    subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
-    expectedType: "weight_ounces",
-    purposeNote: "Shipping-weight changes are outside this task; inspectable baseline only."
-  }),
-  defineFieldContract({
-    destinationKey: "custom.shipping_weight_oz",
-    namespace: "custom",
-    key: "shipping_weight_oz",
-    label: "Shipping Weight Oz Metafield (Task-Restricted Read-Only)",
+    key: "native_description",
+    label: "Native Product Description HTML (product.descriptionHtml)",
     owner: "PRODUCT",
-    drawerId: "native_seo_description_media",
+    drawerId: "descriptions_and_narrative",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
-    expectedType: "number_decimal",
-    canonicalTarget: "native_shipping_weight",
-    purposeNote: "Shipping-weight changes are outside this task; inspectable baseline only."
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "native_html",
+    allowedTypes: ["native", "native_html"],
+    maxLength: 10000,
+    control: "multiline",
+    purposeNote: "Independent destination from custom.generated_description; existing manual-only restriction and exact-value approval preserved (max 10,000 chars)."
+  }),
+  defineFieldContract({
+    destinationKey: "custom.generated_description",
+    namespace: "custom",
+    key: "generated_description",
+    label: "Generated Description Metafield (custom.generated_description)",
+    owner: "PRODUCT",
+    drawerId: "descriptions_and_narrative",
+    subHarness: "SUB_HARNESS_4",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "multi_line_text_field",
+    allowedTypes: ["multi_line_text_field"],
+    maxLength: 10000,
+    control: "multiline",
+    canonicalTarget: "native_description",
+    purposeNote: "Independent destination from native_description; requires live definition or stored type multi_line_text_field and its own exact-value approval (max 10,000 chars)."
   }),
 
-  // DRAWER 10: STANDARDIZED ATTRIBUTES (shopify.* — SUB_HARNESS_5 — CONNECTED REFERENCE HARNESS)
-  ...STANDARDIZED_SHOPIFY_KEYS.filter((k) => !EXCLUDED_STANDARDIZED_KEYS.has(k)).map((k) => {
-    const isVisionCandidateKey = VISION_CANDIDATE_STANDARDIZED_KEYS.has(k);
-    const isSupportedRefKey = SUPPORTED_STANDARDIZED_KEY_SET.has(k);
-    return defineFieldContract({
-      destinationKey: `shopify.${k}`,
-      namespace: "shopify",
-      key: k,
-      label: `Shopify Standardized: ${k}`,
-      owner: "PRODUCT",
-      drawerId: "standardized_attributes",
-      subHarness: "SUB_HARNESS_5",
-      batchStage: isSupportedRefKey
-        ? BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED
-        : BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
-      writeCapability: isSupportedRefKey
-        ? BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL
-        : BENCH_V2_WRITE_CAPABILITY.STANDARDIZED_REFERENCE_LOCKED,
-      isManualOnlyNoAi: !isVisionCandidateKey,
-      expectedType: "list.metaobject_reference",
-      allowedTypes: ["list.metaobject_reference"],
-      maxLength: null,
-      purposeNote: isSupportedRefKey
-        ? "Standardized taxonomy reference attribute (list.metaobject_reference). Requires complete reads, live PRODUCT definition, category constraint eligibility, verified restricted Metaobject definition membership for all proposed GIDs, and exact-value approval."
-        : "Read-only standardized taxonomy attribute."
-    });
-  }),
+  // DRAWER 11: GEOLOGY: PHYSICAL & OPTICAL PROPERTIES (9 CONTRACTS)
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "mohs_hardness",
+    "Mohs Hardness",
+    "Mohs hardness scale value or range (single_line_text_field)."
+  ),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "specific_gravity",
+    "Specific Gravity",
+    "Specific gravity value or range (single_line_text_field)."
+  ),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "crystal_system",
+    "Crystal System",
+    "Crystal system classification as plain text (single_line_text_field)."
+  ),
+  defineStandardizedShopifyField("geology_physical_properties", "SUB_HARNESS_5", "crystal-system", "custom.crystal_system"),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "luster",
+    "Luster",
+    "Mineralogical luster (single_line_text_field)."
+  ),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "cleavage",
+    "Cleavage",
+    "Mineralogical cleavage (single_line_text_field; 'None' is a valid mineralogical value)."
+  ),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "fracture_pattern",
+    "Fracture Pattern",
+    "Mineralogical fracture pattern (single_line_text_field)."
+  ),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "diaphaneity",
+    "Diaphaneity",
+    "Light transmission / diaphaneity (single_line_text_field)."
+  ),
+  defineBatch1CustomField(
+    "geology_physical_properties",
+    "SUB_HARNESS_3",
+    "tenacity",
+    "Tenacity",
+    "Mineralogical tenacity (single_line_text_field, e.g. Brittle)."
+  ),
 
-  // DRAWER 11: PARKED, EXCLUDED & PROTECTED INVENTORY (READ-ONLY)
+  // DRAWER 12: GEOLOGY: CLASS, COMPOSITION, FORMATION & DEEP TIME (9 CONTRACTS)
+  defineBatch1CustomField(
+    "geology_composition_and_time",
+    "SUB_HARNESS_3",
+    "mineral_class",
+    "Mineral Class",
+    "Mineral class as plain text (single_line_text_field)."
+  ),
+  defineStandardizedShopifyField("geology_composition_and_time", "SUB_HARNESS_5", "mineral-class", "custom.mineral_class"),
+  defineBatch1CustomField(
+    "geology_composition_and_time",
+    "SUB_HARNESS_3",
+    "rock_composition",
+    "Rock Composition",
+    "Rock or mineral composition as plain text (single_line_text_field)."
+  ),
+  defineStandardizedShopifyField("geology_composition_and_time", "SUB_HARNESS_5", "rock-composition", "custom.rock_composition"),
+  defineBatch1CustomField(
+    "geology_composition_and_time",
+    "SUB_HARNESS_3",
+    "rock_formation",
+    "Rock Formation",
+    "Geological rock formation as plain text (single_line_text_field)."
+  ),
+  defineStandardizedShopifyField("geology_composition_and_time", "SUB_HARNESS_5", "rock-formation", "custom.rock_formation"),
+  defineBatch1CustomField(
+    "geology_composition_and_time",
+    "SUB_HARNESS_3",
+    "geological_age",
+    "Geological Age",
+    "Library geological age text (single_line_text_field; distinct from shopify.geological-era and custom.geological_era; 'Variable' can be valid)."
+  ),
+  defineStandardizedShopifyField("geology_composition_and_time", "SUB_HARNESS_5", "geological-era"),
+  defineCompatField(
+    "geology_composition_and_time",
+    "SUB_HARNESS_3",
+    "PRODUCT",
+    "custom",
+    "geological_era",
+    "Geological Era (Saved Compatibility — Read-Only)",
+    "shopify.geological-era",
+    "Legacy custom geological_era field kept read-only for inspection only; authoritative ERA dropdown is shopify.geological-era and AGE text is custom.geological_age.",
+    { maxLength: 255 }
+  ),
+
+  // DRAWER 13: GOOGLE CHANNEL & DEMOGRAPHIC ATTRIBUTES (12 CONTRACTS)
+  defineBatch1CustomField(
+    "channel_and_demographic",
+    "SUB_HARNESS_3",
+    "google_product_category",
+    "Google Product Category",
+    "Product-level Google product category text (custom.google_product_category). Requires live definition or stored type verification and exact-value approval.",
+    { optionsKey: "google_product_category" }
+  ),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.age_group",
+    namespace: "mm-google-shopping",
+    key: "age_group",
+    label: "Google: Age Group (mm-google-shopping.age_group)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "channel_and_demographic",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "single_line_text_field",
+    maxLength: 255,
+    optionsKey: "google_age_group",
+    purposeNote: "Variant-owned Google age group (PRODUCTVARIANT mm-google-shopping.age_group, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
+  }),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.condition",
+    namespace: "mm-google-shopping",
+    key: "condition",
+    label: "Google: Condition (mm-google-shopping.condition)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "channel_and_demographic",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "single_line_text_field",
+    maxLength: 255,
+    optionsKey: "google_condition",
+    purposeNote: "Variant-owned Google condition (PRODUCTVARIANT mm-google-shopping.condition, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
+  }),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.gender",
+    namespace: "mm-google-shopping",
+    key: "gender",
+    label: "Google: Gender (mm-google-shopping.gender)",
+    owner: "PRODUCTVARIANT",
+    drawerId: "channel_and_demographic",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
+    expectedType: "single_line_text_field",
+    maxLength: 255,
+    optionsKey: "google_gender",
+    purposeNote: "Variant-owned Google gender (PRODUCTVARIANT mm-google-shopping.gender, single_line_text_field). Requires complete single-variant enumeration, exact ProductVariant GID binding, complete variant metafields/definitions, and exact-value approval."
+  }),
+  defineStandardizedShopifyField("channel_and_demographic", "SUB_HARNESS_5", "age-group", "mm-google-shopping.age_group"),
+  defineStandardizedShopifyField("channel_and_demographic", "SUB_HARNESS_5", "condition", "mm-google-shopping.condition"),
+  defineStandardizedShopifyField("channel_and_demographic", "SUB_HARNESS_5", "target-gender", "mm-google-shopping.gender"),
+  defineFieldContract({
+    destinationKey: "mm-google-shopping.custom_product",
+    namespace: "mm-google-shopping",
+    key: "custom_product",
+    label: "Google Shopping Custom Product (Read-Only Hold)",
+    owner: "PRODUCT",
+    drawerId: "channel_and_demographic",
+    subHarness: "SUB_HARNESS_3",
+    batchStage: BENCH_V2_BATCH_STAGE.READ_ONLY_HOLD,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.UNVERIFIED_CONTRACT_HOLD,
+    expectedType: "boolean",
+    purposeNote: "Held read-only: no live PRODUCT or PRODUCTVARIANT definition or stored boolean exists on the store, and legacy custom.custom_product text ('true') does not verify channel boolean polarity."
+  }),
+  defineCompatField(
+    "channel_and_demographic",
+    "SUB_HARNESS_3",
+    "PRODUCTVARIANT",
+    "google",
+    "age_group",
+    "Google Age Group (Legacy Variant Compatibility — Read-Only)",
+    "mm-google-shopping.age_group",
+    "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.age_group definition; active variant definition is mm-google-shopping.age_group)."
+  ),
+  defineCompatField(
+    "channel_and_demographic",
+    "SUB_HARNESS_3",
+    "PRODUCTVARIANT",
+    "google",
+    "condition",
+    "Google Condition (Legacy Variant Compatibility — Read-Only)",
+    "mm-google-shopping.condition",
+    "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.condition definition; active variant definition is mm-google-shopping.condition)."
+  ),
+  defineCompatField(
+    "channel_and_demographic",
+    "SUB_HARNESS_3",
+    "PRODUCTVARIANT",
+    "google",
+    "target_gender",
+    "Google Target Gender (Legacy Variant Compatibility — Read-Only)",
+    "mm-google-shopping.gender",
+    "Read-only variant compatibility inspection slot (no live PRODUCTVARIANT google.target_gender definition; active variant definition is mm-google-shopping.gender)."
+  ),
+  defineCompatField(
+    "channel_and_demographic",
+    "SUB_HARNESS_3",
+    "PRODUCT",
+    "custom",
+    "target_gender",
+    "Target Gender (Custom Compatibility — Read-Only)",
+    "google.target_gender",
+    "Inspectable product-level custom.target_gender compatibility value; never auto-migrated or copied."
+  ),
+
+  // DRAWER 14: PARKED STORY, CHARACTER & STUDIO NOTES (READ-ONLY — 10 CONTRACTS)
   defineParkedField(
+    "parked_story_and_bench_notes",
     "PRODUCT",
     "custom",
     "origin_story",
@@ -1363,6 +1463,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     }
   ),
   defineParkedField(
+    "parked_story_and_bench_notes",
     "PRODUCT",
     "custom",
     "honest_flaws_and_character",
@@ -1373,39 +1474,43 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
       unresolvedPolicyQuestion: "Marked EXCLUDED_INPUT in constants.jsx but listed in ALLOWED_TAB3_KEYS in legacy API; kept read-only to preserve saved character notes until explicitly decided."
     }
   ),
-  defineParkedField("PRODUCT", "custom", "character_marks", "Character Marks (Parked — Read-Only)", "list.single_line_text_field", { control: "multiline" }),
-  defineParkedField("PRODUCT", "custom", "rescued_by", "Rescued By (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "official_name", "Official Name (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "stone_story", "Stone Story (Parked — Read-Only)", "list.single_line_text_field", { control: "multiline" }),
-  defineParkedField("PRODUCT", "custom", "artist_notes", "Artist Notes (Parked — Read-Only)", "multi_line_text_field", { control: "multiline" }),
-  defineParkedField("PRODUCT", "custom", "bench_notes", "Bench Notes (Parked — Read-Only)", "multi_line_text_field", { control: "multiline" }),
-  defineParkedField("PRODUCT", "custom", "handcrafted_by", "Handcrafted By (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "primary_use", "Primary Use (Parked — Read-Only)", "single_line_text_field", { canonicalTarget: "shopify.product-use" }),
-  defineParkedField("PRODUCT", "custom", "necklace_design", "Necklace Design (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "authenticity", "Authenticity (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "rarity", "Rarity (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "custom_product", "Custom Product (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "age_group", "Age Group Custom (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "condition", "Condition Custom (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "price", "Custom Price Metafield (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "custom", "story_theme", "Story Theme (Parked — Read-Only)"),
-  defineParkedField("PRODUCT", "shopify", "authenticity", "Shopify Authenticity (Parked — Read-Only)", "list.metaobject_reference"),
-  defineParkedField("PRODUCT", "shopify", "necklace-design", "Shopify Necklace Design (Parked — Read-Only)", "list.metaobject_reference"),
-  defineParkedField("PRODUCT", "shopify", "rarity", "Shopify Rarity (Parked — Read-Only)", "list.metaobject_reference"),
-  defineParkedField("PRODUCT", "app--3026047", "conversation_starters", "App Conversation Starters (Parked — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "global", "harmonized_system_code", "Harmonized System Code (Parked Variant Customs Code — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "mpn", "Google Shopping MPN (Excluded Variant Field — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "custom_label_0", "Google Shopping Custom Label 0 (Parked Variant — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "custom_label_1", "Google Shopping Custom Label 1 (Parked Variant — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "custom_label_2", "Google Shopping Custom Label 2 (Parked Variant — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "custom_label_3", "Google Shopping Custom Label 3 (Parked Variant — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "custom_label_4", "Google Shopping Custom Label 4 (Parked Variant — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "size_system", "Google Shopping Size System (Parked Variant — Read-Only)"),
-  defineParkedField("PRODUCTVARIANT", "mm-google-shopping", "size_type", "Google Shopping Size Type (Parked Variant — Read-Only)"),
-  defineProtectedAppField("app--3890849--eligibility", "eligibility_details", "Shopify Eligibility Details (Protected — Read-Only)"),
-  defineProtectedAppField("judgeme", "badge", "Judge.me Badge (Protected — Read-Only)"),
-  defineProtectedAppField("judgeme", "review_widget_data", "Judge.me Review Widget Data (Protected — Read-Only)"),
-  defineProtectedAppField("judgeme", "widget", "Judge.me Widget (Protected — Read-Only)")
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "character_marks", "Character Marks (Parked — Read-Only)", "list.single_line_text_field", { control: "multiline" }),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "rescued_by", "Rescued By (Parked — Read-Only)"),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "official_name", "Official Name (Parked — Read-Only)"),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "stone_story", "Stone Story (Parked — Read-Only)", "list.single_line_text_field", { control: "multiline" }),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "artist_notes", "Artist Notes (Parked — Read-Only)", "multi_line_text_field", { control: "multiline" }),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "bench_notes", "Bench Notes (Parked — Read-Only)", "multi_line_text_field", { control: "multiline" }),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "handcrafted_by", "Handcrafted By (Parked — Read-Only)"),
+  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "story_theme", "Story Theme (Parked — Read-Only)"),
+
+  // DRAWER 15: PARKED LEGACY PRODUCT & TAXONOMY EXCLUSIONS (READ-ONLY — 12 CONTRACTS)
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "primary_use", "Primary Use (Parked — Read-Only)", "single_line_text_field", { canonicalTarget: "shopify.product-use" }),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "necklace_design", "Necklace Design (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "authenticity", "Authenticity (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "rarity", "Rarity (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "custom_product", "Custom Product (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "age_group", "Age Group Custom (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "condition", "Condition Custom (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "price", "Custom Price Metafield (Parked — Read-Only)"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "shopify", "authenticity", "Shopify Authenticity (Parked — Read-Only)", "list.metaobject_reference"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "shopify", "necklace-design", "Shopify Necklace Design (Parked — Read-Only)", "list.metaobject_reference"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "shopify", "rarity", "Shopify Rarity (Parked — Read-Only)", "list.metaobject_reference"),
+  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "app--3026047", "conversation_starters", "App Conversation Starters (Parked — Read-Only)"),
+
+  // DRAWER 16: PARKED VARIANT CUSTOMS/MPN & PROTECTED APP FIELDS (READ-ONLY — 13 CONTRACTS)
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "global", "harmonized_system_code", "Harmonized System Code (Parked Variant Customs Code — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "mpn", "Google Shopping MPN (Excluded Variant Field — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_0", "Google Shopping Custom Label 0 (Parked Variant — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_1", "Google Shopping Custom Label 1 (Parked Variant — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_2", "Google Shopping Custom Label 2 (Parked Variant — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_3", "Google Shopping Custom Label 3 (Parked Variant — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_4", "Google Shopping Custom Label 4 (Parked Variant — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "size_system", "Google Shopping Size System (Parked Variant — Read-Only)"),
+  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "size_type", "Google Shopping Size Type (Parked Variant — Read-Only)"),
+  defineProtectedAppField("parked_variant_and_protected_apps", "app--3890849--eligibility", "eligibility_details", "Shopify Eligibility Details (Protected — Read-Only)"),
+  defineProtectedAppField("parked_variant_and_protected_apps", "judgeme", "badge", "Judge.me Badge (Protected — Read-Only)"),
+  defineProtectedAppField("parked_variant_and_protected_apps", "judgeme", "review_widget_data", "Judge.me Review Widget Data (Protected — Read-Only)"),
+  defineProtectedAppField("parked_variant_and_protected_apps", "judgeme", "widget", "Judge.me Widget (Protected — Read-Only)")
 ]);
 
 export const BENCH_V2_CONTRACTS_BY_DESTINATION = Object.freeze(
@@ -1431,16 +1536,22 @@ export const BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS = Object.freeze(
   )
 );
 
-export const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
+export const MANUAL_MEASUREMENT_DESTINATIONS = Object.freeze(
   new Set([
-    ...BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
-    ...BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
     "custom.dimensions_mm",
     "custom.weight_grams",
     "custom.whole_product_weight_grams",
     "custom.chain_cord_length_in",
     "custom.accessory_dimensions_mm",
-    "custom.fitting_opening_mm",
+    "custom.fitting_opening_mm"
+  ])
+);
+
+export const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
+  new Set([
+    ...BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
+    ...BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
+    ...MANUAL_MEASUREMENT_DESTINATIONS,
     "custom.collection_date",
     "mm-google-shopping.age_group",
     "mm-google-shopping.condition",
@@ -1452,10 +1563,15 @@ export const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
   ])
 );
 
+export function isManualMeasurementDestination(destinationKey) {
+  if (!destinationKey || typeof destinationKey !== "string") return false;
+  return MANUAL_MEASUREMENT_DESTINATIONS.has(destinationKey);
+}
+
 export function isManualOnlyNoAiDestination(destinationKey, contract = null) {
   if (!destinationKey || typeof destinationKey !== "string") return false;
   if (MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS.has(destinationKey)) return true;
-  if (contract && (contract.isManualOnlyNoAi === true || contract.drawerId === "manual_measurements")) {
+  if (contract && contract.isManualOnlyNoAi === true) {
     return true;
   }
   return false;
