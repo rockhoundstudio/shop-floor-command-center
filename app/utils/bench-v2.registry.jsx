@@ -69,13 +69,13 @@ export const CANCELLED_INERT_DESTINATIONS = Object.freeze(
   new Set(["overall_solid_length_in", "custom.overall_solid_length_in"])
 );
 
-// Task-level operational restrictions (price/shipping writes and deletions outside this task).
+// Task-level operational restrictions (shipping weight writes, legacy price aliases, and deletions outside this task).
 export const TASK_RESTRICTED_READ_ONLY_DESTINATIONS = Object.freeze(
-  new Set(["native_price", "price", "custom.price", "native_shipping_weight", "custom.shipping_weight_oz"])
+  new Set(["price", "custom.price", "native_shipping_weight", "custom.shipping_weight_oz"])
 );
 
-// Explicit replacement-bench-local allowlist of verified PRODUCTVARIANT destinations.
-// Only these 3 variant destinations may be writable in Bench V2 when single-variant
+// Explicit replacement-bench-local allowlist of verified PRODUCTVARIANT metafield destinations.
+// Only these 3 variant metafield destinations may be writable in Bench V2 when single-variant
 // identity, variant metafield pagination, and live PRODUCTVARIANT definitions are complete.
 export const BENCH_V2_CONNECTED_VARIANT_DESTINATIONS = Object.freeze(
   new Set([
@@ -302,7 +302,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Manual caliper and scale measurements (stone dimensions mm, stone weight g, actual whole-product weight g) connected for manual entry and exact-value approval, plus task-restricted read-only price and shipping weight baselines (manual price entry remains restricted/unfinished in this batch; overall_solid_length_in remains cancelled)."
+    description: "Manual caliper and scale measurements (stone dimensions mm, stone weight g, actual whole-product weight g) and single-variant manual price (native_price, USD two-decimal format) connected for manual entry and independent exact-value approval (excluded from AI scan; shipping weight baselines remain task-restricted read-only; overall_solid_length_in remains cancelled)."
   }),
   Object.freeze({
     drawerId: "manual_fit_and_chain_measurements",
@@ -569,7 +569,10 @@ function defineFieldContract(spec) {
       !EXCLUDED_STANDARDIZED_KEYS.has(spec.key) &&
       BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(spec.destinationKey)) ||
     (spec.owner === "PRODUCTVARIANT" &&
-      BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(spec.destinationKey));
+      BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(spec.destinationKey)) ||
+    (spec.owner === "PRODUCTVARIANT" &&
+      spec.namespace === "native" &&
+      spec.destinationKey === "native_price");
 
   const isBatch1Writable =
     spec.batchStage === BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED &&
@@ -768,14 +771,16 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     destinationKey: "native_price",
     namespace: "native",
     key: "native_price",
-    label: "Variant Price (Task-Restricted Read-Only)",
+    label: "Variant Price (USD)",
     owner: "PRODUCTVARIANT",
     drawerId: "manual_stone_scale_price",
     subHarness: "SUB_HARNESS_4",
-    batchStage: BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY,
-    writeCapability: BENCH_V2_WRITE_CAPABILITY.TASK_RESTRICTED_NO_WRITE,
+    batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
+    writeCapability: BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL,
+    isManualOnlyNoAi: true,
     expectedType: "money",
-    purposeNote: "Price changes are task-restricted read-only in this batch (moving this control to Drawer 1 does not unlock manual price writes; inspectable baseline only)."
+    allowedTypes: ["native", "money"],
+    purposeNote: "Single-variant native Shopify price in USD (PRODUCTVARIANT native_price, canonical non-negative two-decimal format e.g. 45.00; distinct from parked custom.price). Manual entry only (excluded from AI scan); requires verified single-variant ProductVariant GID, complete variant baseline read, and independent exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "native_shipping_weight",
@@ -1552,6 +1557,7 @@ export const MANUAL_MEASUREMENT_AND_MANUAL_ONLY_DESTINATIONS = Object.freeze(
     ...BENCH_V2_MANUAL_ONLY_NO_AI_DESTINATIONS,
     ...BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
     ...MANUAL_MEASUREMENT_DESTINATIONS,
+    "native_price",
     "custom.collection_date",
     "mm-google-shopping.age_group",
     "mm-google-shopping.condition",

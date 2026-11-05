@@ -1042,6 +1042,13 @@ export function BenchV2DrawersView({
                         } = row;
 
                         const isShopifyReference = contract.namespace === "shopify";
+                        const isNativeVariantPrice =
+                          contract.owner === "PRODUCTVARIANT" &&
+                          contract.namespace === "native" &&
+                          contract.destinationKey === "native_price";
+                        const isDecimalInputModeField =
+                          isNativeVariantPrice ||
+                          contract.expectedType === "number_decimal";
                         const usesMeaningDisplay = Boolean(
                           contract.usesYesNoMeaningDisplay || isShopifyReference
                         );
@@ -1075,6 +1082,8 @@ export function BenchV2DrawersView({
                         } else if (isShopifyReference) {
                           inputPlaceholder =
                             'Select a verified reference choice above or enter canonical JSON GID array (e.g. ["gid://shopify/Metaobject/..."])...';
+                        } else if (isNativeVariantPrice) {
+                          inputPlaceholder = "Enter price in USD, e.g. 45.00";
                         } else if (contract.destinationKey === "custom.dimensions_mm") {
                           inputPlaceholder = "Enter manual measurement (e.g. 38 x 24 x 6 mm)...";
                         } else if (contract.destinationKey === "custom.weight_grams") {
@@ -1153,7 +1162,9 @@ export function BenchV2DrawersView({
                                         marginLeft: "8px"
                                       }}
                                     >
-                                      (Single-Variant {contract.destinationKey} — manual/preset)
+                                      {isNativeVariantPrice
+                                        ? "(Single-Variant USD price — manual entry only, no AI price suggestions)"
+                                        : `(Single-Variant ${contract.destinationKey} — manual/preset)`}
                                     </span>
                                   )}
                                 {isShopifyReference && contract.isWritableInBatch1 && (
@@ -1391,6 +1402,7 @@ export function BenchV2DrawersView({
                                       ) : (
                                         <input
                                           type="text"
+                                          inputMode={isDecimalInputModeField ? "decimal" : undefined}
                                           aria-label={`Manual proposal for ${contract.destinationKey}`}
                                           value={proposedValue}
                                           disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
@@ -1641,7 +1653,7 @@ export function BenchV2DrawersView({
                                     {contract.writeCapability === "UNVERIFIED_CONTRACT_HOLD"
                                       ? "Held read-only pending supported Shopify definition and writer evidence."
                                       : contract.writeCapability === "TASK_RESTRICTED_NO_WRITE"
-                                        ? "Read-only baseline (price/shipping writes are task-restricted in this batch)."
+                                        ? "Read-only baseline (shipping weight writes are task-restricted in this batch)."
                                         : "Read-only in this batch."}
                                   </div>
                                 )}

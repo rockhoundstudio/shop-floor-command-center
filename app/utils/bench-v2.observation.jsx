@@ -396,7 +396,7 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       if (isExactMetaobjectGid(gid) && defId === resolvedDefId) {
         entriesByGid.set(gid, {
           id: gid,
-          label,
+          label: extractEntryLabel(val) || gid,
           definitionId: defId
         });
       }
@@ -928,6 +928,107 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
 
   if (contract.namespace === "native") {
     const nt = baselineSnapshot.nativeTargets;
+
+    // Single-variant native price (PRODUCTVARIANT native_price)
+    if (contract.owner === "PRODUCTVARIANT" && contract.destinationKey === "native_price") {
+      const varCompleteness = inspectVariantSnapshotCompleteness(
+        baselineSnapshot,
+        contract.destinationKey
+      );
+
+      const makeNativePriceUnavailable = (presence, sigTag, varId = null) =>
+        makeUnavailableObservation({
+          destinationKey: contract.destinationKey,
+          owner: contract.owner,
+          variantId: varId,
+          variantTargetStatus: varCompleteness.variantTargetStatus,
+          presence,
+          storedType: "native",
+          liveDefType: "native",
+          metafieldsCompleteState: completeness.metafieldsCompleteState,
+          defsCompleteState: completeness.defsCompleteState,
+          destinationDefError: nt?.loadError ? String(nt.loadError) : completeness.destinationDefError,
+          signature: varId
+            ? `unavailable:${sigTag}:${productGid}::PRODUCTVARIANT::${varId}::${contract.destinationKey}`
+            : `unavailable:${sigTag}:${productGid}::PRODUCTVARIANT::${contract.destinationKey}`
+        });
+
+      if (!nt || typeof nt !== "object") {
+        return makeNativePriceUnavailable("native_baseline_unavailable", "native");
+      }
+      if (varCompleteness.variantTargetStatus === "variants_read_incomplete") {
+        return makeNativePriceUnavailable("unknown_incomplete_read", "variants_incomplete_read");
+      }
+      if (varCompleteness.variantTargetStatus === "zero_variants") {
+        return makeNativePriceUnavailable("zero_variants_hold", "zero_variants");
+      }
+      if (varCompleteness.variantTargetStatus === "multiple_variants_ambiguous") {
+        return makeNativePriceUnavailable("multiple_variants_hold", "multiple_variants");
+      }
+      if (
+        varCompleteness.variantTargetStatus !== "single_variant_verified" ||
+        !isExactProductVariantGid(varCompleteness.variantId)
+      ) {
+        return makeNativePriceUnavailable("invalid_variant_gid", "invalid_variant_gid");
+      }
+
+      const verifiedVariantId = varCompleteness.variantId;
+      const unverifiedNative = Array.isArray(nt.unverifiedFields) ? nt.unverifiedFields : [];
+      const variantEdges = Array.isArray(nt.variants?.edges) ? nt.variants.edges : [];
+      const singleVariantEdgeNode =
+        variantEdges.length === 1 && variantEdges[0]?.node?.id === verifiedVariantId
+          ? variantEdges[0].node
+          : null;
+
+      const rawNativePrice =
+        nt.price !== undefined
+          ? nt.price
+          : singleVariantEdgeNode?.price !== undefined
+            ? singleVariantEdgeNode.price
+            : undefined;
+
+      const isNativePriceUnverified =
+        nt.isComplete !== true ||
+        Boolean(nt.loadError) ||
+        unverifiedNative.includes("price") ||
+        unverifiedNative.includes("variants");
+
+      if (isNativePriceUnverified || rawNativePrice === undefined) {
+        return makeNativePriceUnavailable(
+          isNativePriceUnverified ? "unknown_incomplete_read" : "absent",
+          "native_unverified",
+          verifiedVariantId
+        );
+      }
+
+      const presence = rawNativePrice === null
+        ? "null"
+        : rawNativePrice === ""
+          ? "empty_string"
+          : "present";
+
+      return Object.freeze({
+        destinationKey: contract.destinationKey,
+        owner: contract.owner,
+        variantId: verifiedVariantId,
+        variantTargetStatus: varCompleteness.variantTargetStatus,
+        evidenceAvailable: true,
+        positiveEvidenceObserved: true,
+        presence,
+        rawValue: rawNativePrice,
+        storedType: "native",
+        liveDefType: "native",
+        restrictedMetaobjectDefinitionId: null,
+        productCategoryCompleteState: completeness.productCategoryCompleteState,
+        productCategoryId: completeness.productCategoryId,
+        categoryEligibility: null,
+        metafieldsCompleteState: completeness.metafieldsCompleteState,
+        defsCompleteState: completeness.defsCompleteState,
+        destinationDefError: completeness.destinationDefError,
+        signature: `${productGid}::PRODUCTVARIANT::${verifiedVariantId}::${contract.destinationKey}::${presence}::${typeof rawNativePrice === "object" ? JSON.stringify(rawNativePrice) : (rawNativePrice ?? "")}`
+      });
+    }
+
     if (!nt || typeof nt !== "object") {
       return makeUnavailableObservation({
         destinationKey: contract.destinationKey,
@@ -958,9 +1059,6 @@ export function buildBaselineObservation(baselineSnapshot, destinationKey) {
     } else if (contract.destinationKey === "native_seo_description") {
       isNativeFieldUnverified = unverifiedNative.includes("seo");
       rawNative = nt.seo?.description;
-    } else if (contract.destinationKey === "native_price") {
-      isNativeFieldUnverified = nt.isComplete !== true || Boolean(nt.loadError);
-      rawNative = nt.price;
     } else if (contract.destinationKey === "native_shipping_weight") {
       isNativeFieldUnverified = nt.isComplete !== true || Boolean(nt.loadError);
       rawNative = nt.shippingWeight;
@@ -1099,11 +1197,16 @@ export function evaluateDestinationTypeAndCompleteness({
     };
   }
 
-  const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+  const isVariantMetafieldOwner =
+    contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+  const isNativeVariantPrice =
+    contract.owner === "PRODUCTVARIANT" &&
+    contract.namespace === "native" &&
+    contract.destinationKey === "native_price";
   const isShopifyReference = contract.owner === "PRODUCT" && contract.namespace === "shopify";
 
   if (!baselineObs.evidenceAvailable) {
-    if (isVariantOwner) {
+    if (isVariantMetafieldOwner || isNativeVariantPrice) {
       if (baselineObs.presence === "multiple_variants_hold") {
         return {
           ready: false,
@@ -1137,11 +1240,13 @@ export function evaluateDestinationTypeAndCompleteness({
       if (baselineObs.presence === "unknown_incomplete_read") {
         return {
           ready: false,
-          code: "incomplete_variant_metafield_read",
+          code: isNativeVariantPrice ? "incomplete_native_price_read" : "incomplete_variant_metafield_read",
           verifiedActualType: null,
           observedShopifyType: null,
           typeEvidenceSource: null,
-          reason: `Variant metafield or variant enumeration completeness is "${baselineObs.metafieldsCompleteState}" for "${contract.destinationKey}"; cannot infer absence or authorize writes until variantMetafieldsReadComplete === true.`
+          reason: isNativeVariantPrice
+            ? `Single-variant price baseline or variant enumeration is incomplete for "${contract.destinationKey}"; reload product data before editing.`
+            : `Variant metafield or variant enumeration completeness is "${baselineObs.metafieldsCompleteState}" for "${contract.destinationKey}"; cannot infer absence or authorize writes until variantMetafieldsReadComplete === true.`
         };
       }
       return {
@@ -1167,7 +1272,7 @@ export function evaluateDestinationTypeAndCompleteness({
     };
   }
 
-  if (isVariantOwner) {
+  if (isVariantMetafieldOwner || isNativeVariantPrice) {
     if (
       baselineObs.variantTargetStatus !== "single_variant_verified" ||
       !isExactProductVariantGid(baselineObs.variantId)
@@ -1183,14 +1288,31 @@ export function evaluateDestinationTypeAndCompleteness({
     }
   }
 
+  if (isNativeVariantPrice) {
+    if (
+      baselineObs.presence !== "present" ||
+      typeof baselineObs.rawValue !== "string" ||
+      baselineObs.rawValue.trim() === ""
+    ) {
+      return {
+        ready: false,
+        code: "missing_variant_baseline_evidence",
+        verifiedActualType: null,
+        observedShopifyType: null,
+        typeEvidenceSource: null,
+        reason: `Complete single-variant price baseline string is required before authorizing writes on "${contract.destinationKey}".`
+      };
+    }
+  }
+
   if (baselineObs.metafieldsCompleteState !== "complete") {
     return {
       ready: false,
-      code: isVariantOwner ? "variant_metafields_read_not_complete" : "metafields_read_not_complete",
+      code: isVariantMetafieldOwner ? "variant_metafields_read_not_complete" : "metafields_read_not_complete",
       verifiedActualType: null,
       observedShopifyType: null,
       typeEvidenceSource: null,
-      reason: isVariantOwner
+      reason: isVariantMetafieldOwner
         ? `Variant metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires variantMetafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
         : `Product metafield enumeration is "${baselineObs.metafieldsCompleteState}" (requires metafieldsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
     };
@@ -1210,11 +1332,11 @@ export function evaluateDestinationTypeAndCompleteness({
   if (baselineObs.defsCompleteState !== "complete") {
     return {
       ready: false,
-      code: isVariantOwner ? "variant_definitions_read_not_complete" : "definitions_read_not_complete",
+      code: isVariantMetafieldOwner ? "variant_definitions_read_not_complete" : "definitions_read_not_complete",
       verifiedActualType: null,
       observedShopifyType: null,
       typeEvidenceSource: null,
-      reason: isVariantOwner
+      reason: isVariantMetafieldOwner
         ? `Live PRODUCTVARIANT metafield definition read is "${baselineObs.defsCompleteState}" (requires variantDefsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
         : `Live PRODUCT metafield definition read is "${baselineObs.defsCompleteState}" (requires defsReadComplete === true) before authorizing writes on "${contract.destinationKey}".`
     };
@@ -1334,7 +1456,8 @@ export function evaluateDestinationTypeAndCompleteness({
   }
 
   const reviewedExactContractType =
-    !isVariantOwner &&
+    !isVariantMetafieldOwner &&
+    !isNativeVariantPrice &&
     contract.owner === "PRODUCT" &&
     contract.namespace === "custom" &&
     contract.isWritableInBatch1 === true &&

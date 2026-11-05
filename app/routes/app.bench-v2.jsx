@@ -3,14 +3,14 @@
 // File: app/routes/app.bench-v2.jsx
 //
 // Connects the reorganized Bench V2 workflow drawers (manual measurements &
-// task-restricted price/shipping baselines first, manual title & collection
-// date, identity/material/OOAK + standardized companions, appearance/color +
-// standardized companion, treatment, origin & provenance, setting/hardware +
-// standardized companions, SEO & photo alts, substantive descriptions,
-// physical/optical geology, composition/formation/deep-time geology, Google
-// channel & demographic attributes, and split read-only parked/protected
-// drawers), with per-drawer copy controls and Sidekick live bench snapshot
-// sync.
+// manual single-variant USD price first alongside task-restricted shipping
+// baselines, manual title & collection date, identity/material/OOAK +
+// standardized companions, appearance/color + standardized companion,
+// treatment, origin & provenance, setting/hardware + standardized companions,
+// SEO & photo alts, substantive descriptions, physical/optical geology,
+// composition/formation/deep-time geology, Google channel & demographic
+// attributes, and split read-only parked/protected drawers), with per-drawer
+// copy controls and Sidekick live bench snapshot sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -1128,9 +1128,11 @@ export default function BenchV2Route() {
         ignoredManualOnlyCount++;
         const manualReason = isManualMeasurementDestination(destKey)
           ? "Manual measurement field — excluded from AI staging; enter physical measurement manually."
-          : contract?.owner === "PRODUCTVARIANT"
-            ? "Manual/preset variant channel field — excluded from AI staging."
-            : "Manual-only field — excluded from AI staging.";
+          : destKey === "native_price" || destKey === "price"
+            ? "Manual single-variant price field — excluded from AI staging; enter price manually."
+            : contract?.owner === "PRODUCTVARIANT"
+              ? "Manual/preset variant channel field — excluded from AI staging."
+              : "Manual-only field — excluded from AI staging.";
         proposalsByDestination[destKey] = {
           value: rawValue,
           source: reportedSource,
@@ -1490,8 +1492,10 @@ export default function BenchV2Route() {
         rawResponse.nativeTargets.productId === submittedProductId)
         ? rawResponse.nativeTargets
         : null;
-    const hasVerifiedNativeDestination = verifiedList.some((vDest) =>
-      BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)
+    const hasVerifiedNativeDestination = verifiedList.some(
+      (vDest) =>
+        BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest) ||
+        vDest === "native_price"
     );
 
     if (
@@ -1532,11 +1536,43 @@ export default function BenchV2Route() {
 
         for (const vDest of verifiedList) {
           const contract = getFieldContractByDestination(vDest);
-          const isVariantDest =
-            contract?.owner === "PRODUCTVARIANT" ||
+          const isVariantMetafieldDest =
+            (contract?.owner === "PRODUCTVARIANT" && contract?.namespace !== "native") ||
             BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
 
-          if (BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)) {
+          if (vDest === "native_price") {
+            if (!returnedNativeTargets) continue;
+            const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
+              ? returnedNativeTargets.unverifiedFields
+              : [];
+            if (
+              submittedVariantTargetId &&
+              responseVariantTarget === submittedVariantTargetId &&
+              existingSnap.primaryVariantId === submittedVariantTargetId &&
+              !unverifiedNativeList.includes("price") &&
+              typeof returnedNativeTargets.price === "string" &&
+              returnedNativeTargets.price === submittedValuesByDest["native_price"]
+            ) {
+              const verifiedPriceStr = returnedNativeTargets.price;
+              updatedNativeTargets.price = verifiedPriceStr;
+              if (Array.isArray(updatedNativeTargets.variants?.edges)) {
+                updatedNativeTargets.variants = {
+                  ...updatedNativeTargets.variants,
+                  edges: updatedNativeTargets.variants.edges.map((edge) =>
+                    edge?.node?.id === submittedVariantTargetId
+                      ? {
+                          ...edge,
+                          node: {
+                            ...edge.node,
+                            price: verifiedPriceStr
+                          }
+                        }
+                      : edge
+                  )
+                };
+              }
+            }
+          } else if (BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)) {
             if (!returnedNativeTargets) continue;
             const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
               ? returnedNativeTargets.unverifiedFields
@@ -1578,7 +1614,7 @@ export default function BenchV2Route() {
                 description: returnedNativeTargets.seo.description
               };
             }
-          } else if (isVariantDest) {
+          } else if (isVariantMetafieldDest) {
             if (
               hasReturnedVariantMetafields &&
               existingSnap.primaryVariantId === submittedVariantTargetId &&
@@ -1663,10 +1699,23 @@ export default function BenchV2Route() {
     if (verifiedSet.size > 0) {
       const canClearVerifiedDest = (vDest) => {
         const contract = getFieldContractByDestination(vDest);
-        const isVariantDest =
-          contract?.owner === "PRODUCTVARIANT" ||
+        if (vDest === "native_price") {
+          if (!returnedNativeTargets) return false;
+          const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
+            ? returnedNativeTargets.unverifiedFields
+            : [];
+          return Boolean(
+            submittedVariantTargetId &&
+            responseVariantTarget === submittedVariantTargetId &&
+            !unverifiedNativeList.includes("price") &&
+            typeof returnedNativeTargets.price === "string" &&
+            returnedNativeTargets.price === submittedValuesByDest["native_price"]
+          );
+        }
+        const isVariantMetafieldDest =
+          (contract?.owner === "PRODUCTVARIANT" && contract?.namespace !== "native") ||
           BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
-        if (isVariantDest) {
+        if (isVariantMetafieldDest) {
           return Boolean(
             submittedVariantTargetId &&
             responseVariantTarget === submittedVariantTargetId &&
@@ -2154,8 +2203,25 @@ export default function BenchV2Route() {
       if (contract.owner === "PRODUCTVARIANT") {
         const obsVariantId = validation.baselineObservation?.variantId || null;
         const baselinePrimaryVariantId = currentBaseline?.primaryVariantId || null;
+        const isNativeVariantPriceDest =
+          contract.namespace === "native" && destKey === "native_price";
 
-        if (
+        if (isNativeVariantPriceDest) {
+          if (
+            currentBaseline?.variantsReadComplete !== true ||
+            currentBaseline?.variantTargetStatus !== "single_variant_verified" ||
+            !isExactProductVariantGid(baselinePrimaryVariantId) ||
+            !isExactProductVariantGid(obsVariantId) ||
+            obsVariantId !== baselinePrimaryVariantId ||
+            approvalRec?.owner !== "PRODUCTVARIANT" ||
+            approvalRec?.variantId !== baselinePrimaryVariantId
+          ) {
+            prevalidationErrors.push(
+              `[${destKey}] Single-variant target identity is not verified for this price approval. Reload product data and re-approve.`
+            );
+            continue;
+          }
+        } else if (
           currentBaseline?.variantsReadComplete !== true ||
           currentBaseline?.variantTargetStatus !== "single_variant_verified" ||
           currentBaseline?.variantMetafieldsReadComplete !== true ||

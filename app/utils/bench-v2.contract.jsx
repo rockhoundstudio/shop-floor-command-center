@@ -104,10 +104,26 @@ export {
 
 const COLLECTION_DATE_PLACEHOLDER_REGEX = /^(n\/a|none|unknown)$/i;
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX = /^(?:0|[1-9]\d*)\.\d{2}$/;
+const STORED_SHOPIFY_MONEY_DECIMAL_REGEX = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
 const PLAIN_TEXT_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isBlankOrWhitespaceOnly = (str) =>
   typeof str !== "string" || str.trim() === "";
+
+function parseExactMoneyStringToCentsBigInt(moneyStr) {
+  if (typeof moneyStr !== "string" || !STORED_SHOPIFY_MONEY_DECIMAL_REGEX.test(moneyStr)) {
+    return null;
+  }
+  const parts = moneyStr.split(".");
+  const dollars = parts[0];
+  const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
+  try {
+    return BigInt(dollars + cents);
+  } catch {
+    return null;
+  }
+}
 
 // Exact pure string replica of writer `sanitizeDescription` in app/routes/app.meta-injector-api.jsx
 // so proposals that the writer would alter or block are rejected before approval.
@@ -436,6 +452,69 @@ export function validateBatch1ProposedValue({
     }
   } else if (verifiedActualType === "native") {
     if (
+      contract.owner === "PRODUCTVARIANT" &&
+      contract.namespace === "native" &&
+      contract.destinationKey === "native_price"
+    ) {
+      if (
+        baselineObs.variantTargetStatus !== "single_variant_verified" ||
+        !isExactProductVariantGid(baselineObs.variantId)
+      ) {
+        return {
+          valid: false,
+          code: "unverified_single_variant_target",
+          reason: `Single-variant target GID is not verified for "${contract.destinationKey}" (status: ${baselineObs.variantTargetStatus || "unknown"}).`
+        };
+      }
+
+      if (!CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX.test(exactValue)) {
+        return {
+          valid: false,
+          code: "invalid_usd_money_format",
+          reason: `Destination "${contract.destinationKey}" requires a canonical non-negative USD two-decimal price without currency symbols, commas, spaces, signs, exponent notation, or leading zeros (e.g. "45.00" or "0.00"; received "${exactValue}").`
+        };
+      }
+
+      const proposedCents = parseExactMoneyStringToCentsBigInt(exactValue);
+      if (proposedCents === null || proposedCents < 0n) {
+        return {
+          valid: false,
+          code: "invalid_usd_money_format",
+          reason: `Destination "${contract.destinationKey}" requires a valid non-negative USD two-decimal price (e.g. "45.00"; received "${exactValue}").`
+        };
+      }
+
+      const storedPriceStr =
+        baselineObs.presence === "present" && typeof baselineObs.rawValue === "string"
+          ? baselineObs.rawValue.trim()
+          : null;
+      const storedCents =
+        storedPriceStr !== null
+          ? parseExactMoneyStringToCentsBigInt(storedPriceStr)
+          : null;
+
+      const isUnchangedPrice =
+        baselineObs.presence === "present" &&
+        typeof baselineObs.rawValue === "string" &&
+        (baselineObs.rawValue === exactValue ||
+          (storedCents !== null && storedCents === proposedCents));
+
+      return {
+        valid: true,
+        code: isUnchangedPrice ? "unchanged_from_baseline" : "valid_change",
+        normalizedValue: exactValue,
+        isUnchangedFromStored: isUnchangedPrice,
+        verifiedActualType,
+        observedShopifyType: typeAndCompleteness.observedShopifyType,
+        typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
+        baselineObservation: baselineObs,
+        reason: isUnchangedPrice
+          ? "Proposed price matches the current stored single-variant price in cents."
+          : "Valid Batch 1 single-variant price proposed change."
+      };
+    }
+
+    if (
       contract.owner !== "PRODUCT" ||
       contract.namespace !== "native" ||
       !BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(contract.destinationKey)
@@ -671,13 +750,18 @@ export function createKeepOriginalRecord({
   }
 
   const baselineObs = buildBaselineObservation(baselineSnapshot, contract.destinationKey);
+  const isVariantOwner = contract.owner === "PRODUCTVARIANT";
+  const isNativeVariantPrice =
+    isVariantOwner && contract.namespace === "native" && contract.destinationKey === "native_price";
+
   if (!baselineObs.evidenceAvailable) {
-    const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
     let errText = `Baseline evidence is not loaded for "${contract.destinationKey}".`;
     if (baselineObs.presence === "unknown_incomplete_read") {
-      errText = isVariantOwner
-        ? `Variant baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until variantMetafieldsReadComplete === true.`
-        : `Baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until metafieldsReadComplete === true.`;
+      errText = isNativeVariantPrice
+        ? `Single-variant price baseline read is incomplete for "${contract.destinationKey}"; reload product data before binding Keep Original.`
+        : isVariantOwner
+          ? `Variant baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until variantMetafieldsReadComplete === true.`
+          : `Baseline read is incomplete for "${contract.destinationKey}"; cannot bind Keep Original until metafieldsReadComplete === true.`;
     } else if (baselineObs.presence === "multiple_variants_hold") {
       errText = `Product has multiple variants; "${contract.destinationKey}" is held read-only.`;
     } else if (baselineObs.presence === "zero_variants_hold") {
@@ -690,7 +774,6 @@ export function createKeepOriginalRecord({
     };
   }
 
-  const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
   if (isVariantOwner && !isExactProductVariantGid(baselineObs.variantId)) {
     return {
       ok: false,
@@ -700,8 +783,17 @@ export function createKeepOriginalRecord({
   }
 
   const exactRejectedProposal = rejectedProposedValue;
-  if (baselineObs.presence === "present" && baselineObs.rawValue === exactRejectedProposal) {
-    return { ok: false, error: "Proposal already matches the stored value.", record: null };
+  if (baselineObs.presence === "present") {
+    if (baselineObs.rawValue === exactRejectedProposal) {
+      return { ok: false, error: "Proposal already matches the stored value.", record: null };
+    }
+    if (isNativeVariantPrice && typeof baselineObs.rawValue === "string") {
+      const storedCents = parseExactMoneyStringToCentsBigInt(baselineObs.rawValue.trim());
+      const rejectedCents = parseExactMoneyStringToCentsBigInt(exactRejectedProposal.trim());
+      if (storedCents !== null && rejectedCents !== null && storedCents === rejectedCents) {
+        return { ok: false, error: "Proposal already matches the stored price in cents.", record: null };
+      }
+    }
   }
 
   const record = Object.freeze({
@@ -744,7 +836,7 @@ export function isKeepOriginalRecordValid({
   if (!baselineObs.evidenceAvailable) return false;
   if (keepOriginalRecord.baselineSignature !== baselineObs.signature) return false;
 
-  const isVariantOwner = contract.owner === "PRODUCTVARIANT" && contract.namespace !== "native";
+  const isVariantOwner = contract.owner === "PRODUCTVARIANT";
   if (isVariantOwner) {
     if (keepOriginalRecord.owner !== "PRODUCTVARIANT") return false;
     if (
@@ -789,6 +881,10 @@ export function evaluateBenchV2FieldRow({
 
   const observedType = baselineObs.liveDefType || baselineObs.storedType || null;
   const isShopifyReference = contract.namespace === "shopify";
+  const isNativeVariantPrice =
+    contract.owner === "PRODUCTVARIANT" &&
+    contract.namespace === "native" &&
+    contract.destinationKey === "native_price";
   const usesMeaningDisplay = Boolean(contract.usesYesNoMeaningDisplay || isShopifyReference);
 
   const refEvidence = isShopifyReference
@@ -867,8 +963,9 @@ export function evaluateBenchV2FieldRow({
       } else if (baselineObs.presence === "invalid_variant_gid") {
         connectionStatus = "Blocked (Missing or Invalid Variant GID)";
       } else if (baselineObs.presence === "unknown_incomplete_read") {
-        connectionStatus =
-          contract.owner === "PRODUCTVARIANT"
+        connectionStatus = isNativeVariantPrice
+          ? "Blocked (Single-Variant Price Baseline Read Incomplete)"
+          : contract.owner === "PRODUCTVARIANT"
             ? `Blocked (Variant Metafield Read Incomplete: ${baselineObs.metafieldsCompleteState})`
             : contract.namespace === "native"
               ? "Blocked (Native Field Baseline Read Incomplete)"
@@ -917,6 +1014,8 @@ export function evaluateBenchV2FieldRow({
       }
     } else if (typeAndCompleteness.typeEvidenceSource === "reviewed_exact_contract") {
       connectionStatus = `Connected (Batch 1 Writable — Reviewed Contract Type: ${typeAndCompleteness.verifiedActualType}; No Live Definition / Stored Type on Product)`;
+    } else if (isNativeVariantPrice) {
+      connectionStatus = `Connected (Single-Variant Native Price Writable — Variant: ${baselineObs.variantId})`;
     } else {
       connectionStatus =
         contract.owner === "PRODUCTVARIANT"
@@ -931,7 +1030,7 @@ export function evaluateBenchV2FieldRow({
   ) {
     connectionStatus = `Read-Only Descriptor (${contract.batchStage})`;
   } else if (contract.batchStage === BENCH_V2_BATCH_STAGE.TASK_RESTRICTED_READ_ONLY) {
-    connectionStatus = "Read-Only (Task-Restricted: No Price/Shipping Writes)";
+    connectionStatus = "Read-Only (Task-Restricted: No Shipping Writes)";
   } else if (contract.batchStage === BENCH_V2_BATCH_STAGE.READ_ONLY_COMPATIBILITY) {
     connectionStatus = contract.canonicalTarget
       ? `Read-Only Compatibility (Canonical: ${contract.canonicalTarget})`
@@ -950,8 +1049,9 @@ export function evaluateBenchV2FieldRow({
   if (!baselineObs.evidenceAvailable) {
     if (baselineObs.presence === "unknown_incomplete_read") {
       reviewStatus = "Incomplete Baseline Read (Cannot Infer Absence)";
-      statusReason =
-        contract.owner === "PRODUCTVARIANT"
+      statusReason = isNativeVariantPrice
+        ? `Single-variant price baseline "${contract.destinationKey}" was not verified during product load; reload product data before editing.`
+        : contract.owner === "PRODUCTVARIANT"
           ? `Variant metafield read completeness is "${baselineObs.metafieldsCompleteState}"; absence is never inferred from partial or unflagged reads.`
           : contract.namespace === "native"
             ? `Native baseline field "${contract.destinationKey}" was not verified during product load; reload product data before editing.`
@@ -973,7 +1073,7 @@ export function evaluateBenchV2FieldRow({
     reviewStatus = "Approved for Save (Exact Value Bound)";
     statusReason =
       contract.owner === "PRODUCTVARIANT" && baselineObs.variantId
-        ? `Approved exact value (${validation.verifiedActualType}) bound to variant ${baselineObs.variantId}.`
+        ? `Approved exact value (${isNativeVariantPrice ? "USD money" : validation.verifiedActualType}) bound to variant ${baselineObs.variantId}.`
         : isShopifyReference
           ? `Approved exact Metaobject GID list (${validation.verifiedActualType}) bound to definition ${baselineObs.restrictedMetaobjectDefinitionId}.`
           : validation.typeEvidenceSource === "reviewed_exact_contract"
