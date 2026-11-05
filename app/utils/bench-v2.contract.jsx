@@ -178,6 +178,700 @@ export function checkExistingWriterStringFidelity(exactProposedValue) {
   };
 }
 
+/**
+ * Pure shape rejection check for `single_line_text_field` proposals.
+ * Rejects non-strings, empty/whitespace strings, `[object Object]`, GIDs,
+ * `shopify://metaobject`, `metaobject:`/`metaobject/`, UUIDs, and strings
+ * enclosed in `[...]` or `{...}`.
+ */
+export function isPlainTextProposalRejectedForContract(rawVal, normalizedStr) {
+  if (typeof rawVal !== "string") return true;
+  const trimmed = String(normalizedStr ?? "").trim();
+  if (!trimmed) return true;
+  if (rawVal === "[object Object]" || trimmed === "[object Object]") return true;
+  if (/^gid:\/\//i.test(trimmed) || /gid:\/\/shopify\//i.test(rawVal) || /gid:\/\/shopify\//i.test(trimmed)) return true;
+  if (/^shopify:\/\/metaobject/i.test(trimmed)) return true;
+  if (/^metaobject[:/]/i.test(trimmed)) return true;
+  if (PLAIN_TEXT_UUID_REGEX.test(trimmed)) return true;
+  if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Evaluates explicit live definition validations on a plain-text proposal
+ * (such as choices, max, min, regex) when present on the live definition.
+ */
+export function validateAgainstLiveTextDefinitionValidations(liveDef, exactValue, destinationKey) {
+  if (!liveDef || !Array.isArray(liveDef.validations) || liveDef.validations.length === 0) {
+    return { valid: true, reason: null };
+  }
+  for (const v of liveDef.validations) {
+    if (!v || typeof v.name !== "string") continue;
+    const vName = v.name.trim().toLowerCase();
+    const vRaw = v.value !== undefined && v.value !== null ? String(v.value) : "";
+
+    if (vName === "choices" && vRaw.trim() !== "") {
+      try {
+        const parsedChoices = JSON.parse(vRaw);
+        if (Array.isArray(parsedChoices) && parsedChoices.length > 0) {
+          const strChoices = parsedChoices.map((c) => String(c));
+          if (!strChoices.includes(exactValue)) {
+            return {
+              valid: false,
+              reason: `Value "${exactValue}" is not in allowed definition choices [${strChoices.join(", ")}] for ${destinationKey}.`
+            };
+          }
+        }
+      } catch {
+        // Ignore non-JSON choice representation
+      }
+    } else if (vName === "max" && vRaw.trim() !== "") {
+      const maxLen = Number.parseInt(vRaw.trim(), 10);
+      if (Number.isInteger(maxLen) && maxLen > 0 && exactValue.length > maxLen) {
+        return {
+          valid: false,
+          reason: `Value for ${destinationKey} (${exactValue.length} chars) exceeds live definition max length (${maxLen}).`
+        };
+      }
+    } else if (vName === "min" && vRaw.trim() !== "") {
+      const minLen = Number.parseInt(vRaw.trim(), 10);
+      if (Number.isInteger(minLen) && minLen > 0 && exactValue.length < minLen) {
+        return {
+          valid: false,
+          reason: `Value for ${destinationKey} (${exactValue.length} chars) is shorter than live definition min length (${minLen}).`
+        };
+      }
+    } else if (vName === "regex" && vRaw !== "") {
+      try {
+        const re = new RegExp(vRaw);
+        if (!re.test(exactValue)) {
+          return {
+            valid: false,
+            reason: `Value for ${destinationKey} does not match live definition regex validation.`
+          };
+        }
+      } catch {
+        // Ignore invalid regex syntax
+      }
+    }
+  }
+  return { valid: true, reason: null };
+}
+
+/**
+ * Pure server-evidence evaluator for Bench V2 opt-in (`isBenchV2OptIn === true`)
+ * PRODUCT `custom.*` metafield writes in `executeRepairPlan`.
+ *
+ * Scope & Non-Fallthrough Semantics:
+ * - Parses `fullKey` using the existing API namespace/key splitting rule:
+ *   if `fullKey` contains `.`, `ns = parts[0]` and `key = parts.slice(1).join(".")`;
+ *   otherwise `ns = "custom"` and `key = fullKey`.
+ *   `canonicalDestinationKey = "${ns}.${key}"`.
+ * - Returns `{ handled: false }` ONLY when `ns === "shopify"` (so the API's
+ *   existing standardized-reference path handles `shopify.*`).
+ *   Note: caller must already have routed native fields (`shopify_title`,
+ *   `native_*`, `price`) and `BENCH_V2_CONNECTED_VARIANT_DESTINATIONS` before
+ *   invoking this helper.
+ * - For ANY other entry in `isBenchV2OptIn` mode (`ns === "custom"`, or a non-custom
+ *   namespace where `custom.${key}` is a custom contract or unknown), returns
+ *   `{ handled: true, outcome, ... }` so a rejected Bench V2 custom destination
+ *   NEVER falls through to legacy `ALLOWED_TAB3_KEYS` or `RETIRED_KEYS`.
+ *
+ * Exact Return Shape when `handled === true`:
+ * - `outcome`:
+ *     * `"unsupported"` -> caller pushes `fullKey` to `unsupportedKeys`
+ *     * `"unchanged"`   -> caller pushes `fullKey` to `unchanged`
+ *     * `"skipped"`     -> caller pushes `fullKey` to `skippedKeys`
+ *     * `"blocked"`     -> caller sets `blockedFields[fullKey] = reason`
+ *     * `"stage_write"` -> caller stages `{ ownerId: productGid, ownerType: "PRODUCT", namespace: "custom", key, type: resolvedType, value: resolvedValue }`
+ * - `ns`: parsed namespace string
+ * - `key`: parsed key string
+ * - `canonicalDestinationKey`: `"${ns}.${key}"`
+ * - `contract`: matched Bench V2 contract object or `null`
+ * - `resolvedType`: verified Shopify metafield type string (when `outcome === "stage_write"`) or `null`
+ * - `resolvedValue`: exact verified string value to write (when `outcome === "stage_write"`) or `null`
+ * - `currentVal`: current stored value (`string | null`)
+ * - `reason`: human-readable block/diagnostic reason string or `null`
+ */
+export function evaluateBenchV2OptInCustomProductWrite({
+  fullKey,
+  rawVal,
+  productLookupComplete,
+  hasMetafieldsBaseline,
+  defsReadComplete,
+  currentMetafields,
+  currentMetafieldsTypes,
+  defs,
+  defConstraintErrorsByDestination,
+  evaluateCategoryEligibility
+}) {
+  const safeFullKey = typeof fullKey === "string" ? fullKey : String(fullKey ?? "");
+  let ns = "custom";
+  let key = safeFullKey;
+  if (safeFullKey.includes(".")) {
+    const parts = safeFullKey.split(".");
+    ns = parts[0];
+    key = parts.slice(1).join(".");
+  }
+  const canonicalDestinationKey = `${ns}.${key}`;
+
+  // Leave `shopify.*` to the existing standardized-reference branch in executeRepairPlan
+  // unless `key === "construction"` was submitted under a non-shopify namespace.
+  if (ns === "shopify") {
+    return {
+      handled: false,
+      outcome: null,
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract: null,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: null
+    };
+  }
+
+  // Reject any non-custom namespace submission (e.g. wrong namespace for a custom key or construction)
+  // without falling through to legacy allowlists.
+  if (ns !== "custom") {
+    return {
+      handled: true,
+      outcome: "unsupported",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract: null,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: `Unsupported namespace "${ns}" for "${safeFullKey}"; Bench V2 custom product metafields require the "custom" namespace.`
+    };
+  }
+
+  // Explicitly reject cancelled inert destinations.
+  if (
+    CANCELLED_INERT_DESTINATIONS.has(key) ||
+    CANCELLED_INERT_DESTINATIONS.has(safeFullKey) ||
+    CANCELLED_INERT_DESTINATIONS.has(canonicalDestinationKey)
+  ) {
+    return {
+      handled: true,
+      outcome: "unsupported",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract: null,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: `Destination "${canonicalDestinationKey}" is cancelled and permanently inert.`
+    };
+  }
+
+  const contract = getFieldContractByDestination(canonicalDestinationKey);
+
+  // Authoritative contract & writable-set membership check:
+  // Must exist in BENCH_V2_CONTRACTS_BY_DESTINATION, belong to owner "PRODUCT"
+  // and namespace "custom", have isWritableInBatch1 === true, and be in
+  // BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.
+  // Any unknown, parked, protected, compatibility, task-restricted, or held
+  // custom.* destination is rejected here and never falls through to ALLOWED_TAB3_KEYS.
+  if (
+    !contract ||
+    contract.owner !== "PRODUCT" ||
+    contract.namespace !== "custom" ||
+    contract.destinationKey !== canonicalDestinationKey ||
+    contract.isWritableInBatch1 !== true ||
+    !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(canonicalDestinationKey)
+  ) {
+    return {
+      handled: true,
+      outcome: "unsupported",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract: contract || null,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: `Destination "${canonicalDestinationKey}" is not an eligible Batch 1 writable PRODUCT custom metafield in the Bench V2 contract.`
+    };
+  }
+
+  // Prerequisite server baseline & definition read completeness checks.
+  if (!hasMetafieldsBaseline) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: "Product metafields baseline could not be loaded from Shopify; reload product data before saving."
+    };
+  }
+
+  if (!defsReadComplete) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: `Live PRODUCT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`
+    };
+  }
+
+  const currentVal =
+    currentMetafields && currentMetafields[safeFullKey] !== undefined
+      ? currentMetafields[safeFullKey]
+      : (currentMetafields?.[canonicalDestinationKey] ?? null);
+
+  const valStr = String(rawVal !== null && rawVal !== undefined ? rawVal : "").trim();
+
+  // Preserve exact empty / collection_date placeholder skip/unchanged semantics.
+  if (
+    valStr === "" ||
+    (key === "collection_date" && COLLECTION_DATE_PLACEHOLDER_REGEX.test(valStr))
+  ) {
+    return {
+      handled: true,
+      outcome: !currentVal ? "unchanged" : "skipped",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: null
+    };
+  }
+
+  const def = defs?.[safeFullKey] || defs?.[canonicalDestinationKey] || null;
+  const storedType =
+    currentMetafieldsTypes?.[safeFullKey] ||
+    currentMetafieldsTypes?.[canonicalDestinationKey] ||
+    null;
+  const destinationDefErr =
+    defConstraintErrorsByDestination?.[safeFullKey] ||
+    defConstraintErrorsByDestination?.[canonicalDestinationKey] ||
+    def?.constraints?.error ||
+    def?.error ||
+    null;
+
+  if (destinationDefErr) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: `Definition or constraint error on ${canonicalDestinationKey}: ${destinationDefErr}`
+    };
+  }
+
+  const allowedTypes =
+    Array.isArray(contract.allowedTypes) && contract.allowedTypes.length > 0
+      ? contract.allowedTypes
+      : [contract.expectedType];
+
+  const rawReviewedContractType = Object.prototype.hasOwnProperty.call(
+    REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
+    canonicalDestinationKey
+  )
+    ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[canonicalDestinationKey]
+    : null;
+
+  const reviewedContractType =
+    contract.reviewedExactContractType &&
+    rawReviewedContractType &&
+    contract.reviewedExactContractType === rawReviewedContractType
+      ? contract.reviewedExactContractType
+      : rawReviewedContractType;
+
+  const benchV2ReviewedContractType =
+    productLookupComplete === true &&
+    hasMetafieldsBaseline === true &&
+    defsReadComplete === true &&
+    !destinationDefErr &&
+    canonicalDestinationKey !== "custom.is_ooak" &&
+    reviewedContractType &&
+    contract.reviewedExactContractType === reviewedContractType &&
+    allowedTypes.includes(reviewedContractType)
+      ? reviewedContractType
+      : null;
+
+  // Fail closed on live definition vs. stored metafield type conflict.
+  if (def?.type && storedType && def.type !== storedType) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: `Type conflict: Definition is ${def.type} but stored is ${storedType}`
+    };
+  }
+
+  // Fail closed if live definition or stored type conflicts with reviewed exact contract type.
+  if (reviewedContractType) {
+    if (def?.type && def.type !== reviewedContractType) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Type conflict on ${canonicalDestinationKey}: Live definition is ${def.type}, which conflicts with reviewed destination contract ${reviewedContractType}.`
+      };
+    }
+    if (storedType && storedType !== reviewedContractType) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Type conflict on ${canonicalDestinationKey}: Stored metafield type is ${storedType}, which conflicts with reviewed destination contract ${reviewedContractType}.`
+      };
+    }
+  }
+
+  const observedShopifyType = def?.type || storedType || null;
+  const intendedContractWriteType = !observedShopifyType ? benchV2ReviewedContractType : null;
+  const resolvedType = observedShopifyType || intendedContractWriteType || null;
+
+  if (!resolvedType) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: "No exact live definition or stored type available; fallback mappings are strictly forbidden."
+    };
+  }
+
+  // Verify resolvedType against the contract's allowedTypes (preserves custom.is_ooak
+  // single_line_text_field | boolean and all single-type contracts).
+  if (!allowedTypes.includes(resolvedType)) {
+    const expectedDesc =
+      allowedTypes.length === 1
+        ? allowedTypes[0]
+        : allowedTypes.join(" or ");
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected ${expectedDesc}.`
+    };
+  }
+
+  // If the live definition carries category/subtype constraints, verify eligibility.
+  if (
+    def?.constraints &&
+    (def.constraints.hasConstraints || !def.constraints.isComplete) &&
+    typeof evaluateCategoryEligibility === "function"
+  ) {
+    const catElig = evaluateCategoryEligibility(def);
+    if (!catElig || !catElig.isComplete || !catElig.isEligible) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: catElig?.reason || `Category constraint check failed on ${canonicalDestinationKey}.`
+      };
+    }
+  }
+
+  // Exact string & fidelity requirement: never coerce non-strings or silently strip/trim
+  // leading/trailing whitespace or warning prefixes in Bench V2 opt-in mode.
+  if (typeof rawVal !== "string") {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: `Rejected non-string proposal for ${canonicalDestinationKey} (no implicit coercion).`
+    };
+  }
+
+  const normalizedValue = valStr.replace(/^⚠️\s*/, "");
+  if (normalizedValue !== rawVal) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason:
+        key === "seo_title" && normalizedValue !== valStr
+          ? "Rejected custom.seo_title proposal containing warning prefixes that alter approved content."
+          : `Proposal for ${canonicalDestinationKey} contains leading/trailing whitespace or warning prefixes that would alter the exact approved value.`
+    };
+  }
+
+  let resolvedValue = normalizedValue;
+
+  // Destination-specific restrictions preserved verbatim.
+  if (key === "generated_description") {
+    const sanitizedDesc = sanitizeWriterDescriptionHtml(resolvedValue);
+    if (sanitizedDesc !== resolvedValue) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: "Rejected custom.generated_description proposal containing disallowed links that alter approved content."
+      };
+    }
+    resolvedValue = sanitizedDesc;
+  }
+
+  if (key === "seo_title" && resolvedValue.length > 70) {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: "Value exceeds 70 characters limit for custom.seo_title."
+    };
+  }
+
+  // Type-specific value validation.
+  if (resolvedType === "number_decimal") {
+    if (!CANONICAL_DECIMAL_NUMBER_REGEX.test(resolvedValue)) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Destination "${canonicalDestinationKey}" requires a non-negative decimal number without units, spaces, or leading zeros (e.g. "14.5" or "28"; received "${resolvedValue}").`
+      };
+    }
+    const parsedExactDecimal = Number(resolvedValue);
+    const writerSerializedDecimal = String(parseFloat(resolvedValue));
+    if (!Number.isFinite(parsedExactDecimal) || parsedExactDecimal < 0) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Destination "${canonicalDestinationKey}" requires a finite non-negative decimal number (received "${resolvedValue}").`
+      };
+    }
+    if (writerSerializedDecimal !== resolvedValue) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Existing writer serializes "${resolvedValue}" as "${writerSerializedDecimal}" on save. Enter "${writerSerializedDecimal}" so your exact approved value is stored without alteration.`
+      };
+    }
+  } else if (resolvedType === "boolean") {
+    if (resolvedValue !== "true" && resolvedValue !== "false") {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Invalid boolean value: ${resolvedValue}`
+      };
+    }
+  } else if (resolvedType === "single_line_text_field") {
+    if (isPlainTextProposalRejectedForContract(rawVal, resolvedValue)) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Rejected non-text or reference-shaped proposal for plain-text destination ${canonicalDestinationKey}.`
+      };
+    }
+    const maxLen = typeof contract.maxLength === "number" ? contract.maxLength : 255;
+    if (resolvedValue.length > maxLen) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Value exceeds ${maxLen} characters limit`
+      };
+    }
+    if (def) {
+      const liveTextValidation = validateAgainstLiveTextDefinitionValidations(
+        def,
+        resolvedValue,
+        canonicalDestinationKey
+      );
+      if (!liveTextValidation.valid) {
+        return {
+          handled: true,
+          outcome: "blocked",
+          ns,
+          key,
+          canonicalDestinationKey,
+          contract,
+          resolvedType: null,
+          resolvedValue: null,
+          currentVal,
+          reason: liveTextValidation.reason
+        };
+      }
+    }
+  } else if (resolvedType === "multi_line_text_field") {
+    const maxLen = typeof contract.maxLength === "number" ? contract.maxLength : 10000;
+    if (resolvedValue.length > maxLen) {
+      return {
+        handled: true,
+        outcome: "blocked",
+        ns,
+        key,
+        canonicalDestinationKey,
+        contract,
+        resolvedType: null,
+        resolvedValue: null,
+        currentVal,
+        reason: `Value exceeds ${maxLen === 10000 ? "10,000" : maxLen} characters limit`
+      };
+    }
+  } else {
+    return {
+      handled: true,
+      outcome: "blocked",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal,
+      reason: `Unsupported resolved type "${resolvedType}" on ${canonicalDestinationKey}.`
+    };
+  }
+
+  if (currentVal === resolvedValue) {
+    return {
+      handled: true,
+      outcome: "unchanged",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract,
+      resolvedType,
+      resolvedValue,
+      currentVal,
+      reason: null
+    };
+  }
+
+  return {
+    handled: true,
+    outcome: "stage_write",
+    ns,
+    key,
+    canonicalDestinationKey,
+    contract,
+    resolvedType,
+    resolvedValue,
+    currentVal,
+    reason: null
+  };
+}
+
 export function validateBatch1ProposedValue({
   productId,
   destinationKey,
@@ -413,18 +1107,7 @@ export function validateBatch1ProposedValue({
       };
     }
 
-    const trimmedForShapeCheck = exactValue.trim();
-    if (
-      exactValue === "[object Object]" ||
-      trimmedForShapeCheck === "[object Object]" ||
-      /^gid:\/\//i.test(trimmedForShapeCheck) ||
-      /gid:\/\/shopify\//i.test(exactValue) ||
-      /^shopify:\/\/metaobject/i.test(trimmedForShapeCheck) ||
-      /^metaobject[:/]/i.test(trimmedForShapeCheck) ||
-      PLAIN_TEXT_UUID_REGEX.test(trimmedForShapeCheck) ||
-      ((trimmedForShapeCheck.startsWith("[") && trimmedForShapeCheck.endsWith("]")) ||
-        (trimmedForShapeCheck.startsWith("{") && trimmedForShapeCheck.endsWith("}")))
-    ) {
+    if (isPlainTextProposalRejectedForContract(exactValue, exactValue)) {
       return {
         valid: false,
         code: "invalid_plain_text_shape",

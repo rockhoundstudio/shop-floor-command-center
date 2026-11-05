@@ -13,13 +13,12 @@ import {
 import {
   BENCH_V2_WRITER_OPT_IN_FIELD,
   BENCH_V2_WRITER_OPT_IN_VALUE,
-  BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
-  BENCH_V2_OPT_IN_UNHELD_BARE_KEYS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS as BENCH_V2_OPT_IN_VARIANT_DESTINATIONS,
-  BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
-  getFieldContractByDestination,
-  isExactProductVariantGid
+  isExactProductVariantGid,
+  isPlainTextProposalRejectedForContract,
+  validateAgainstLiveTextDefinitionValidations,
+  evaluateBenchV2OptInCustomProductWrite
 } from "../utils/bench-v2.contract.jsx";
 import {
   evaluateStandardizedCategoryEligibility,
@@ -86,26 +85,6 @@ const STRICT_CUSTOM_KEYS = [
 
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX = /^(?:0|[1-9]\d*)\.\d{2}$/;
-
-function isPlainTextProposalRejectedForContract(rawVal, normalizedStr) {
-  if (typeof rawVal !== "string") return true;
-  const trimmed = String(normalizedStr ?? "").trim();
-  if (!trimmed) return true;
-  if (trimmed === "[object Object]") return true;
-  if (/^gid:\/\//i.test(trimmed) || /gid:\/\/shopify\//i.test(trimmed)) return true;
-  if (/^shopify:\/\/metaobject/i.test(trimmed)) return true;
-  if (/^metaobject[:/]/i.test(trimmed)) return true;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) return true;
-  if ((trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (typeof parsed === "object" && parsed !== null) return true;
-    } catch (e) {
-      return true;
-    }
-  }
-  return false;
-}
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -261,67 +240,6 @@ function areDescriptionHtmlEquivalentOnReadBack(expectedHtml, actualHtml) {
   const canonActual = canonicalizeDescriptionHtmlForReadBack(actualHtml);
   if (canonActual === null) return false;
   return canonExpected === canonActual;
-}
-
-/**
- * Evaluates explicit live definition validations on a plain-text proposal
- * (such as choices, max, min, regex) when present on the live definition.
- */
-function validateAgainstLiveTextDefinitionValidations(liveDef, exactValue, destinationKey) {
-  if (!liveDef || !Array.isArray(liveDef.validations) || liveDef.validations.length === 0) {
-    return { valid: true, reason: null };
-  }
-  for (const v of liveDef.validations) {
-    if (!v || typeof v.name !== "string") continue;
-    const vName = v.name.trim().toLowerCase();
-    const vRaw = v.value !== undefined && v.value !== null ? String(v.value) : "";
-
-    if (vName === "choices" && vRaw.trim() !== "") {
-      try {
-        const parsedChoices = JSON.parse(vRaw);
-        if (Array.isArray(parsedChoices) && parsedChoices.length > 0) {
-          const strChoices = parsedChoices.map((c) => String(c));
-          if (!strChoices.includes(exactValue)) {
-            return {
-              valid: false,
-              reason: `Value "${exactValue}" is not in allowed definition choices [${strChoices.join(", ")}] for ${destinationKey}.`
-            };
-          }
-        }
-      } catch {
-        // Ignore non-JSON choice representation
-      }
-    } else if (vName === "max" && vRaw.trim() !== "") {
-      const maxLen = Number.parseInt(vRaw.trim(), 10);
-      if (Number.isInteger(maxLen) && maxLen > 0 && exactValue.length > maxLen) {
-        return {
-          valid: false,
-          reason: `Value for ${destinationKey} (${exactValue.length} chars) exceeds live definition max length (${maxLen}).`
-        };
-      }
-    } else if (vName === "min" && vRaw.trim() !== "") {
-      const minLen = Number.parseInt(vRaw.trim(), 10);
-      if (Number.isInteger(minLen) && minLen > 0 && exactValue.length < minLen) {
-        return {
-          valid: false,
-          reason: `Value for ${destinationKey} (${exactValue.length} chars) is shorter than live definition min length (${minLen}).`
-        };
-      }
-    } else if (vName === "regex" && vRaw !== "") {
-      try {
-        const re = new RegExp(vRaw);
-        if (!re.test(exactValue)) {
-          return {
-            valid: false,
-            reason: `Value for ${destinationKey} does not match live definition regex validation.`
-          };
-        }
-      } catch {
-        // Ignore invalid regex syntax
-      }
-    }
-  }
-  return { valid: true, reason: null };
 }
 
 function parseIndexedMutationFieldIndex(fieldProp, rootFieldName) {
@@ -1189,36 +1107,72 @@ export const action = async ({ request }) => {
           continue;
         }
 
+        // ====================================================================
+        // SCOPED BENCH V2 OPT-IN PRODUCT CUSTOM METAFIELD PATH
+        // ====================================================================
+        if (isBenchV2OptIn) {
+          const customEval = evaluateBenchV2OptInCustomProductWrite({
+            fullKey,
+            rawVal: val,
+            productLookupComplete,
+            hasMetafieldsBaseline,
+            defsReadComplete,
+            currentMetafields,
+            currentMetafieldsTypes,
+            defs,
+            defConstraintErrorsByDestination,
+            evaluateCategoryEligibility: (liveDefForDest) =>
+              evaluateStandardizedCategoryEligibility({
+                destination: fullKey,
+                liveDef: liveDefForDest,
+                defsReadComplete,
+                productCategory,
+                productCategoryReadComplete: productLookupComplete
+              })
+          });
+
+          if (customEval.handled) {
+            if (customEval.outcome === "unsupported") {
+              unsupportedKeys.push(fullKey);
+            } else if (customEval.outcome === "skipped") {
+              skippedKeys.push(fullKey);
+            } else if (customEval.outcome === "unchanged") {
+              unchanged.push(fullKey);
+            } else if (customEval.outcome === "blocked") {
+              blockedFields[fullKey] = customEval.reason;
+            } else if (customEval.outcome === "stage_write") {
+              setToShopify.push({
+                ownerId: productGid,
+                ownerType: "PRODUCT",
+                namespace: customEval.ns,
+                key: customEval.key,
+                type: customEval.resolvedType,
+                value: customEval.resolvedValue
+              });
+              proposedChanges[fullKey] = {
+                owner: "PRODUCT",
+                from: customEval.currentVal,
+                to: customEval.resolvedValue
+              };
+              attemptedDestinations.push(fullKey);
+            }
+            continue;
+          }
+        }
+
         const isWholeProductWeightGramsTarget =
           ns === "custom" &&
           canonicalDestinationKey === "custom.whole_product_weight_grams";
 
-        const isBenchV2UnheldCustomTarget =
-          isBenchV2OptIn &&
-          ns === "custom" &&
-          (BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS.has(canonicalDestinationKey) ||
-            isWholeProductWeightGramsTarget);
-
-        if (
-          isBenchV2OptIn &&
-          (BENCH_V2_OPT_IN_UNHELD_BARE_KEYS.has(key) || key === "whole_product_weight_grams") &&
-          ns !== "custom"
-        ) {
-            unsupportedKeys.push(fullKey);
-            continue;
-        }
-
-        if (
-          !isBenchV2UnheldCustomTarget &&
-          (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey))
-        ) {
+        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
             skippedKeys.push(fullKey);
             continue;
         }
 
         if (
           ns === "custom" &&
-          (((key === "is_ooak" || key === "stone_family") && !isBenchV2UnheldCustomTarget) ||
+          (key === "is_ooak" ||
+            key === "stone_family" ||
             key === "primary_medium" ||
             key === "origin_handle")
         ) {
@@ -1241,7 +1195,6 @@ export const action = async ({ request }) => {
         }
 
         if (
-          !isBenchV2UnheldCustomTarget &&
           !ALLOWED_TAB3_KEYS.includes(key) &&
           !ALLOWED_TAB3_KEYS.includes(fullKey) &&
           !ALLOWED_TAB3_KEYS.includes(canonicalDestinationKey)
@@ -1305,29 +1258,6 @@ export const action = async ({ request }) => {
             ? REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS[canonicalDestinationKey]
             : null;
 
-        const benchV2Contract = isBenchV2OptIn
-          ? getFieldContractByDestination(canonicalDestinationKey)
-          : null;
-        const benchV2ReviewedContractType =
-          isBenchV2OptIn &&
-          productLookupComplete &&
-          hasMetafieldsBaseline &&
-          defsReadComplete &&
-          !destinationDefErr &&
-          ns === "custom" &&
-          canonicalDestinationKey !== "custom.is_ooak" &&
-          BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(canonicalDestinationKey) &&
-          benchV2Contract?.isWritableInBatch1 === true &&
-          benchV2Contract?.owner === "PRODUCT" &&
-          benchV2Contract?.namespace === "custom" &&
-          ((benchV2Contract?.reviewedExactContractType === "single_line_text_field" &&
-            reviewedContractType === "single_line_text_field") ||
-            (isWholeProductWeightGramsTarget &&
-              benchV2Contract?.expectedType === "number_decimal" &&
-              reviewedContractType === "number_decimal"))
-            ? reviewedContractType
-            : null;
-
         if (def && storedType && def.type !== storedType) {
             blockedFields[fullKey] = `Type conflict: Definition is ${def.type} but stored is ${storedType}`;
             continue;
@@ -1344,9 +1274,7 @@ export const action = async ({ request }) => {
         }
 
         const observedShopifyType = def?.type || storedType || null;
-        const intendedContractWriteType = !observedShopifyType
-          ? (isBenchV2OptIn ? benchV2ReviewedContractType : reviewedContractType)
-          : null;
+        const intendedContractWriteType = !observedShopifyType ? reviewedContractType : null;
         const resolvedType = observedShopifyType || intendedContractWriteType || null;
 
         if (!resolvedType) {
@@ -1357,23 +1285,6 @@ export const action = async ({ request }) => {
         if (isWholeProductWeightGramsTarget && resolvedType !== "number_decimal") {
             blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected number_decimal.`;
             continue;
-        }
-
-        if (isBenchV2UnheldCustomTarget) {
-            if (canonicalDestinationKey === "custom.is_ooak") {
-                if (resolvedType !== "single_line_text_field" && resolvedType !== "boolean") {
-                    blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected single_line_text_field or boolean.`;
-                    continue;
-                }
-            } else if (isWholeProductWeightGramsTarget) {
-                if (resolvedType !== "number_decimal") {
-                    blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected number_decimal.`;
-                    continue;
-                }
-            } else if (resolvedType !== "single_line_text_field") {
-                blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed type is ${resolvedType}, expected single_line_text_field.`;
-                continue;
-            }
         }
 
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
@@ -1417,24 +1328,9 @@ export const action = async ({ request }) => {
             }
         }
 
-        if (
-          reviewedContractType === "single_line_text_field" ||
-          (isBenchV2UnheldCustomTarget && resolvedType === "single_line_text_field")
-        ) {
+        if (reviewedContractType === "single_line_text_field") {
             if (isPlainTextProposalRejectedForContract(val, resolvedValue)) {
                 blockedFields[fullKey] = `Rejected non-text or reference-shaped proposal for plain-text destination ${canonicalDestinationKey}.`;
-                continue;
-            }
-        }
-
-        if (isBenchV2OptIn && resolvedType === "single_line_text_field" && def) {
-            const liveTextValidation = validateAgainstLiveTextDefinitionValidations(
-                def,
-                resolvedValue,
-                canonicalDestinationKey
-            );
-            if (!liveTextValidation.valid) {
-                blockedFields[fullKey] = liveTextValidation.reason;
                 continue;
             }
         }
@@ -1467,19 +1363,12 @@ export const action = async ({ request }) => {
           }
           resolvedValue = resolvedType === "number_integer" ? String(Math.round(parsedNum)) : String(parsedNum);
         } else if (resolvedType === "boolean") {
-          if (isBenchV2UnheldCustomTarget) {
-             if (resolvedValue !== "true" && resolvedValue !== "false") {
-                blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
-                continue;
-             }
+          const lower = String(resolvedValue).toLowerCase();
+          if (lower === "true" || lower === "false") {
+             resolvedValue = lower;
           } else {
-             const lower = String(resolvedValue).toLowerCase();
-             if (lower === "true" || lower === "false") {
-                resolvedValue = lower;
-             } else {
-                blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
-                continue;
-             }
+             blockedFields[fullKey] = `Invalid boolean value: ${resolvedValue}`;
+             continue;
           }
         } else if (resolvedType.includes("metaobject_reference")) {
 
