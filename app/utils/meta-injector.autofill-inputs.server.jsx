@@ -855,6 +855,17 @@ export function buildBenchV2ProducerProposals({
     producerProposals[destKey] = { value: cleaned, source };
   };
 
+  const addStandardizedGeologyCandidate = (destKey, rawLabel, source) => {
+    if (typeof rawLabel !== "string") return;
+    const cleaned = sanitizeCandidateString(rawLabel);
+    if (!isCleanCandidateLabel(cleaned)) return;
+    producerProposals[destKey] = {
+      candidateLabel: cleaned,
+      labels: [cleaned],
+      source
+    };
+  };
+
   const rawTitleSegments = splitSegmentedTitle(idOrigin?.rawTitleInput || "");
   const rawTitleStoneSegment =
     idOrigin?.hasSegmentedTitle && rawTitleSegments.length >= 3
@@ -1290,7 +1301,7 @@ export function buildBenchV2ProducerProposals({
     );
   }
 
-  // 8. Geology Drawer 7 Destinations (12 active destinations from getGeoData ONLY)
+  // 8. Geology Drawer 7 Destinations (12 active custom destinations + 4 producer-backed standardized companions from getGeoData ONLY)
   const DRAWER_7_ACTIVE_GEOLOGY_KEYS = [
     "mohs_hardness",
     "specific_gravity",
@@ -1305,6 +1316,13 @@ export function buildBenchV2ProducerProposals({
     "rock_formation",
     "geological_age"
   ];
+
+  const PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP = Object.freeze({
+    crystal_system: "shopify.crystal-system",
+    mineral_class: "shopify.mineral-class",
+    rock_composition: "shopify.rock-composition",
+    rock_formation: "shopify.rock-formation"
+  });
 
   const geoSourceTag = geoFields?.geoSource || "none";
   if (geoSourceTag !== "none") {
@@ -1331,11 +1349,21 @@ export function buildBenchV2ProducerProposals({
       const cleanGeoStr = cleanNonBlankVisionStr(rawGeoVal, geoKey);
       if (!cleanGeoStr) continue;
 
+      const geoSourceLabel = resolveGeologySourceLabel(geoKey);
+
       addProposal(
         `custom.${geoKey}`,
         cleanGeoStr,
-        resolveGeologySourceLabel(geoKey)
+        geoSourceLabel
       );
+
+      if (Object.prototype.hasOwnProperty.call(PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP, geoKey)) {
+        addStandardizedGeologyCandidate(
+          PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP[geoKey],
+          cleanGeoStr,
+          geoSourceLabel
+        );
+      }
     }
   }
 

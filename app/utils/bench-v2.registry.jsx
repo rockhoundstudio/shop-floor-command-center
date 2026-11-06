@@ -140,6 +140,13 @@ export const BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS = Object.freeze(
 // Single shared declaration of reviewed exact destination type contracts
 // (owned here and reusable by app/routes/app.meta-injector-api.jsx so no parallel allowlist is maintained).
 export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
+  "custom.mohs_hardness": "single_line_text_field",
+  "custom.specific_gravity": "single_line_text_field",
+  "custom.luster": "single_line_text_field",
+  "custom.cleavage": "single_line_text_field",
+  "custom.fracture_pattern": "single_line_text_field",
+  "custom.diaphaneity": "single_line_text_field",
+  "custom.geological_age": "single_line_text_field",
   "custom.rock_composition": "single_line_text_field",
   "custom.crystal_system": "single_line_text_field",
   "custom.mineral_class": "single_line_text_field",
@@ -542,6 +549,12 @@ export const BENCH_V2_OPTIONS_BY_KEY = Object.freeze({
 });
 
 const VISION_CANDIDATE_STANDARDIZED_KEYS = new Set(ALLOWED_VISION_CANDIDATE_KEYS);
+const PRODUCER_BACKED_GEOLOGY_STANDARDIZED_KEYS = new Set([
+  "crystal-system",
+  "mineral-class",
+  "rock-composition",
+  "rock-formation"
+]);
 const SUPPORTED_STANDARDIZED_KEY_SET = new Set(SUPPORTED_STANDARDIZED_REFERENCE_KEYS);
 
 const EXCLUDED_STANDARDIZED_KEYS = new Set([
@@ -653,7 +666,8 @@ function defineBatch1CustomField(drawerId, subHarness, key, label, purposeNote, 
 function defineCompatField(drawerId, subHarness, owner, namespace, key, label, canonicalTarget, purposeNote, overrides = {}) {
   return defineFieldContract({
     destinationKey: `${namespace}.${key}`,
-    namespace,
+    namespace: "",
+    ...{ namespace },
     key,
     label,
     owner,
@@ -670,6 +684,7 @@ function defineCompatField(drawerId, subHarness, owner, namespace, key, label, c
 
 function defineStandardizedShopifyField(drawerId, subHarness, k, canonicalTarget = null) {
   const isVisionCandidateKey = VISION_CANDIDATE_STANDARDIZED_KEYS.has(k);
+  const isProducerBackedGeologyKey = PRODUCER_BACKED_GEOLOGY_STANDARDIZED_KEYS.has(k);
   const isSupportedRefKey = SUPPORTED_STANDARDIZED_KEY_SET.has(k);
   return defineFieldContract({
     destinationKey: `shopify.${k}`,
@@ -685,7 +700,7 @@ function defineStandardizedShopifyField(drawerId, subHarness, k, canonicalTarget
     writeCapability: isSupportedRefKey
       ? BENCH_V2_WRITE_CAPABILITY.BATCH_1_WRITABLE_WITH_EXACT_APPROVAL
       : BENCH_V2_WRITE_CAPABILITY.STANDARDIZED_REFERENCE_LOCKED,
-    isManualOnlyNoAi: !isVisionCandidateKey,
+    isManualOnlyNoAi: !(isVisionCandidateKey || isProducerBackedGeologyKey),
     expectedType: "list.metaobject_reference",
     allowedTypes: ["list.metaobject_reference"],
     maxLength: null,

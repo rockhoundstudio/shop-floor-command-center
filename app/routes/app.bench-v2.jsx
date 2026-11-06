@@ -30,6 +30,7 @@ import {
   checkExistingWriterStringFidelity,
   isExactProductGid,
   isExactProductVariantGid,
+  isExactMetaobjectDefinitionGid,
   getFieldContractByDestination,
   buildBaselineObservation,
   evaluateDestinationTypeAndCompleteness,
@@ -41,9 +42,12 @@ import {
   isKeepOriginalRecordValid
 } from "../utils/bench-v2.contract.jsx";
 import {
-  isExactMetaobjectGid
+  isExactMetaobjectGid,
+  collectVerifiedEntriesForResolution,
+  evaluateCandidateLabelResolution
 } from "../utils/meta-injector.standardized.jsx";
 import {
+  buildStandardizedBaselineContextSignature,
   useBenchV2StandardizedReferenceLoader
 } from "../utils/bench-v2.reference-loader.jsx";
 import {
@@ -71,12 +75,279 @@ export {
 
 export const CANYON_RED_PRODUCT_GID = "gid://shopify/Product/9226849616123";
 
+const PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS = Object.freeze(
+  new Set([
+    "shopify.crystal-system",
+    "shopify.mineral-class",
+    "shopify.rock-composition",
+    "shopify.rock-formation"
+  ])
+);
+
 function getProposalValueString(rawEntry) {
   return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
     ? rawEntry.value
     : typeof rawEntry === "string"
       ? rawEntry
       : "";
+}
+
+function resolveProducerBackedGeologyReferenceCandidate({
+  productId,
+  destKey,
+  candidateLabels,
+  targetBaseline,
+  refChoicesRecord,
+  isRefChoicesFreshForBaseline
+}) {
+  const cleanLabels = Array.isArray(candidateLabels)
+    ? candidateLabels
+        .filter((lbl) => typeof lbl === "string" && lbl.trim() !== "")
+        .map((lbl) => lbl.trim())
+    : [];
+  const displayLabel = cleanLabels.join(", ");
+
+  if (cleanLabels.length === 0) {
+    return {
+      status: "invalid_candidate",
+      displayLabel: "",
+      reason: `Empty geology reference candidate label on ${destKey}.`
+    };
+  }
+
+  const contract = getFieldContractByDestination(destKey);
+  if (
+    !contract ||
+    !contract.isWritableInBatch1 ||
+    contract.namespace !== "shopify" ||
+    !PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+  ) {
+    return {
+      status: "not_eligible_contract",
+      displayLabel,
+      reason: `Destination ${destKey} is not an authorized producer-backed geology standardized reference companion.`
+    };
+  }
+
+  if (!targetBaseline || targetBaseline.productId !== productId) {
+    return {
+      status: "pending_reference_choices",
+      displayLabel,
+      reason: `Product baseline is not loaded for ${destKey}; retaining candidate "${displayLabel}" until reference choices are ready.`
+    };
+  }
+
+  const baselineObs = buildBaselineObservation(targetBaseline, destKey);
+  const typeCheck = evaluateDestinationTypeAndCompleteness({
+    contract,
+    baselineObs
+  });
+
+  if (!typeCheck.ready) {
+    const isPendingBaselineRead =
+      typeCheck.code === "metafields_read_not_complete" ||
+      typeCheck.code === "definitions_read_not_complete" ||
+      typeCheck.code === "product_category_read_not_complete" ||
+      typeCheck.code === "category_eligibility_incomplete";
+    return {
+      status: isPendingBaselineRead ? "pending_reference_choices" : "held_ineligible_or_blocked",
+      displayLabel,
+      reason:
+        typeCheck.reason ||
+        `Destination ${destKey} is not eligible on this product.`
+    };
+  }
+
+  const storedCheck = inspectStoredReferenceListRawValue(baselineObs.rawValue);
+  if (!storedCheck.valid) {
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason: `Existing stored reference list on ${destKey} could not be parsed safely: ${storedCheck.error}`
+    };
+  }
+
+  const verifiedFieldRes =
+    targetBaseline.verifiedReferenceEntriesByDestination?.[destKey] ||
+    (isRefChoicesFreshForBaseline
+      ? refChoicesRecord?.verifiedReferenceEntriesByDestination?.[destKey]
+      : null) ||
+    null;
+
+  if (!verifiedFieldRes || typeof verifiedFieldRes !== "object") {
+    return {
+      status: "pending_reference_choices",
+      displayLabel,
+      reason: `Verified Metaobject reference choices for ${destKey} (${baselineObs.restrictedMetaobjectDefinitionId || "definition"}) are still loading or pending; retaining candidate "${displayLabel}".`
+    };
+  }
+
+  if (
+    verifiedFieldRes.status === "category_ineligible" ||
+    verifiedFieldRes.isCategoryEligible === false ||
+    verifiedFieldRes.categoryEligibility?.isEligible === false
+  ) {
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason:
+        verifiedFieldRes.categoryEligibility?.reason ||
+        (Array.isArray(verifiedFieldRes.errors) && verifiedFieldRes.errors[0]) ||
+        `Blocked by product category constraint on ${destKey}.`
+    };
+  }
+
+  if (
+    verifiedFieldRes.isComplete !== true ||
+    !isExactMetaobjectDefinitionGid(verifiedFieldRes.restrictedMetaobjectDefinitionId) ||
+    verifiedFieldRes.restrictedMetaobjectDefinitionId !==
+      baselineObs.restrictedMetaobjectDefinitionId
+  ) {
+    const firstErr =
+      Array.isArray(verifiedFieldRes.errors) && verifiedFieldRes.errors.length > 0
+        ? verifiedFieldRes.errors[0]
+        : `Incomplete or mismatched reference choice enumeration on ${destKey}.`;
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason: firstErr
+    };
+  }
+
+  const refAssignment = verifiedFieldRes.currentAssignment;
+  if (
+    !refAssignment ||
+    typeof refAssignment !== "object" ||
+    refAssignment.readComplete !== true ||
+    refAssignment.parseValid !== true
+  ) {
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason:
+        refAssignment?.parseError ||
+        `Existing assignment preservation cannot be established on ${destKey}.`
+    };
+  }
+
+  const rawVerifiedEntriesMap = collectVerifiedEntriesForResolution(verifiedFieldRes);
+  const strictVerifiedEntriesMap = new Map();
+  rawVerifiedEntriesMap.forEach((entryObj, gid) => {
+    if (
+      isExactMetaobjectGid(gid) &&
+      entryObj &&
+      entryObj.definitionId === baselineObs.restrictedMetaobjectDefinitionId
+    ) {
+      strictVerifiedEntriesMap.set(gid, entryObj);
+    }
+  });
+
+  if (strictVerifiedEntriesMap.size === 0) {
+    return {
+      status: "held_unmatched_or_ambiguous",
+      displayLabel,
+      reason: `0 verified Metaobject entries exist in Shopify for ${baselineObs.restrictedMetaobjectDefinitionId} (${destKey}); held candidate "${displayLabel}".`
+    };
+  }
+
+  const existingGids = [...storedCheck.gids];
+  if (Array.isArray(refAssignment.referenceIds)) {
+    for (const refGid of refAssignment.referenceIds) {
+      if (typeof refGid === "string" && isExactMetaobjectGid(refGid.trim())) {
+        const trimmedRefGid = refGid.trim();
+        if (!existingGids.includes(trimmedRefGid)) {
+          existingGids.push(trimmedRefGid);
+        }
+      }
+    }
+  }
+
+  const labelEvaluations = cleanLabels.map((lbl) =>
+    evaluateCandidateLabelResolution(
+      lbl,
+      verifiedFieldRes,
+      strictVerifiedEntriesMap,
+      existingGids
+    )
+  );
+
+  const failedEval = labelEvaluations.find(
+    (ev) =>
+      ev.status === "missing_entry" ||
+      ev.status === "ambiguous_blocked" ||
+      ev.status === "blocked" ||
+      !ev.selectedEntry ||
+      !isExactMetaobjectGid(ev.selectedEntry.id) ||
+      ev.selectedEntry.definitionId !== baselineObs.restrictedMetaobjectDefinitionId
+  );
+
+  if (failedEval) {
+    return {
+      status: "held_unmatched_or_ambiguous",
+      displayLabel,
+      reason:
+        failedEval.reason ||
+        `Candidate "${displayLabel}" did not resolve to a unique/equivalent verified entry on ${destKey}.`
+    };
+  }
+
+  const mergedGids = [...existingGids];
+  const matchedLabelsList = [];
+  for (const ev of labelEvaluations) {
+    const selectedGid = ev.selectedEntry.id;
+    if (!mergedGids.includes(selectedGid)) {
+      mergedGids.push(selectedGid);
+    }
+    matchedLabelsList.push(
+      `${ev.selectedEntry.label || displayLabel} (${selectedGid})`
+    );
+  }
+
+  const serializedGidArray = JSON.stringify(mergedGids);
+
+  const baselineWithVerifiedRef =
+    targetBaseline.verifiedReferenceEntriesByDestination?.[destKey]
+      ? targetBaseline
+      : {
+          ...targetBaseline,
+          verifiedReferenceEntriesByDestination: {
+            ...(targetBaseline.verifiedReferenceEntriesByDestination || {}),
+            [destKey]: verifiedFieldRes
+          }
+        };
+
+  const validation = validateBatch1ProposedValue({
+    productId,
+    destinationKey: destKey,
+    proposedValue: serializedGidArray,
+    baselineSnapshot: baselineWithVerifiedRef
+  });
+
+  if (!validation.valid) {
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason: validation.reason
+    };
+  }
+
+  if (validation.isUnchangedFromStored) {
+    return {
+      status: "unchanged_from_baseline",
+      displayLabel,
+      serializedValue: validation.normalizedValue,
+      matchedSummary: matchedLabelsList.join(", "),
+      reason: validation.reason
+    };
+  }
+
+  return {
+    status: "resolved_valid_change",
+    displayLabel,
+    serializedValue: validation.normalizedValue,
+    matchedSummary: matchedLabelsList.join(", "),
+    reason: null
+  };
 }
 
 const GET_LIGHTWEIGHT_PRODUCT_PAGE_QUERY = `
@@ -357,6 +628,13 @@ export default function BenchV2Route() {
   // 9B. Staged Vision Candidates State (Populated by AI Scan, read by Reference Loader & Telemetry)
   const [stagedVisionCandidatesByProduct, setStagedVisionCandidatesByProduct] = useState({});
 
+  // 9C. Pending Producer-Backed Geology Reference Candidates State
+  // Retains unresolved geology reference candidates when AI Scan arrives before
+  // reference choices finish loading, so either arrival order resolves once without
+  // rescanning, loops, or auto-approval.
+  const [pendingGeologyRefCandidatesByProduct, setPendingGeologyRefCandidatesByProduct] =
+    useState({});
+
   // 10. Presentation-Only State: All drawers initially collapsed + View-Only Drawer Filter
   const [openDrawersById, setOpenDrawersById] = useState(() =>
     BENCH_V2_DRAWER_GROUPS.reduce((acc, drawer) => {
@@ -600,6 +878,13 @@ export default function BenchV2Route() {
     isBaselineReloading,
     setClientPrevalidationBanner
   });
+
+  const currentBaselineRef = useRef(currentBaseline);
+  currentBaselineRef.current = currentBaseline;
+  const currentRefChoicesRecordRef = useRef(currentRefChoicesRecord);
+  currentRefChoicesRecordRef.current = currentRefChoicesRecord;
+  const isCurrentRefChoicesBoundAndFreshRef = useRef(isCurrentRefChoicesBoundAndFresh);
+  isCurrentRefChoicesBoundAndFreshRef.current = isCurrentRefChoicesBoundAndFresh;
 
   const currentProposedMap = proposedByProduct[activeProductId] || {};
   const currentAiAlternativesMap = aiAlternativesByProduct[activeProductId] || {};
@@ -1087,12 +1372,33 @@ export default function BenchV2Route() {
       return;
     }
 
-    const targetBaseline = baselineByProductRef.current[scannedProductId] || null;
+    const rawTargetBaseline = baselineByProductRef.current[scannedProductId] || null;
+    const mergedActiveBaseline =
+      currentBaselineRef.current &&
+      currentBaselineRef.current.productId === scannedProductId
+        ? currentBaselineRef.current
+        : rawTargetBaseline;
+    const isRefChoicesFreshForScannedProduct = Boolean(
+      scannedProductId === activeProductId &&
+        isCurrentRefChoicesBoundAndFreshRef.current &&
+        currentRefChoicesRecordRef.current &&
+        currentRefChoicesRecordRef.current.productId === scannedProductId
+    );
+    const targetBaseline = mergedActiveBaseline;
+    const targetBaselineContextSig =
+      buildStandardizedBaselineContextSignature(rawTargetBaseline);
+
     const existingProdProposals = { ...(proposedByProductRef.current[scannedProductId] || {}) };
     const existingProdApprovals = approvalsByProductRef.current[scannedProductId] || {};
     const existingProdKeepOriginal = keepOriginalByProductRef.current[scannedProductId] || {};
     const nextAiAlternativesForProd = {};
     const proposalsByDestination = {};
+    const nextPendingGeologyRefForProd = {};
+
+    const diagnosticsObj =
+      rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
+        ? { ...rawResponse.producerDiagnostics }
+        : {};
 
     let receivedCount = 0;
     let stagedCount = 0;
@@ -1102,16 +1408,105 @@ export default function BenchV2Route() {
     let ignoredManualOnlyCount = 0;
     const details = [];
 
+    const stageOrHoldResolvedProposal = ({
+      destKey,
+      normalizedValue,
+      reportedSource,
+      displayNote = ""
+    }) => {
+      const existingDraft = existingProdProposals[destKey];
+      const existingDraftVal =
+        existingDraft && typeof existingDraft === "object"
+          ? existingDraft.value
+          : typeof existingDraft === "string"
+            ? existingDraft
+            : "";
+      const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
+      const isManualDraft = Boolean(
+        hasExistingDraft &&
+          (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+      );
+
+      const approvalRec = existingProdApprovals[destKey] || null;
+      const hasValidApproval =
+        hasExistingDraft &&
+        isExactValueApprovalValid({
+          approvalRecord: approvalRec,
+          productId: scannedProductId,
+          destinationKey: destKey,
+          currentProposedValue: existingDraftVal,
+          baselineSnapshot: targetBaseline
+        });
+
+      const keepOrigRec = existingProdKeepOriginal[destKey] || null;
+      const hasValidKeepOriginal =
+        hasExistingDraft &&
+        isKeepOriginalRecordValid({
+          keepOriginalRecord: keepOrigRec,
+          productId: scannedProductId,
+          destinationKey: destKey,
+          currentProposedValue: existingDraftVal,
+          baselineSnapshot: targetBaseline
+        });
+
+      const hasProtectedHumanState =
+        isManualDraft || hasValidApproval || hasValidKeepOriginal;
+
+      const formattedSuffix = displayNote ? ` [${displayNote}]` : "";
+
+      if (hasProtectedHumanState) {
+        if (existingDraftVal === normalizedValue && !hasValidKeepOriginal) {
+          proposalsByDestination[destKey] = {
+            value: normalizedValue,
+            source: reportedSource,
+            disposition: "Matches current draft"
+          };
+          details.push(
+            `[${destKey}] AI suggestion matches your current draft ("${normalizedValue}"${formattedSuffix}) — Source: ${reportedSource}.`
+          );
+          return;
+        }
+        heldConflictCount++;
+        nextAiAlternativesForProd[destKey] = {
+          value: normalizedValue,
+          source: reportedSource,
+          requestId: pendingScan.requestId,
+          receivedAt: new Date().toISOString()
+        };
+        proposalsByDestination[destKey] = {
+          value: normalizedValue,
+          source: reportedSource,
+          disposition: "Held as separate AI alternative"
+        };
+        details.push(
+          `[${destKey}] Held AI alternative "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}) without overwriting your current draft or decision.`
+        );
+        return;
+      }
+
+      existingProdProposals[destKey] = {
+        value: normalizedValue,
+        source: reportedSource,
+        origin: "AI",
+        updatedAt: new Date().toISOString()
+      };
+      stagedCount++;
+      proposalsByDestination[destKey] = {
+        value: normalizedValue,
+        source: reportedSource,
+        disposition: "Staged as unapproved AI draft"
+      };
+      details.push(
+        `[${destKey}] Staged unapproved AI draft "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}).`
+      );
+    };
+
     for (const [destKey, entry] of Object.entries(rawProducerProposals)) {
       if (CANCELLED_INERT_DESTINATIONS.has(destKey)) {
         continue;
       }
 
       const contract = getFieldContractByDestination(destKey);
-      const rawValue =
-        entry && typeof entry === "object" && typeof entry.value === "string"
-          ? entry.value
-          : "";
       const reportedSource =
         entry &&
         typeof entry === "object" &&
@@ -1119,6 +1514,136 @@ export default function BenchV2Route() {
         entry.source.trim() !== ""
           ? entry.source.trim()
           : "Source not reported";
+
+      // Check for the 4 producer-backed standardized geology reference companions
+      const isGeologyRefCandidateShape = Boolean(
+        entry &&
+          typeof entry === "object" &&
+          typeof entry.value !== "string" &&
+          (typeof entry.candidateLabel === "string" || Array.isArray(entry.labels))
+      );
+
+      if (isGeologyRefCandidateShape) {
+        const candidateLabels =
+          Array.isArray(entry.labels) && entry.labels.length > 0
+            ? entry.labels
+                .filter((l) => typeof l === "string" && l.trim() !== "")
+                .map((l) => l.trim())
+            : typeof entry.candidateLabel === "string" && entry.candidateLabel.trim() !== ""
+              ? [entry.candidateLabel.trim()]
+              : [];
+
+        if (candidateLabels.length === 0) {
+          continue;
+        }
+
+        const displayCandidateLabel = candidateLabels.join(", ");
+
+        if (
+          isManualOnlyNoAiDestination(destKey, contract) ||
+          !PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+        ) {
+          ignoredManualOnlyCount++;
+          const manualReason =
+            "Manual-only or non-geology standardized reference field — excluded from producer candidate staging.";
+          proposalsByDestination[destKey] = {
+            value: displayCandidateLabel,
+            source: reportedSource,
+            disposition: "Ignored (manual-only field — not staged)",
+            reason: manualReason
+          };
+          details.push(
+            `[${destKey}] Ignored standardized candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${manualReason}`
+          );
+          continue;
+        }
+
+        if (!BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey) || !contract || !contract.isWritableInBatch1) {
+          continue;
+        }
+
+        receivedCount++;
+
+        const resolution = resolveProducerBackedGeologyReferenceCandidate({
+          productId: scannedProductId,
+          destKey,
+          candidateLabels,
+          targetBaseline,
+          refChoicesRecord: isRefChoicesFreshForScannedProduct
+            ? currentRefChoicesRecordRef.current
+            : null,
+          isRefChoicesFreshForBaseline: isRefChoicesFreshForScannedProduct
+        });
+
+        if (resolution.status === "pending_reference_choices") {
+          nextPendingGeologyRefForProd[destKey] = {
+            destKey,
+            candidateLabels,
+            displayLabel: displayCandidateLabel,
+            source: reportedSource,
+            requestId: pendingScan.requestId,
+            sessionId: benchSessionIdRef.current,
+            productId: scannedProductId,
+            baselineContextSig: targetBaselineContextSig
+          };
+          proposalsByDestination[destKey] = {
+            value: displayCandidateLabel,
+            source: reportedSource,
+            disposition: "Pending verified reference choices (will resolve automatically when ready)",
+            reason: resolution.reason
+          };
+          diagnosticsObj[destKey] = resolution.reason;
+          details.push(
+            `[${destKey}] Retained geology reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}) pending verified reference choices.`
+          );
+          continue;
+        }
+
+        if (resolution.status === "unchanged_from_baseline") {
+          unchangedSkippedCount++;
+          proposalsByDestination[destKey] = {
+            value: resolution.serializedValue,
+            source: reportedSource,
+            disposition: "Matches saved value (not staged)"
+          };
+          details.push(
+            `[${destKey}] Candidate "${displayCandidateLabel}" matches current saved reference list (${resolution.serializedValue}) — Source: ${reportedSource}; not staged.`
+          );
+          continue;
+        }
+
+        if (resolution.status === "resolved_valid_change") {
+          stageOrHoldResolvedProposal({
+            destKey,
+            normalizedValue: resolution.serializedValue,
+            reportedSource,
+            displayNote: `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`
+          });
+          continue;
+        }
+
+        rejectedInvalidCount++;
+        const holdDisposition =
+          resolution.status === "held_unmatched_or_ambiguous"
+            ? "Held (no unique/equivalent verified reference entry match)"
+            : "Held (category-ineligible or incomplete reference evidence)";
+        proposalsByDestination[destKey] = {
+          value: displayCandidateLabel,
+          source: reportedSource,
+          disposition: holdDisposition,
+          reason: resolution.reason
+        };
+        diagnosticsObj[destKey] = resolution.reason;
+        details.push(
+          `[${destKey}] Held geology reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${resolution.reason}`
+        );
+        continue;
+      }
+
+      const rawValue =
+        entry && typeof entry === "object" && typeof entry.value === "string"
+          ? entry.value
+          : "";
 
       if (rawValue.trim() === "") {
         continue;
@@ -1189,89 +1714,11 @@ export default function BenchV2Route() {
         continue;
       }
 
-      const existingDraft = existingProdProposals[destKey];
-      const existingDraftVal =
-        existingDraft && typeof existingDraft === "object"
-          ? existingDraft.value
-          : typeof existingDraft === "string"
-            ? existingDraft
-            : "";
-      const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
-      const isManualDraft = Boolean(
-        hasExistingDraft &&
-          (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
-      );
-
-      const approvalRec = existingProdApprovals[destKey] || null;
-      const hasValidApproval =
-        hasExistingDraft &&
-        isExactValueApprovalValid({
-          approvalRecord: approvalRec,
-          productId: scannedProductId,
-          destinationKey: destKey,
-          currentProposedValue: existingDraftVal,
-          baselineSnapshot: targetBaseline
-        });
-
-      const keepOrigRec = existingProdKeepOriginal[destKey] || null;
-      const hasValidKeepOriginal =
-        hasExistingDraft &&
-        isKeepOriginalRecordValid({
-          keepOriginalRecord: keepOrigRec,
-          productId: scannedProductId,
-          destinationKey: destKey,
-          currentProposedValue: existingDraftVal,
-          baselineSnapshot: targetBaseline
-        });
-
-      const hasProtectedHumanState =
-        isManualDraft || hasValidApproval || hasValidKeepOriginal;
-
-      if (hasProtectedHumanState) {
-        if (existingDraftVal === validation.normalizedValue && !hasValidKeepOriginal) {
-          proposalsByDestination[destKey] = {
-            value: validation.normalizedValue,
-            source: reportedSource,
-            disposition: "Matches current draft"
-          };
-          details.push(
-            `[${destKey}] AI suggestion matches your current draft ("${validation.normalizedValue}") — Source: ${reportedSource}.`
-          );
-          continue;
-        }
-        heldConflictCount++;
-        nextAiAlternativesForProd[destKey] = {
-          value: validation.normalizedValue,
-          source: reportedSource,
-          requestId: pendingScan.requestId,
-          receivedAt: new Date().toISOString()
-        };
-        proposalsByDestination[destKey] = {
-          value: validation.normalizedValue,
-          source: reportedSource,
-          disposition: "Held as separate AI alternative"
-        };
-        details.push(
-          `[${destKey}] Held AI alternative "${validation.normalizedValue}" (Source: ${reportedSource}) without overwriting your current draft or decision.`
-        );
-        continue;
-      }
-
-      existingProdProposals[destKey] = {
-        value: validation.normalizedValue,
-        source: reportedSource,
-        origin: "AI",
-        updatedAt: new Date().toISOString()
-      };
-      stagedCount++;
-      proposalsByDestination[destKey] = {
-        value: validation.normalizedValue,
-        source: reportedSource,
-        disposition: "Staged as unapproved AI draft"
-      };
-      details.push(
-        `[${destKey}] Staged unapproved AI draft "${validation.normalizedValue}" (Source: ${reportedSource}).`
-      );
+      stageOrHoldResolvedProposal({
+        destKey,
+        normalizedValue: validation.normalizedValue,
+        reportedSource
+      });
     }
 
     setProposedByProduct((prev) => ({
@@ -1287,10 +1734,21 @@ export default function BenchV2Route() {
       }
     }));
 
-    const diagnosticsObj =
-      rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
-        ? rawResponse.producerDiagnostics
-        : {};
+    setPendingGeologyRefCandidatesByProduct((prev) => {
+      const next = { ...prev };
+      if (Object.keys(nextPendingGeologyRefForProd).length > 0) {
+        next[scannedProductId] = {
+          requestId: pendingScan.requestId,
+          sessionId: benchSessionIdRef.current,
+          productId: scannedProductId,
+          baselineContextSig: targetBaselineContextSig,
+          candidatesByDest: nextPendingGeologyRefForProd
+        };
+      } else {
+        delete next[scannedProductId];
+      }
+      return next;
+    });
 
     const manualIgnoredNote =
       ignoredManualOnlyCount > 0
@@ -1322,7 +1780,283 @@ export default function BenchV2Route() {
     }));
 
     setActiveAiScanRequest(null);
-  }, [aiScanFetcher.state, aiScanFetcher.data]);
+  }, [aiScanFetcher.state, aiScanFetcher.data, activeProductId]);
+
+  // ==========================================================================
+  // DEFERRED GEOLOGY REFERENCE CANDIDATE RESOLUTION (WHEN REF CHOICES ARRIVE
+  // AFTER AI SCAN) — ONCE PER SCAN REQUEST, NO RESCAN, NO LOOPS, NO AUTO-APPROVE
+  // ==========================================================================
+  useEffect(() => {
+    const pendingBundle = pendingGeologyRefCandidatesByProduct[activeProductId];
+    if (!pendingBundle || typeof pendingBundle !== "object") return;
+
+    const rawSnapForActive = baselineByProductRef.current[activeProductId] || null;
+    const currentContextSig = buildStandardizedBaselineContextSignature(rawSnapForActive);
+
+    // Discard stale pending candidates if session, product, or factual baseline changed
+    if (
+      pendingBundle.sessionId !== benchSessionIdRef.current ||
+      pendingBundle.productId !== activeProductId ||
+      !rawSnapForActive ||
+      pendingBundle.baselineContextSig !== currentContextSig
+    ) {
+      setPendingGeologyRefCandidatesByProduct((prev) => {
+        if (!prev[activeProductId]) return prev;
+        const next = { ...prev };
+        delete next[activeProductId];
+        return next;
+      });
+      return;
+    }
+
+    // Wait until reference choices are bound and fresh for the current factual baseline
+    if (
+      !isCurrentRefChoicesBoundAndFresh ||
+      !currentRefChoicesRecord ||
+      currentRefChoicesRecord.productId !== activeProductId ||
+      !currentBaseline ||
+      currentBaseline.productId !== activeProductId
+    ) {
+      return;
+    }
+
+    const candidatesMap = pendingBundle.candidatesByDest || {};
+    const destEntries = Object.entries(candidatesMap);
+
+    // Consume pending bundle synchronously first so it never re-runs in a loop
+    setPendingGeologyRefCandidatesByProduct((prev) => {
+      if (!prev[activeProductId]) return prev;
+      const next = { ...prev };
+      delete next[activeProductId];
+      return next;
+    });
+
+    if (destEntries.length === 0) return;
+
+    const existingProdProposals = { ...(proposedByProductRef.current[activeProductId] || {}) };
+    const existingProdApprovals = approvalsByProductRef.current[activeProductId] || {};
+    const existingProdKeepOriginal = keepOriginalByProductRef.current[activeProductId] || {};
+    const nextAiAlternativesForProd = {};
+
+    let addedStaged = 0;
+    let addedHeld = 0;
+    let addedUnchanged = 0;
+    let addedRejected = 0;
+    const updatedProposalsMeta = {};
+    const updatedDiagnostics = {};
+    const appendedDetails = [];
+
+    for (const [destKey, candItem] of destEntries) {
+      if (!candItem || !PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)) {
+        continue;
+      }
+
+      const reportedSource = candItem.source || "Geo Library";
+      const displayCandidateLabel =
+        candItem.displayLabel ||
+        (Array.isArray(candItem.candidateLabels) ? candItem.candidateLabels.join(", ") : "");
+
+      const resolution = resolveProducerBackedGeologyReferenceCandidate({
+        productId: activeProductId,
+        destKey,
+        candidateLabels: candItem.candidateLabels,
+        targetBaseline: currentBaseline,
+        refChoicesRecord: currentRefChoicesRecord,
+        isRefChoicesFreshForBaseline: true
+      });
+
+      if (resolution.status === "unchanged_from_baseline") {
+        addedUnchanged++;
+        updatedProposalsMeta[destKey] = {
+          value: resolution.serializedValue,
+          source: reportedSource,
+          disposition: "Matches saved value (not staged)"
+        };
+        updatedDiagnostics[destKey] = null;
+        appendedDetails.push(
+          `[${destKey}] Candidate "${displayCandidateLabel}" matches current saved reference list (${resolution.serializedValue}) — Source: ${reportedSource}; not staged.`
+        );
+        continue;
+      }
+
+      if (resolution.status === "resolved_valid_change") {
+        const normalizedValue = resolution.serializedValue;
+        const displayNote = `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`;
+        updatedDiagnostics[destKey] = null;
+
+        const existingDraft = existingProdProposals[destKey];
+        const existingDraftVal =
+          existingDraft && typeof existingDraft === "object"
+            ? existingDraft.value
+            : typeof existingDraft === "string"
+              ? existingDraft
+              : "";
+        const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
+        const isManualDraft = Boolean(
+          hasExistingDraft &&
+            (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+        );
+
+        const approvalRec = existingProdApprovals[destKey] || null;
+        const hasValidApproval =
+          hasExistingDraft &&
+          isExactValueApprovalValid({
+            approvalRecord: approvalRec,
+            productId: activeProductId,
+            destinationKey: destKey,
+            currentProposedValue: existingDraftVal,
+            baselineSnapshot: currentBaseline
+          });
+
+        const keepOrigRec = existingProdKeepOriginal[destKey] || null;
+        const hasValidKeepOriginal =
+          hasExistingDraft &&
+          isKeepOriginalRecordValid({
+            keepOriginalRecord: keepOrigRec,
+            productId: activeProductId,
+            destinationKey: destKey,
+            currentProposedValue: existingDraftVal,
+            baselineSnapshot: currentBaseline
+          });
+
+        const hasProtectedHumanState =
+          isManualDraft || hasValidApproval || hasValidKeepOriginal;
+
+        if (hasProtectedHumanState) {
+          if (existingDraftVal === normalizedValue && !hasValidKeepOriginal) {
+            updatedProposalsMeta[destKey] = {
+              value: normalizedValue,
+              source: reportedSource,
+              disposition: "Matches current draft"
+            };
+            appendedDetails.push(
+              `[${destKey}] AI suggestion matches your current draft ("${normalizedValue}" [${displayNote}]) — Source: ${reportedSource}.`
+            );
+          } else {
+            addedHeld++;
+            nextAiAlternativesForProd[destKey] = {
+              value: normalizedValue,
+              source: reportedSource,
+              requestId: pendingBundle.requestId,
+              receivedAt: new Date().toISOString()
+            };
+            updatedProposalsMeta[destKey] = {
+              value: normalizedValue,
+              source: reportedSource,
+              disposition: "Held as separate AI alternative"
+            };
+            appendedDetails.push(
+              `[${destKey}] Held AI alternative "${normalizedValue}" [${displayNote}] (Source: ${reportedSource}) without overwriting your current draft or decision.`
+            );
+          }
+        } else {
+          existingProdProposals[destKey] = {
+            value: normalizedValue,
+            source: reportedSource,
+            origin: "AI",
+            updatedAt: new Date().toISOString()
+          };
+          addedStaged++;
+          updatedProposalsMeta[destKey] = {
+            value: normalizedValue,
+            source: reportedSource,
+            disposition: "Staged as unapproved AI draft"
+          };
+          appendedDetails.push(
+            `[${destKey}] Staged unapproved AI draft "${normalizedValue}" [${displayNote}] (Source: ${reportedSource}).`
+          );
+        }
+        continue;
+      }
+
+      addedRejected++;
+      const holdDisposition =
+        resolution.status === "held_unmatched_or_ambiguous"
+          ? "Held (no unique/equivalent verified reference entry match)"
+          : "Held (category-ineligible or incomplete reference evidence)";
+      updatedProposalsMeta[destKey] = {
+        value: displayCandidateLabel,
+        source: reportedSource,
+        disposition: holdDisposition,
+        reason: resolution.reason
+      };
+      updatedDiagnostics[destKey] = resolution.reason;
+      appendedDetails.push(
+        `[${destKey}] Held geology reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${resolution.reason}`
+      );
+    }
+
+    if (addedStaged > 0) {
+      setProposedByProduct((prev) => ({
+        ...prev,
+        [activeProductId]: existingProdProposals
+      }));
+    }
+
+    if (Object.keys(nextAiAlternativesForProd).length > 0) {
+      setAiAlternativesByProduct((prev) => ({
+        ...prev,
+        [activeProductId]: {
+          ...(prev[activeProductId] || {}),
+          ...nextAiAlternativesForProd
+        }
+      }));
+    }
+
+    setLastAiScanReportByProduct((prev) => {
+      const existingReport = prev[activeProductId];
+      if (!existingReport || existingReport.requestId !== pendingBundle.requestId) {
+        return prev;
+      }
+      const nextDiagnostics = { ...(existingReport.diagnostics || {}) };
+      for (const [dKey, dReason] of Object.entries(updatedDiagnostics)) {
+        if (dReason === null) {
+          delete nextDiagnostics[dKey];
+        } else if (typeof dReason === "string" && dReason.trim() !== "") {
+          nextDiagnostics[dKey] = dReason;
+        }
+      }
+
+      const nextStagedCount = (existingReport.stagedCount || 0) + addedStaged;
+      const nextHeldCount = (existingReport.heldConflictCount || 0) + addedHeld;
+      const nextUnchangedCount =
+        (existingReport.unchangedSkippedCount || 0) + addedUnchanged;
+      const nextRejectedCount =
+        (existingReport.rejectedInvalidCount || 0) + addedRejected;
+      const recCount = existingReport.receivedCount || 0;
+      const ignCount = existingReport.ignoredManualOnlyCount || 0;
+      const manualIgnoredNote =
+        ignCount > 0
+          ? `, ${ignCount} manual-only suggestion${ignCount === 1 ? "" : "s"} ignored`
+          : "";
+
+      return {
+        ...prev,
+        [activeProductId]: {
+          ...existingReport,
+          stagedCount: nextStagedCount,
+          heldConflictCount: nextHeldCount,
+          unchangedSkippedCount: nextUnchangedCount,
+          rejectedInvalidCount: nextRejectedCount,
+          summary: `AI Scan complete: ${recCount} eligible suggestion${
+            recCount === 1 ? "" : "s"
+          } received (${nextStagedCount} staged as unapproved drafts, ${nextHeldCount} held as alternatives alongside your existing edits, ${nextUnchangedCount} matched saved baseline${manualIgnoredNote}).`,
+          diagnostics: nextDiagnostics,
+          details: [...(existingReport.details || []), ...appendedDetails],
+          proposalsByDestination: {
+            ...(existingReport.proposalsByDestination || {}),
+            ...updatedProposalsMeta
+          }
+        }
+      };
+    });
+  }, [
+    pendingGeologyRefCandidatesByProduct,
+    activeProductId,
+    isCurrentRefChoicesBoundAndFresh,
+    currentRefChoicesRecord,
+    currentBaseline
+  ]);
 
   const handleAcceptAiAlternative = (destinationKey) => {
     setClientPrevalidationBanner(null);
