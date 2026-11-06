@@ -453,11 +453,11 @@ const GEO_LIBRARY = {
     crystal_system:    "Orthorhombic — tabular crystals, usually massive",
     chemical_formula:  "AlPO₄·2H₂O",
     rock_composition:  "Hydrated aluminum phosphate with quartz matrix",
-    specific_gravity:  "2.20–2.57",
+    specific_gravity:  "2.57–2.61",
     refractive_index:  "1.560–1.594",
     moh_hardness:      "3.5–4.5",
     fracture_pattern:  "Conchoidal to uneven",
-    cleavage:          "Good in one direction",
+    cleavage:          "Good on {010}, poor on {001}",
     tenacity:          "Brittle",
     geological_age:    "Tertiary — approximately 30–50 million years ago",
     geological_era:    "Cenozoic — Paleogene",
@@ -496,7 +496,7 @@ const GEO_LIBRARY = {
     mineral_class:     "Igneous rock — Feldspar, Quartz, Arfvedsonite, Hornblende",
     crystal_system:    "N/A — polymineralic igneous rock",
     chemical_formula:  "N/A — variable",
-    rock_composition:  "Pale feldspar and quartz matrix with black arfvedsonite or tourmaline phenocrysts",
+    rock_composition:  "Pale feldspar (mesoperthite) and quartz matrix with black arfvedsonite phenocrysts",
     specific_gravity:  "2.60–2.80",
     refractive_index:  "N/A",
     moh_hardness:      "6–7",
@@ -572,7 +572,10 @@ export function lookupStone(title) {
     const regex = new RegExp('(?<![a-z])' + escaped + '(?![a-z])', 'i');
     if (regex.test(t)) {
       const stoneData = { ...GEO_LIBRARY[key] };
-      stoneData.luster = getLusterForStone(stoneData.official_name || key);
+      stoneData.luster =
+        typeof stoneData.luster === "string" && stoneData.luster.trim() !== ""
+          ? stoneData.luster.trim()
+          : getLusterForStone(stoneData.official_name || key);
       return stoneData;
     }
   }
