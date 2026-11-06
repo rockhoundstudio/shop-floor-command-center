@@ -267,56 +267,200 @@ async function getGeoData(admin, stoneFamily) {
 
   const search = (cleanStoneName && cleanStoneName !== "Unknown" ? cleanStoneName : primaryStoneCandidate).toLowerCase().trim();
 
-  try {
-    let cacheRows = [];
-    for (const candidate of fullCandidates) {
-      const candidateLower = candidate.toLowerCase().trim();
-      if (candidateLower) {
-        cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [candidateLower]);
-        if (cacheRows.length > 0 && cacheRows[0].data) break;
+  const CANONICAL_GEO_FIELD_KEYS = [
+    "mohs_hardness",
+    "luster",
+    "fracture_pattern",
+    "cleavage",
+    "specific_gravity",
+    "diaphaneity",
+    "tenacity",
+    "crystal_system",
+    "geological_era",
+    "mineral_class",
+    "rock_composition",
+    "rock_formation",
+    "geological_age"
+  ];
+
+  const CANONICAL_GEO_KEY_MAP = {
+    mohs_hardness: "mohs_hardness",
+    moh_hardness: "mohs_hardness",
+    hardness: "mohs_hardness",
+    luster: "luster",
+    fracture_pattern: "fracture_pattern",
+    fracture: "fracture_pattern",
+    cleavage: "cleavage",
+    specific_gravity: "specific_gravity",
+    diaphaneity: "diaphaneity",
+    tenacity: "tenacity",
+    crystal_system: "crystal_system",
+    geological_era: "geological_era",
+    mineral_class: "mineral_class",
+    rock_composition: "rock_composition",
+    rock_formation: "rock_formation",
+    geological_age: "geological_age"
+  };
+
+  const cleanGeoDisplayString = (rawVal, canonicalKey) => {
+    if (typeof rawVal !== "string") return "";
+    const strippedMarkup = rawVal.replace(/<\/?[A-Za-z][A-Za-z0-9:_-]*(?:\s+[^<>]*)?>/g, "").trim();
+    if (!strippedMarkup) return "";
+    if (canonicalKey === "cleavage" && /^none$/i.test(strippedMarkup)) {
+      return "None";
+    }
+    if (INVALID_CANDIDATE_FILLERS.has(strippedMarkup.toLowerCase())) {
+      return "";
+    }
+    return strippedMarkup;
+  };
+
+  const normalizeStoneCacheObject = (rawParsed) => {
+    if (!rawParsed || typeof rawParsed !== "object" || Array.isArray(rawParsed)) {
+      return { normalized: null, hasUsableGeoField: false };
+    }
+    const normalized = {};
+    let hasUsableGeoField = false;
+
+    for (const [rawKey, rawVal] of Object.entries(rawParsed)) {
+      if (rawKey === "geoSource") continue;
+      const strippedKey = rawKey.startsWith("geo.") ? rawKey.slice(4) : rawKey;
+      const canonicalKey = CANONICAL_GEO_KEY_MAP[strippedKey];
+
+      if (canonicalKey) {
+        const cleanedVal = cleanGeoDisplayString(rawVal, canonicalKey);
+        if (cleanedVal) {
+          if (!normalized[canonicalKey] || rawKey === canonicalKey || rawKey === `geo.${canonicalKey}`) {
+            normalized[canonicalKey] = cleanedVal;
+          }
+          hasUsableGeoField = true;
+        }
+      } else if (!rawKey.startsWith("geo.")) {
+        normalized[rawKey] = rawVal;
       }
     }
-    if (cacheRows.length === 0 && search && !fullCandidates.some(c => c.toLowerCase().trim() === search)) {
-      cacheRows = await queryPostgres('SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
+
+    return { normalized, hasUsableGeoField };
+  };
+
+  const loadStoneProfileForName = async (stoneNameLower) => {
+    if (!stoneNameLower) return null;
+    if (stoneProfileCache.has(stoneNameLower)) {
+      return stoneProfileCache.get(stoneNameLower) || null;
     }
-    if (cacheRows.length > 0 && cacheRows[0].data) {
-      const parsed = typeof cacheRows[0].data === "string" ? JSON.parse(cacheRows[0].data) : cacheRows[0].data;
-      return {
+    const rows = await queryPostgres(
+      'SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1',
+      [stoneNameLower]
+    );
+    if (rows.length > 0) {
+      const s = rows[0];
+      const geoResult = {
+        mohs_hardness: cleanGeoDisplayString(s.hardness || s.mohs_hardness || "", "mohs_hardness"),
+        luster: cleanGeoDisplayString(s.luster || "", "luster"),
+        fracture_pattern: cleanGeoDisplayString(s.fracture || s.fracture_pattern || "", "fracture_pattern"),
+        cleavage: cleanGeoDisplayString(s.cleavage || "", "cleavage"),
+        specific_gravity: cleanGeoDisplayString(s.specific_gravity || "", "specific_gravity"),
+        diaphaneity: cleanGeoDisplayString(s.diaphaneity || "", "diaphaneity"),
+        tenacity: "",
+        crystal_system: cleanGeoDisplayString(s.crystal_system || "", "crystal_system"),
+        geological_era: cleanGeoDisplayString(s.geological_era || "", "geological_era"),
+        mineral_class: cleanGeoDisplayString(s.mineral_class || "", "mineral_class"),
+        rock_composition: cleanGeoDisplayString(s.rock_composition || "", "rock_composition"),
+        rock_formation: cleanGeoDisplayString(s.rock_formation || "", "rock_formation"),
+        geological_age: "",
+        geoSource: "database"
+      };
+      stoneProfileCache.set(stoneNameLower, geoResult);
+      return geoResult;
+    }
+    return null;
+  };
+
+  try {
+    const cacheCandidateOrder = [];
+    const seenCacheLower = new Set();
+    for (const candidate of fullCandidates) {
+      const candidateLower = candidate.toLowerCase().trim();
+      if (candidateLower && !seenCacheLower.has(candidateLower)) {
+        seenCacheLower.add(candidateLower);
+        cacheCandidateOrder.push(candidateLower);
+      }
+    }
+    if (search && !seenCacheLower.has(search)) {
+      seenCacheLower.add(search);
+      cacheCandidateOrder.push(search);
+    }
+
+    let matchedCacheNameLower = "";
+    let matchedNormalizedCache = null;
+
+    for (const candidateLower of cacheCandidateOrder) {
+      const cacheRows = await queryPostgres(
+        'SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1',
+        [candidateLower]
+      );
+      if (cacheRows.length > 0 && cacheRows[0].data) {
+        const parsed =
+          typeof cacheRows[0].data === "string"
+            ? JSON.parse(cacheRows[0].data)
+            : cacheRows[0].data;
+        const { normalized, hasUsableGeoField } = normalizeStoneCacheObject(parsed);
+        if (hasUsableGeoField && normalized) {
+          matchedCacheNameLower = candidateLower;
+          matchedNormalizedCache = normalized;
+          break;
+        }
+      }
+    }
+
+    if (matchedNormalizedCache) {
+      const hasMissingCanonicalField = CANONICAL_GEO_FIELD_KEYS.some(
+        (k) => !matchedNormalizedCache[k]
+      );
+      let matchingProfileGeo = null;
+      if (hasMissingCanonicalField && matchedCacheNameLower) {
+        try {
+          matchingProfileGeo = await loadStoneProfileForName(matchedCacheNameLower);
+        } catch (profileErr) {}
+      }
+
+      const mergedCacheResult = {
         ...emptyGeo,
-        ...parsed,
-        tenacity: parsed?.tenacity || "",
-        geological_age: parsed?.geological_age || "",
+        ...(matchingProfileGeo || {}),
+        ...matchedNormalizedCache,
+        tenacity: matchedNormalizedCache.tenacity || matchingProfileGeo?.tenacity || "",
+        geological_age: matchedNormalizedCache.geological_age || matchingProfileGeo?.geological_age || "",
         geoSource: "cache"
       };
+      return mergedCacheResult;
     }
   } catch (err) {}
 
   try {
-    if (stoneProfileCache.has(search)) {
-      const cached = stoneProfileCache.get(search);
-      if (cached) return { ...emptyGeo, ...cached, tenacity: cached.tenacity || "", geological_age: cached.geological_age || "", geoSource: "database" };
-    } else {
-      const rows = await queryPostgres('SELECT * FROM "StoneProfile" WHERE LOWER("stone_name") = $1 LIMIT 1', [search]);
-      if (rows.length > 0) {
-        const s = rows[0];
-        const geoResult = {
-          mohs_hardness: s.hardness || s.mohs_hardness || "",
-          luster: s.luster || "",
-          fracture_pattern: s.fracture || "",
-          cleavage: s.cleavage || "",
-          specific_gravity: s.specific_gravity || "",
-          diaphaneity: s.diaphaneity || "",
-          tenacity: "",
-          crystal_system: s.crystal_system || "",
-          geological_era: s.geological_era || "",
-          mineral_class: s.mineral_class || "",
-          rock_composition: s.rock_composition || "",
-          rock_formation: s.rock_formation || "",
-          geological_age: "",
+    const profileCandidateOrder = [];
+    const seenProfileLower = new Set();
+    for (const candidate of fullCandidates) {
+      const candidateLower = candidate.toLowerCase().trim();
+      if (candidateLower && !seenProfileLower.has(candidateLower)) {
+        seenProfileLower.add(candidateLower);
+        profileCandidateOrder.push(candidateLower);
+      }
+    }
+    if (search && !seenProfileLower.has(search)) {
+      seenProfileLower.add(search);
+      profileCandidateOrder.push(search);
+    }
+
+    for (const candidateLower of profileCandidateOrder) {
+      const profileGeo = await loadStoneProfileForName(candidateLower);
+      if (profileGeo) {
+        return {
+          ...emptyGeo,
+          ...profileGeo,
+          tenacity: profileGeo.tenacity || "",
+          geological_age: profileGeo.geological_age || "",
           geoSource: "database"
         };
-        stoneProfileCache.set(search, geoResult);
-        return geoResult;
       }
     }
   } catch (err) {}
