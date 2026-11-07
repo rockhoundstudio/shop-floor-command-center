@@ -22,6 +22,7 @@ const EXACT_PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
 const EXACT_PRODUCT_VARIANT_GID_REGEX = /^gid:\/\/shopify\/ProductVariant\/\d+$/;
 const EXACT_METAOBJECT_DEF_GID_REGEX = /^gid:\/\/shopify\/MetaobjectDefinition\/\d+$/;
 const EXACT_MEDIA_IMAGE_GID_REGEX = /^gid:\/\/shopify\/MediaImage\/\d+$/;
+const MULTILINE_SCOPED_DESTINATION_ERROR_REGEX = /^\[([^\]]+)\]\s*([\s\S]+)$/;
 
 export function isExactProductGid(value) {
   return typeof value === "string" && EXACT_PRODUCT_GID_REGEX.test(value);
@@ -141,7 +142,7 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       isComplete: false,
       restrictedMetaobjectDefinitionId: expectedRestrictedDefId || null,
       entriesByGid: new Map(),
-      error: `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Load Reference Choices" in Drawer 10 to verify allowed entries.`
+      error: `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Retry Reference Choices" in this drawer to verify allowed entries.`
     };
   }
 
@@ -174,7 +175,9 @@ export function inspectVerifiedReferenceEvidenceForDestination(
     );
 
     const unscopedOrMatchingTopErrors = topRawErrors.filter((errText) => {
-      const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
+      const bracketMatch = MULTILINE_SCOPED_DESTINATION_ERROR_REGEX.exec(
+        errText.trim()
+      );
       if (!bracketMatch) return true;
       const scopedDest = bracketMatch[1].trim();
       if (!BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(scopedDest)) {
@@ -215,7 +218,14 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       };
     }
 
-    const destRefListEntry = topResEnvelope.currentReferenceLists[destinationKey];
+    const destRefListEntry =
+      topResEnvelope.currentReferenceLists[destinationKey] ||
+      (directMap &&
+      typeof directMap === "object" &&
+      directMap.currentAssignment &&
+      typeof directMap.currentAssignment === "object"
+        ? directMap.currentAssignment
+        : null);
     const isDestRefListCompleteAndValid = Boolean(
       destRefListEntry &&
         typeof destRefListEntry === "object" &&
@@ -254,7 +264,7 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       entriesByGid: new Map(),
       error: topResEnvelope
         ? `Missing resolution entry for "${destinationKey}" in standardized reference response.`
-        : `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Load Reference Choices" in Drawer 10 to verify allowed entries.`
+        : `Verified Metaobject reference choices have not been loaded for "${destinationKey}". Click "Retry Reference Choices" in this drawer to verify allowed entries.`
     };
   }
 

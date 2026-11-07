@@ -1063,6 +1063,43 @@ export function BenchV2DrawersView({
                           obs.evidenceAvailable &&
                           (!isShopifyReference || typeAndCompleteness?.ready === true);
 
+                        const hasAvailableOptions =
+                          Array.isArray(options) && options.length > 0;
+                        const shouldRenderPresetSelect =
+                          contract.isWritableInBatch1 &&
+                          (isShopifyReference || hasAvailableOptions);
+
+                        const isRefEvidenceCompleteForRow = Boolean(
+                          referenceEvidence && referenceEvidence.isComplete === true
+                        );
+                        const isRefEvidenceVerifiedEmpty = Boolean(
+                          isRefEvidenceCompleteForRow &&
+                            referenceEvidence.entriesByGid instanceof Map &&
+                            referenceEvidence.entriesByGid.size === 0
+                        );
+
+                        const canSelectReferenceOptionInBatch1 = isShopifyReference
+                          ? Boolean(
+                              canEditDraftInBatch1 &&
+                                !isAnyOperationBusy &&
+                                !isRefChoicesBusy &&
+                                isRefEvidenceCompleteForRow &&
+                                hasAvailableOptions
+                            )
+                          : Boolean(
+                              canEditDraftInBatch1 &&
+                                !isAnyOperationBusy &&
+                                hasAvailableOptions
+                            );
+
+                        const canEditManualInputInBatch1 = isShopifyReference
+                          ? Boolean(
+                              canEditDraftInBatch1 &&
+                                isRefEvidenceCompleteForRow &&
+                                !isRefEvidenceVerifiedEmpty
+                            )
+                          : canEditDraftInBatch1;
+
                         const canApproveForSave =
                           contract.isWritableInBatch1 &&
                           hasProposalKey &&
@@ -1070,6 +1107,36 @@ export function BenchV2DrawersView({
                           fidelityCheck.faithful;
 
                         const shortNotice = getShortPlainNotice(row, isRefChoicesBusy);
+
+                        let selectPlaceholderLabel = "Choose an option...";
+                        if (isShopifyReference) {
+                          if (!obs.evidenceAvailable) {
+                            selectPlaceholderLabel =
+                              "Product baseline not loaded — reload product first";
+                          } else if (typeAndCompleteness?.ready !== true) {
+                            selectPlaceholderLabel =
+                              obs.categoryEligibility?.status === "category_ineligible"
+                                ? "Ineligible for this product category (blocked)"
+                                : "Blocked by category or definition constraint on this product";
+                          } else if (isRefChoicesBusy) {
+                            selectPlaceholderLabel = `Loading verified Metaobject choices (${obs.restrictedMetaobjectDefinitionId || "definition"})...`;
+                          } else if (!referenceEvidence || !referenceEvidence.evidenceLoaded) {
+                            selectPlaceholderLabel =
+                              !isCurrentRefChoicesBoundAndFresh && currentRefChoicesRecord
+                                ? "Reference choices out of date — click Retry Reference Choices"
+                                : "Verified reference choices not loaded — click Retry Reference Choices";
+                          } else if (!referenceEvidence.isComplete) {
+                            selectPlaceholderLabel =
+                              "Reference choice verification incomplete — click Retry Reference Choices";
+                          } else if (isRefEvidenceVerifiedEmpty) {
+                            selectPlaceholderLabel = `0 verified Metaobject entries exist in Shopify (${obs.restrictedMetaobjectDefinitionId || "definition"})`;
+                          } else if (!hasAvailableOptions) {
+                            selectPlaceholderLabel =
+                              "Stored reference list invalid — inspect details before editing";
+                          } else {
+                            selectPlaceholderLabel = `Choose verified Metaobject entry (${options.length} available)...`;
+                          }
+                        }
 
                         let inputPlaceholder = "Type proposed value...";
                         if (!canEditDraftInBatch1) {
@@ -1080,8 +1147,19 @@ export function BenchV2DrawersView({
                                 ? "Blocked by category or definition constraint on this product"
                                 : "Editing locked until baseline loads";
                         } else if (isShopifyReference) {
-                          inputPlaceholder =
-                            'Select a verified reference choice above or enter canonical JSON GID array (e.g. ["gid://shopify/Metaobject/..."])...';
+                          if (isRefChoicesBusy) {
+                            inputPlaceholder =
+                              "Waiting for verified Metaobject reference choices to finish loading...";
+                          } else if (!isRefEvidenceCompleteForRow) {
+                            inputPlaceholder =
+                              "Load or retry verified reference choices before staging a reference GID list...";
+                          } else if (isRefEvidenceVerifiedEmpty) {
+                            inputPlaceholder =
+                              "0 verified Metaobject entries exist in Shopify for this definition...";
+                          } else {
+                            inputPlaceholder =
+                              'Select a verified reference choice above or enter canonical JSON GID array (e.g. ["gid://shopify/Metaobject/..."])...';
+                          }
                         } else if (isNativeVariantPrice) {
                           inputPlaceholder = "Enter price in USD, e.g. 45.00";
                         } else if (contract.destinationKey === "custom.dimensions_mm") {
@@ -1089,6 +1167,15 @@ export function BenchV2DrawersView({
                         } else if (contract.destinationKey === "custom.weight_grams") {
                           inputPlaceholder = "Enter manual scale weight in grams (e.g. 14.5)...";
                         }
+
+                        const showReferenceDraftHelper = Boolean(
+                          isShopifyReference &&
+                            contract.isWritableInBatch1 &&
+                            canEditDraftInBatch1 &&
+                            isRefEvidenceCompleteForRow &&
+                            hasAvailableOptions &&
+                            !hasProposalKey
+                        );
 
                         let cardBorder = "1px solid #cbd5e1";
                         let cardBg = "#ffffff";
@@ -1302,10 +1389,11 @@ export function BenchV2DrawersView({
 
                                 {contract.isWritableInBatch1 ? (
                                   <div>
-                                    {Array.isArray(options) && options.length > 0 && (
+                                    {shouldRenderPresetSelect && (
                                       <select
                                         aria-label={`Preset options for ${contract.destinationKey}`}
                                         value={
+                                          hasAvailableOptions &&
                                           options.some(
                                             (o) =>
                                               (typeof o === "object" ? o.value : o) ===
@@ -1314,7 +1402,7 @@ export function BenchV2DrawersView({
                                             ? proposedValue
                                             : ""
                                         }
-                                        disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                        disabled={!canSelectReferenceOptionInBatch1}
                                         onFocus={() =>
                                           handleFieldEditorFocus(contract.destinationKey)
                                         }
@@ -1332,28 +1420,32 @@ export function BenchV2DrawersView({
                                           fontSize: "15px",
                                           border: "1px solid #475569",
                                           borderRadius: "6px",
-                                          backgroundColor: "#ffffff",
-                                          color: "#0f172a"
+                                          backgroundColor: canSelectReferenceOptionInBatch1
+                                            ? "#ffffff"
+                                            : "#f1f5f9",
+                                          color: canSelectReferenceOptionInBatch1
+                                            ? "#0f172a"
+                                            : "#475569",
+                                          cursor: canSelectReferenceOptionInBatch1
+                                            ? "pointer"
+                                            : "not-allowed"
                                         }}
                                       >
-                                        <option value="">
-                                          {isShopifyReference
-                                            ? `Choose verified Metaobject entry (${options.length} available)...`
-                                            : "Choose an option..."}
-                                        </option>
-                                        {options.map((opt, idx) => {
-                                          const optVal =
-                                            typeof opt === "object"
-                                              ? opt.value ?? opt.label
-                                              : String(opt);
-                                          const optLabel =
-                                            typeof opt === "object" ? opt.label : String(opt);
-                                          return (
-                                            <option key={`${optVal}_${idx}`} value={optVal}>
-                                              {optLabel}
-                                            </option>
-                                          );
-                                        })}
+                                        <option value="">{selectPlaceholderLabel}</option>
+                                        {hasAvailableOptions &&
+                                          options.map((opt, idx) => {
+                                            const optVal =
+                                              typeof opt === "object"
+                                                ? opt.value ?? opt.label
+                                                : String(opt);
+                                            const optLabel =
+                                              typeof opt === "object" ? opt.label : String(opt);
+                                            return (
+                                              <option key={`${optVal}_${idx}`} value={optVal}>
+                                                {optLabel}
+                                              </option>
+                                            );
+                                          })}
                                       </select>
                                     )}
 
@@ -1368,7 +1460,7 @@ export function BenchV2DrawersView({
                                         <textarea
                                           aria-label={`Manual proposal for ${contract.destinationKey}`}
                                           value={proposedValue}
-                                          disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                          disabled={!canEditManualInputInBatch1 || isAnyOperationBusy}
                                           placeholder={inputPlaceholder}
                                           rows={
                                             contract.destinationKey === "native_seo_description"
@@ -1405,7 +1497,7 @@ export function BenchV2DrawersView({
                                           inputMode={isDecimalInputModeField ? "decimal" : undefined}
                                           aria-label={`Manual proposal for ${contract.destinationKey}`}
                                           value={proposedValue}
-                                          disabled={!canEditDraftInBatch1 || isAnyOperationBusy}
+                                          disabled={!canEditManualInputInBatch1 || isAnyOperationBusy}
                                           placeholder={inputPlaceholder}
                                           onFocus={() =>
                                             handleFieldEditorFocus(contract.destinationKey)
@@ -1486,6 +1578,20 @@ export function BenchV2DrawersView({
                                           )}
                                         </div>
                                       )}
+
+                                    {showReferenceDraftHelper && (
+                                      <div
+                                        style={{
+                                          marginTop: "8px",
+                                          fontSize: "14px",
+                                          color: "#334155"
+                                        }}
+                                      >
+                                        Select a verified choice above to stage a draft before{" "}
+                                        <strong>Approve</strong> or <strong>Keep Original</strong>{" "}
+                                        becomes available.
+                                      </div>
+                                    )}
 
                                     {/* HELD AI ALTERNATIVE CHOICE BOX */}
                                     {heldAiAlternative && !isManualOnlyField && (

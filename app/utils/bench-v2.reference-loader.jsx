@@ -40,6 +40,8 @@ const AUTHORITATIVE_SUPPORTED_BARE_KEY_SET = new Set(
   ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS
 );
 
+const MULTILINE_SCOPED_DESTINATION_ERROR_REGEX = /^\[([^\]]+)\]\s*([\s\S]+)$/;
+
 /**
  * Resolves and validates requested standardized reference keys against the
  * authoritative supported destination policy.
@@ -429,7 +431,9 @@ export function evaluateStandardizedReferenceChoicesResponse({
   );
 
   const unscopedTopErrors = topErrors.filter((errText) => {
-    const bracketMatch = /^\[([^\]]+)\]\s*(.+)$/.exec(errText.trim());
+    const bracketMatch = MULTILINE_SCOPED_DESTINATION_ERROR_REGEX.exec(
+      errText.trim()
+    );
     if (!bracketMatch) return true;
     const scopedDest = bracketMatch[1].trim();
     return (
@@ -480,7 +484,9 @@ export function evaluateStandardizedReferenceChoicesResponse({
     const expectedDefId = baselineDef?.restrictedMetaobjectDefinitionId || null;
 
     const scopedTopErrorsForDest = topErrors.filter((errText) => {
-      const bracketMatch = /^\[([^\]]+)\]/.exec(errText.trim());
+      const bracketMatch = MULTILINE_SCOPED_DESTINATION_ERROR_REGEX.exec(
+        errText.trim()
+      );
       return Boolean(bracketMatch && bracketMatch[1].trim() === destKey);
     });
 
@@ -623,9 +629,12 @@ export function evaluateStandardizedReferenceChoicesResponse({
         const entryDefId = extractEntryDefinitionId(item);
         if (!isExactMetaobjectGid(gid)) continue;
         if (!defMatchesBaseline || entryDefId !== resolvedDefId) continue;
+        const resolvedLabel = extractEntryLabel(item) || gid;
         verifiedAvailable.push({
           id: gid,
-          displayName: extractEntryLabel(item) || gid,
+          label: resolvedLabel,
+          displayName: resolvedLabel,
+          definitionId: entryDefId,
           definition: {
             id: entryDefId,
             type:
@@ -676,6 +685,8 @@ export function evaluateStandardizedReferenceChoicesResponse({
 
     verifiedMapByDest[destKey] = {
       ...resObj,
+      categoryEligibility: catEligEntry,
+      isCategoryEligible: isCatEligible,
       currentAssignment: refListEntry || resObj.currentAssignment || null,
       restrictedMetaobjectDefinitionId: defMatchesBaseline ? resolvedDefId : null,
       isComplete: isFieldEligibleAndComplete,
@@ -776,6 +787,8 @@ export function useStandardizedReferenceChoiceLoader({
 
   const [activeRefChoicesRequest, setActiveRefChoicesRequest] = useState(null);
   const [refChoicesStateByProduct, setRefChoicesStateByProduct] = useState({});
+  const [bannerDismissedRequestIdByProduct, setBannerDismissedRequestIdByProduct] =
+    useState({});
   const processedRefChoicesRequestIdRef = useRef(null);
   const activeRefChoicesRequestRef = useRef(null);
   const observedBusyRequestIdRef = useRef(null);
@@ -801,7 +814,22 @@ export function useStandardizedReferenceChoiceLoader({
     [requestedDestinations]
   );
 
-  const currentRefChoicesRecord = refChoicesStateByProduct[productId] || null;
+  const rawRefChoicesRecordForProduct = refChoicesStateByProduct[productId] || null;
+  const dismissedRequestIdForProduct =
+    bannerDismissedRequestIdByProduct[productId] || null;
+
+  const currentRefChoicesRecord = React.useMemo(() => {
+    if (!rawRefChoicesRecordForProduct) return null;
+    const isBannerDismissed = Boolean(
+      rawRefChoicesRecordForProduct.requestId &&
+        dismissedRequestIdForProduct === rawRefChoicesRecordForProduct.requestId
+    );
+    return {
+      ...rawRefChoicesRecordForProduct,
+      bannerDismissed: isBannerDismissed
+    };
+  }, [rawRefChoicesRecordForProduct, dismissedRequestIdForProduct]);
+
   const currentBaselineContextSig = React.useMemo(
     () =>
       buildStandardizedBaselineContextSignature(
@@ -910,6 +938,13 @@ export function useStandardizedReferenceChoiceLoader({
         requestedDestinations: enumerateList,
         startedAt: new Date().toISOString()
       };
+
+      setBannerDismissedRequestIdByProduct((prev) => {
+        if (!prev[targetProductId]) return prev;
+        const next = { ...prev };
+        delete next[targetProductId];
+        return next;
+      });
 
       observedBusyRequestIdRef.current = null;
       activeRefChoicesRequestRef.current = reqMeta;
@@ -1110,19 +1145,22 @@ export function useStandardizedReferenceChoiceLoader({
   ]);
 
   const canRetryRefChoicesForCurrentProduct = Boolean(
-    isCurrentBaselineReadyForStandardizedLookup &&
-      !isRefChoicesBusy &&
-      currentRefChoicesRecord &&
-      (!isCurrentRefChoicesBoundAndFresh || !currentRefChoicesRecord.ok)
+    isCurrentBaselineReadyForStandardizedLookup && !isRefChoicesBusy
   );
 
   const dismissCurrentRefChoicesRecord = useCallback(() => {
-    setRefChoicesStateByProduct((prev) => {
-      const next = { ...prev };
-      delete next[productId];
-      return next;
+    setBannerDismissedRequestIdByProduct((prev) => {
+      const activeRecordForProduct = refChoicesStateByProduct[productId];
+      const activeReqId = activeRecordForProduct?.requestId || null;
+      if (!activeReqId || prev[productId] === activeReqId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [productId]: activeReqId
+      };
     });
-  }, [productId]);
+  }, [productId, refChoicesStateByProduct]);
 
   return {
     currentBaseline,
@@ -1153,8 +1191,28 @@ export function useBenchV2StandardizedReferenceLoader({
   isBaselineReloading,
   setClientPrevalidationBanner
 }) {
+  const activeProductIdRef = useRef(activeProductId);
+  activeProductIdRef.current = activeProductId;
+
+  const rawCurrentBaselineRef = useRef(rawCurrentBaseline);
+  rawCurrentBaselineRef.current = rawCurrentBaseline;
+
   const getLatestBaselineForProduct = useCallback(
-    (targetProdId) => baselineByProductRef?.current?.[targetProdId] || null,
+    (targetProdId) => {
+      const fromRef = baselineByProductRef?.current?.[targetProdId] || null;
+      if (fromRef && fromRef.productId === targetProdId) {
+        return fromRef;
+      }
+      const fallbackRaw = rawCurrentBaselineRef.current;
+      if (
+        targetProdId === activeProductIdRef.current &&
+        fallbackRaw &&
+        fallbackRaw.productId === targetProdId
+      ) {
+        return fallbackRaw;
+      }
+      return null;
+    },
     [baselineByProductRef]
   );
 

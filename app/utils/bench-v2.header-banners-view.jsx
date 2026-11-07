@@ -200,6 +200,11 @@ export function BenchV2HeaderAndBannersView({
   const safePasteText =
     typeof jsonImportPasteText === "string" ? jsonImportPasteText : "";
 
+  const shouldShowRefChoicesBanner = Boolean(
+    isRefChoicesBusy ||
+      (currentRefChoicesRecord && !currentRefChoicesRecord.bannerDismissed)
+  );
+
   return (
     <>
       {/* TOP SUMMARY BAR + ACCESSIBLE PRODUCT SEARCH / PICKER + 120x120 THUMBNAILS + DRAWER FILTER */}
@@ -1249,7 +1254,7 @@ export function BenchV2HeaderAndBannersView({
       )}
 
       {/* HONEST STANDARDIZED REFERENCE CHOICES STATUS BANNER */}
-      {(isRefChoicesBusy || currentRefChoicesRecord) && (
+      {shouldShowRefChoicesBanner && (
         <div
           role="region"
           aria-label="Standardized Reference Choices Status"
