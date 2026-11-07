@@ -42,6 +42,7 @@ import {
   isKeepOriginalRecordValid
 } from "../utils/bench-v2.contract.jsx";
 import {
+  ALLOWED_VISION_CANDIDATE_KEYS,
   isExactMetaobjectGid,
   collectVerifiedEntriesForResolution,
   evaluateCandidateLabelResolution
@@ -84,6 +85,17 @@ const PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS = Object.freeze(
   ])
 );
 
+const VISION_BACKED_STANDARDIZED_REFERENCE_DESTINATIONS = Object.freeze(
+  new Set(ALLOWED_VISION_CANDIDATE_KEYS.map((k) => `shopify.${k}`))
+);
+
+const AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS = Object.freeze(
+  new Set([
+    ...PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS,
+    ...VISION_BACKED_STANDARDIZED_REFERENCE_DESTINATIONS
+  ])
+);
+
 function getProposalValueString(rawEntry) {
   return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
     ? rawEntry.value
@@ -111,7 +123,7 @@ function resolveProducerBackedGeologyReferenceCandidate({
     return {
       status: "invalid_candidate",
       displayLabel: "",
-      reason: `Empty geology reference candidate label on ${destKey}.`
+      reason: `Empty standardized reference candidate label on ${destKey}.`
     };
   }
 
@@ -120,12 +132,12 @@ function resolveProducerBackedGeologyReferenceCandidate({
     !contract ||
     !contract.isWritableInBatch1 ||
     contract.namespace !== "shopify" ||
-    !PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+    !AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS.has(destKey)
   ) {
     return {
       status: "not_eligible_contract",
       displayLabel,
-      reason: `Destination ${destKey} is not an authorized producer-backed geology standardized reference companion.`
+      reason: `Destination ${destKey} is not an authorized producer-backed or Vision-backed standardized reference companion.`
     };
   }
 
@@ -628,8 +640,8 @@ export default function BenchV2Route() {
   // 9B. Staged Vision Candidates State (Populated by AI Scan, read by Reference Loader & Telemetry)
   const [stagedVisionCandidatesByProduct, setStagedVisionCandidatesByProduct] = useState({});
 
-  // 9C. Pending Producer-Backed Geology Reference Candidates State
-  // Retains unresolved geology reference candidates when AI Scan arrives before
+  // 9C. Pending Producer-Backed & Vision-Backed Standardized Reference Candidates State
+  // Retains unresolved geology & Vision reference candidates when AI Scan arrives before
   // reference choices finish loading, so either arrival order resolves once without
   // rescanning, loops, or auto-approval.
   const [pendingGeologyRefCandidatesByProduct, setPendingGeologyRefCandidatesByProduct] =
@@ -1349,14 +1361,17 @@ export default function BenchV2Route() {
       return;
     }
 
-    if (
+    const rawVisionStandardizedCandidates =
       rawResponse.standardized_candidates &&
       typeof rawResponse.standardized_candidates === "object" &&
       !Array.isArray(rawResponse.standardized_candidates)
-    ) {
+        ? rawResponse.standardized_candidates
+        : null;
+
+    if (rawVisionStandardizedCandidates) {
       setStagedVisionCandidatesByProduct((prev) => ({
         ...prev,
-        [scannedProductId]: rawResponse.standardized_candidates
+        [scannedProductId]: rawVisionStandardizedCandidates
       }));
     }
 
@@ -1370,6 +1385,40 @@ export default function BenchV2Route() {
         "AI Scan response did not include producerProposals separation map; refused to stage tab3Data fallbacks."
       );
       return;
+    }
+
+    const combinedProducerAndVisionProposals = { ...rawProducerProposals };
+    if (rawVisionStandardizedCandidates) {
+      for (const visionAttrKey of ALLOWED_VISION_CANDIDATE_KEYS) {
+        const destKey = `shopify.${visionAttrKey}`;
+        if (Object.prototype.hasOwnProperty.call(combinedProducerAndVisionProposals, destKey)) {
+          continue;
+        }
+        const candEntry =
+          rawVisionStandardizedCandidates[visionAttrKey] ??
+          rawVisionStandardizedCandidates[destKey];
+        if (!candEntry || typeof candEntry !== "object" || Array.isArray(candEntry)) {
+          continue;
+        }
+        const cleanVisionLabels = Array.isArray(candEntry.labels)
+          ? candEntry.labels
+              .filter((l) => typeof l === "string" && l.trim() !== "")
+              .map((l) => l.trim())
+          : [];
+        if (cleanVisionLabels.length === 0) {
+          continue;
+        }
+        const evidenceNote =
+          typeof candEntry.evidence === "string" && candEntry.evidence.trim() !== ""
+            ? candEntry.evidence.trim()
+            : "";
+        combinedProducerAndVisionProposals[destKey] = {
+          candidateLabel: cleanVisionLabels.join(", "),
+          labels: cleanVisionLabels,
+          source: `Gemini Vision (standardized_candidates.${visionAttrKey})`,
+          ...(evidenceNote ? { evidence: evidenceNote } : {})
+        };
+      }
     }
 
     const rawTargetBaseline = baselineByProductRef.current[scannedProductId] || null;
@@ -1501,7 +1550,7 @@ export default function BenchV2Route() {
       );
     };
 
-    for (const [destKey, entry] of Object.entries(rawProducerProposals)) {
+    for (const [destKey, entry] of Object.entries(combinedProducerAndVisionProposals)) {
       if (CANCELLED_INERT_DESTINATIONS.has(destKey)) {
         continue;
       }
@@ -1515,7 +1564,7 @@ export default function BenchV2Route() {
           ? entry.source.trim()
           : "Source not reported";
 
-      // Check for the 4 producer-backed standardized geology reference companions
+      // Check for the 4 producer-backed geology reference companions and 6 Vision standardized candidates
       const isGeologyRefCandidateShape = Boolean(
         entry &&
           typeof entry === "object" &&
@@ -1541,11 +1590,11 @@ export default function BenchV2Route() {
 
         if (
           isManualOnlyNoAiDestination(destKey, contract) ||
-          !PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+          !AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS.has(destKey)
         ) {
           ignoredManualOnlyCount++;
           const manualReason =
-            "Manual-only or non-geology standardized reference field — excluded from producer candidate staging.";
+            "Manual-only or unauthorized standardized reference field — excluded from AI candidate staging.";
           proposalsByDestination[destKey] = {
             value: displayCandidateLabel,
             source: reportedSource,
@@ -1594,7 +1643,7 @@ export default function BenchV2Route() {
           };
           diagnosticsObj[destKey] = resolution.reason;
           details.push(
-            `[${destKey}] Retained geology reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}) pending verified reference choices.`
+            `[${destKey}] Retained standardized reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}) pending verified reference choices.`
           );
           continue;
         }
@@ -1635,7 +1684,7 @@ export default function BenchV2Route() {
         };
         diagnosticsObj[destKey] = resolution.reason;
         details.push(
-          `[${destKey}] Held geology reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${resolution.reason}`
+          `[${destKey}] Held standardized reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${resolution.reason}`
         );
         continue;
       }
@@ -1783,8 +1832,8 @@ export default function BenchV2Route() {
   }, [aiScanFetcher.state, aiScanFetcher.data, activeProductId]);
 
   // ==========================================================================
-  // DEFERRED GEOLOGY REFERENCE CANDIDATE RESOLUTION (WHEN REF CHOICES ARRIVE
-  // AFTER AI SCAN) — ONCE PER SCAN REQUEST, NO RESCAN, NO LOOPS, NO AUTO-APPROVE
+  // DEFERRED GEOLOGY & VISION REFERENCE CANDIDATE RESOLUTION (WHEN REF CHOICES
+  // ARRIVE AFTER AI SCAN) — ONCE PER SCAN REQUEST, NO RESCAN, NO LOOPS, NO AUTO-APPROVE
   // ==========================================================================
   useEffect(() => {
     const pendingBundle = pendingGeologyRefCandidatesByProduct[activeProductId];
@@ -1847,11 +1896,15 @@ export default function BenchV2Route() {
     const appendedDetails = [];
 
     for (const [destKey, candItem] of destEntries) {
-      if (!candItem || !PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)) {
+      if (!candItem || !AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS.has(destKey)) {
         continue;
       }
 
-      const reportedSource = candItem.source || "Geo Library";
+      const reportedSource =
+        candItem.source ||
+        (PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+          ? "Geo Library"
+          : "Gemini Vision");
       const displayCandidateLabel =
         candItem.displayLabel ||
         (Array.isArray(candItem.candidateLabels) ? candItem.candidateLabels.join(", ") : "");
@@ -1982,7 +2035,7 @@ export default function BenchV2Route() {
       };
       updatedDiagnostics[destKey] = resolution.reason;
       appendedDetails.push(
-        `[${destKey}] Held geology reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${resolution.reason}`
+        `[${destKey}] Held standardized reference candidate "${displayCandidateLabel}" (Source: ${reportedSource}): ${resolution.reason}`
       );
     }
 

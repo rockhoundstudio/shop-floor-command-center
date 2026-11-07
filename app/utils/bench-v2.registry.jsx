@@ -168,7 +168,28 @@ export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.whole_product_weight_grams": "number_decimal",
   "custom.chain_cord_length_in": "single_line_text_field",
   "custom.accessory_dimensions_mm": "single_line_text_field",
-  "custom.fitting_opening_mm": "single_line_text_field"
+  "custom.fitting_opening_mm": "single_line_text_field",
+  "custom.dimensions_mm": "single_line_text_field",
+  "custom.weight_grams": "number_decimal",
+  "custom.piece_name": "single_line_text_field",
+  "custom.material": "single_line_text_field",
+  "custom.stone_family": "single_line_text_field",
+  "custom.cut_and_shape": "single_line_text_field",
+  "custom.stone_shape": "single_line_text_field",
+  "custom.surface_finish": "single_line_text_field",
+  "custom.color": "single_line_text_field",
+  "custom.primary_color": "single_line_text_field",
+  "custom.treatment_status": "single_line_text_field",
+  "custom.treated": "single_line_text_field",
+  "custom.origin_location": "single_line_text_field",
+  "custom.origin_page_handle": "single_line_text_field",
+  "custom.collection_name": "single_line_text_field",
+  "custom.collection_location": "single_line_text_field",
+  "custom.found_object": "single_line_text_field",
+  "custom.secondary_medium": "single_line_text_field",
+  "custom.setting_ready": "single_line_text_field",
+  "custom.bail_included": "single_line_text_field",
+  "custom.generated_description": "multi_line_text_field"
 });
 
 // Exact bare provenance keys used by Bench V2 AI Scan (excluding cancelled
@@ -563,6 +584,12 @@ const EXCLUDED_STANDARDIZED_KEYS = new Set([
   "rarity"
 ]);
 
+const ALLOWED_REVIEWED_CUSTOM_CONTRACT_TYPES = new Set([
+  "single_line_text_field",
+  "number_decimal",
+  "multi_line_text_field"
+]);
+
 function defineFieldContract(spec) {
   if (!spec || typeof spec.destinationKey !== "string" || spec.destinationKey.trim() === "") {
     throw new Error("BENCH_V2_CONTRACT_ERROR: Every field contract requires a non-empty destinationKey.");
@@ -609,11 +636,9 @@ function defineFieldContract(spec) {
     spec.namespace === "custom" &&
     spec.destinationKey !== "custom.is_ooak" &&
     allowedTypes.length === 1 &&
-    ((allowedTypes[0] === "single_line_text_field" &&
-      rawReviewedContractType === "single_line_text_field") ||
-      (spec.destinationKey === "custom.whole_product_weight_grams" &&
-        allowedTypes[0] === "number_decimal" &&
-        rawReviewedContractType === "number_decimal"))
+    rawReviewedContractType &&
+    ALLOWED_REVIEWED_CUSTOM_CONTRACT_TYPES.has(rawReviewedContractType) &&
+    allowedTypes[0] === rawReviewedContractType
       ? rawReviewedContractType
       : null;
 

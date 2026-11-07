@@ -2,7 +2,9 @@ import { authenticate } from "../shopify.server";
 import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
 import { action as loaderAction } from "../utils/meta-injector.loader.jsx";
 import {
-  ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS
+  ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS,
+  SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
+  isExactMetaobjectGid
 } from "../utils/meta-injector.standardized.jsx";
 import {
   RETIRED_KEYS,
@@ -14,8 +16,10 @@ import {
   BENCH_V2_WRITER_OPT_IN_FIELD,
   BENCH_V2_WRITER_OPT_IN_VALUE,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS as BENCH_V2_OPT_IN_VARIANT_DESTINATIONS,
+  BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS as BENCH_V2_OPT_IN_STANDARDIZED_DESTINATIONS,
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   isExactProductVariantGid,
+  inspectStoredReferenceListRawValue,
   isPlainTextProposalRejectedForContract,
   validateAgainstLiveTextDefinitionValidations,
   evaluateBenchV2OptInCustomProductWrite
@@ -82,6 +86,10 @@ const STRICT_CUSTOM_KEYS = [
   "found_object", "collection_date", "wire_material",
   "whole_product_weight_grams"
 ];
+
+const BENCH_V2_OPT_IN_SUPPORTED_STANDARDIZED_KEY_SET = new Set(
+  SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+);
 
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX = /^(?:0|[1-9]\d*)\.\d{2}$/;
@@ -1218,7 +1226,15 @@ export const action = async ({ request }) => {
           : (currentMetafields[canonicalDestinationKey] ?? null);
         const valStr = String(val !== null && val !== undefined ? val : "").trim();
 
-        if (ns === "shopify" && !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
+        const isAllowedStandardizedDestinationForWrite = isBenchV2OptIn
+          ? (
+              fullKey === canonicalDestinationKey &&
+              BENCH_V2_OPT_IN_SUPPORTED_STANDARDIZED_KEY_SET.has(key) &&
+              BENCH_V2_OPT_IN_STANDARDIZED_DESTINATIONS.has(canonicalDestinationKey)
+            )
+          : ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key);
+
+        if (ns === "shopify" && !isAllowedStandardizedDestinationForWrite) {
             if (!currentVal && valStr === "") {
                 unchanged.push(fullKey);
             } else if (currentVal === valStr) {
@@ -1247,6 +1263,21 @@ export const action = async ({ request }) => {
         if ((isBenchV2OptIn || isWholeProductWeightGramsTarget) && destinationDefErr) {
             blockedFields[fullKey] = `Definition or constraint error on ${canonicalDestinationKey}: ${destinationDefErr}`;
             continue;
+        }
+
+        if (isBenchV2OptIn && ns === "shopify") {
+            if (!def?.type) {
+                blockedFields[fullKey] = `Missing live PRODUCT metafield definition for "${canonicalDestinationKey}". Standardized reference attributes require a live PRODUCT definition.`;
+                continue;
+            }
+            if (def.type !== "list.metaobject_reference") {
+                blockedFields[fullKey] = `Type mismatch on "${canonicalDestinationKey}": expected live definition "list.metaobject_reference", but Shopify reports "${def.type}".`;
+                continue;
+            }
+            if (storedType && storedType !== "list.metaobject_reference") {
+                blockedFields[fullKey] = `Type conflict on "${canonicalDestinationKey}": live definition is "list.metaobject_reference" but stored metafield is "${storedType}".`;
+                continue;
+            }
         }
 
         const reviewedContractType = isWholeProductWeightGramsTarget
@@ -1302,6 +1333,17 @@ export const action = async ({ request }) => {
         }
 
         let resolvedValue = normalizeMetafieldValue(key, valStr);
+
+        if (isBenchV2OptIn && ns === "shopify") {
+            if (typeof val !== "string") {
+                blockedFields[fullKey] = `Rejected non-string proposal for ${canonicalDestinationKey} (no implicit coercion).`;
+                continue;
+            }
+            if (resolvedValue !== val) {
+                blockedFields[fullKey] = `Proposal for ${canonicalDestinationKey} contains leading/trailing whitespace or warning prefixes that would alter the exact approved value.`;
+                continue;
+            }
+        }
 
         if (isWholeProductWeightGramsTarget) {
             if (typeof val !== "string") {
@@ -1374,7 +1416,67 @@ export const action = async ({ request }) => {
 
           let idsToVerify = [];
 
-          if (resolvedType.includes("list.")) {
+          if (isBenchV2OptIn && ns === "shopify") {
+             let parsedArray;
+             try {
+                parsedArray = JSON.parse(resolvedValue);
+             } catch {
+                blockedFields[fullKey] = `Destination "${canonicalDestinationKey}" requires a canonical JSON array of Metaobject GIDs (e.g. ["gid://shopify/Metaobject/123"]).`;
+                continue;
+             }
+
+             if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
+                blockedFields[fullKey] = `Destination "${canonicalDestinationKey}" requires a non-empty JSON array of Metaobject GIDs.`;
+                continue;
+             }
+
+             const seenGids = new Set();
+             let elementErr = null;
+             for (const item of parsedArray) {
+                if (typeof item !== "string" || item.trim() !== item || !isExactMetaobjectGid(item)) {
+                   elementErr = `Invalid reference element "${String(item)}" for "${canonicalDestinationKey}": every item must be an exact "gid://shopify/Metaobject/<id>" string.`;
+                   break;
+                }
+                if (seenGids.has(item)) {
+                   elementErr = `Duplicate Metaobject GID "${item}" in proposal for "${canonicalDestinationKey}".`;
+                   break;
+                }
+                seenGids.add(item);
+                idsToVerify.push(item);
+             }
+
+             if (elementErr) {
+                blockedFields[fullKey] = elementErr;
+                continue;
+             }
+
+             const canonicalSerialized = JSON.stringify(parsedArray);
+             if (canonicalSerialized !== resolvedValue) {
+                blockedFields[fullKey] = `Existing writer serializes this reference list as ${canonicalSerialized}. Use ${canonicalSerialized} so your exact approved value is stored without alteration.`;
+                continue;
+             }
+
+             const storedCheck = inspectStoredReferenceListRawValue(currentVal);
+             if (!storedCheck.valid) {
+                blockedFields[fullKey] = `Existing stored reference list on "${canonicalDestinationKey}" could not be parsed safely: ${storedCheck.error}`;
+                continue;
+             }
+
+             let missingAssignedGid = null;
+             for (const existingGid of storedCheck.gids) {
+                if (!seenGids.has(existingGid)) {
+                   missingAssignedGid = existingGid;
+                   break;
+                }
+             }
+
+             if (missingAssignedGid) {
+                blockedFields[fullKey] = `Proposal for "${canonicalDestinationKey}" is missing existing assigned Metaobject ${missingAssignedGid}. Existing reference assignments are preserved and never silently removed.`;
+                continue;
+             }
+
+             resolvedValue = canonicalSerialized;
+          } else if (resolvedType.includes("list.")) {
              try {
                 const parsed = JSON.parse(resolvedValue);
                 if (!Array.isArray(parsed)) throw new Error();
