@@ -85,11 +85,22 @@ export const BENCH_V2_CONNECTED_VARIANT_DESTINATIONS = Object.freeze(
   ])
 );
 
+const BENCH_V2_EXCLUDED_STANDARDIZED_KEYS = Object.freeze(
+  new Set([
+    "authenticity",
+    "necklace-design",
+    "rarity",
+    "geological-era"
+  ])
+);
+
 // Explicit replacement-bench-local allowlist of finite retained PRODUCT
-// standardized reference destinations (18 keys; excludes authenticity, necklace-design, rarity).
+// standardized reference destinations (17 keys; excludes authenticity, necklace-design, rarity, geological-era).
 export const BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS = Object.freeze(
   new Set(
-    SUPPORTED_STANDARDIZED_REFERENCE_KEYS.map((k) => `shopify.${k}`)
+    SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+      .filter((k) => !BENCH_V2_EXCLUDED_STANDARDIZED_KEYS.has(k))
+      .map((k) => `shopify.${k}`)
   )
 );
 
@@ -151,7 +162,6 @@ export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
   "custom.crystal_system": "single_line_text_field",
   "custom.mineral_class": "single_line_text_field",
   "custom.rock_formation": "single_line_text_field",
-  "custom.geological_era": "single_line_text_field",
   "custom.is_one_of_a_kind": "single_line_text_field",
   "custom.collection_date": "single_line_text_field",
   "custom.cut_type": "single_line_text_field",
@@ -297,7 +307,9 @@ export const BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS = Object.freeze({
   nonRenderedDuplicateAliases: Object.freeze([
     Object.freeze({ owner: "PRODUCT", identity: "custom.badge", role: "DUPLICATE_ALIAS" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.crystal-system", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.crystal_system" }),
-    Object.freeze({ owner: "PRODUCT", identity: "custom.geological-era", role: "DUPLICATE_ALIAS", canonicalTarget: "shopify.geological-era" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.geological-era", role: "DUPLICATE_ALIAS", canonicalTarget: null, status: "retired_from_active_bench_v2_controls" }),
+    Object.freeze({ owner: "PRODUCT", identity: "custom.geological_era", role: "RETIRED_LEGACY_ERA", canonicalTarget: null, status: "retired_from_active_bench_v2_controls" }),
+    Object.freeze({ owner: "PRODUCT", identity: "shopify.geological-era", role: "RETIRED_STANDARDIZED_ERA", canonicalTarget: null, status: "retired_from_active_bench_v2_controls" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.mineral-class", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.mineral_class" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.necklace-design", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.necklace_design" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.review_widget_data", role: "DUPLICATE_ALIAS" }),
@@ -429,7 +441,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_3",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Mineral class, rock composition, and rock formation (custom.* text and standardized shopify.* references), library geological age text (custom.geological_age), authoritative standardized geological era (shopify.geological-era), and read-only legacy custom.geological_era compatibility inspection."
+    description: "Mineral class, rock composition, and rock formation (custom.* text and standardized shopify.* references), and detailed library geological age text (custom.geological_age)."
   }),
   Object.freeze({
     drawerId: "channel_and_demographic",
@@ -578,11 +590,7 @@ const PRODUCER_BACKED_GEOLOGY_STANDARDIZED_KEYS = new Set([
 ]);
 const SUPPORTED_STANDARDIZED_KEY_SET = new Set(SUPPORTED_STANDARDIZED_REFERENCE_KEYS);
 
-const EXCLUDED_STANDARDIZED_KEYS = new Set([
-  "authenticity",
-  "necklace-design",
-  "rarity"
-]);
+const EXCLUDED_STANDARDIZED_KEYS = BENCH_V2_EXCLUDED_STANDARDIZED_KEYS;
 
 const ALLOWED_REVIEWED_CUSTOM_CONTRACT_TYPES = new Set([
   "single_line_text_field",
@@ -710,7 +718,10 @@ function defineCompatField(drawerId, subHarness, owner, namespace, key, label, c
 function defineStandardizedShopifyField(drawerId, subHarness, k, canonicalTarget = null) {
   const isVisionCandidateKey = VISION_CANDIDATE_STANDARDIZED_KEYS.has(k);
   const isProducerBackedGeologyKey = PRODUCER_BACKED_GEOLOGY_STANDARDIZED_KEYS.has(k);
-  const isSupportedRefKey = SUPPORTED_STANDARDIZED_KEY_SET.has(k);
+  const isSupportedRefKey =
+    SUPPORTED_STANDARDIZED_KEY_SET.has(k) &&
+    !EXCLUDED_STANDARDIZED_KEYS.has(k) &&
+    BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(`shopify.${k}`);
   return defineFieldContract({
     destinationKey: `shopify.${k}`,
     namespace: "shopify",
@@ -1335,7 +1346,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "Mineralogical tenacity (single_line_text_field, e.g. Brittle)."
   ),
 
-  // DRAWER 12: GEOLOGY: CLASS, COMPOSITION, FORMATION & DEEP TIME (9 CONTRACTS)
+  // DRAWER 12: GEOLOGY: CLASS, COMPOSITION, FORMATION & DEEP TIME (7 CONTRACTS; ERA RETIRED FROM BENCH V2)
   defineBatch1CustomField(
     "geology_composition_and_time",
     "SUB_HARNESS_3",
@@ -1365,19 +1376,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "SUB_HARNESS_3",
     "geological_age",
     "Geological Age",
-    "Library geological age text (single_line_text_field; distinct from shopify.geological-era and custom.geological_era; 'Variable' can be valid)."
-  ),
-  defineStandardizedShopifyField("geology_composition_and_time", "SUB_HARNESS_5", "geological-era"),
-  defineCompatField(
-    "geology_composition_and_time",
-    "SUB_HARNESS_3",
-    "PRODUCT",
-    "custom",
-    "geological_era",
-    "Geological Era (Saved Compatibility — Read-Only)",
-    "shopify.geological-era",
-    "Legacy custom geological_era field kept read-only for inspection only; authoritative ERA dropdown is shopify.geological-era and AGE text is custom.geological_age.",
-    { maxLength: 255 }
+    "Library geological age text (single_line_text_field; 'Variable' can be valid)."
   ),
 
   // DRAWER 13: GOOGLE CHANNEL & DEMOGRAPHIC ATTRIBUTES (12 CONTRACTS)

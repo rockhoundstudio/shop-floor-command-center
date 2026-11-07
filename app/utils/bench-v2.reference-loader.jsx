@@ -30,20 +30,26 @@ import {
 const DEFAULT_REFERENCE_CHOICES_ACTION_PATH = "/app/meta-injector-api";
 const DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX = "bench_v2_refchoices";
 
+const ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS = Object.freeze(
+  SUPPORTED_STANDARDIZED_REFERENCE_KEYS.filter((k) =>
+    BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(`shopify.${k}`)
+  )
+);
+
 const AUTHORITATIVE_SUPPORTED_BARE_KEY_SET = new Set(
-  SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+  ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS
 );
 
 /**
  * Resolves and validates requested standardized reference keys against the
  * authoritative supported destination policy.
- * - Omitted/null/undefined defaults to the full authoritative 18-key set.
+ * - Omitted/null/undefined defaults to the active Bench V2 connected supported set.
  * - Provided arrays may only narrow the authoritative set; any empty or
  *   unsupported key is rejected (`ok: false`) and never broadens permissions.
  */
 export function resolveSupportedDestinationKeys(requestedKeys = null) {
   if (requestedKeys === undefined || requestedKeys === null) {
-    const bareKeys = [...SUPPORTED_STANDARDIZED_REFERENCE_KEYS];
+    const bareKeys = [...ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS];
     const destinationKeys = bareKeys.map((k) => `shopify.${k}`);
     return {
       ok: true,
@@ -103,7 +109,7 @@ export function resolveSupportedDestinationKeys(requestedKeys = null) {
     };
   }
 
-  const orderedBareKeys = SUPPORTED_STANDARDIZED_REFERENCE_KEYS.filter((k) =>
+  const orderedBareKeys = ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS.filter((k) =>
     requestedBareSet.has(k)
   );
   const orderedDestinationKeys = orderedBareKeys.map((k) => `shopify.${k}`);
@@ -120,7 +126,7 @@ export function resolveSupportedDestinationKeys(requestedKeys = null) {
 
 export function buildStandardizedBaselineContextSignature(
   baselineSnap,
-  supportedBareKeys = SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+  supportedBareKeys = ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS
 ) {
   if (!baselineSnap || typeof baselineSnap !== "object") return "no_baseline";
   const productId =
@@ -198,10 +204,18 @@ export function buildStandardizedBaselineContextSignature(
       !Array.isArray(baselineSnap.currentMetafieldTypes)
   );
 
+  const filteredCandidateBareKeys = Array.isArray(supportedBareKeys)
+    ? supportedBareKeys.filter(
+        (k) =>
+          AUTHORITATIVE_SUPPORTED_BARE_KEY_SET.has(k) &&
+          BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(`shopify.${k}`)
+      )
+    : [];
+
   const keysToInspect =
-    Array.isArray(supportedBareKeys) && supportedBareKeys.length > 0
-      ? supportedBareKeys.filter((k) => AUTHORITATIVE_SUPPORTED_BARE_KEY_SET.has(k))
-      : SUPPORTED_STANDARDIZED_REFERENCE_KEYS;
+    filteredCandidateBareKeys.length > 0
+      ? filteredCandidateBareKeys
+      : ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS;
 
   const perDestParts = keysToInspect
     .map((k) => {
@@ -794,7 +808,7 @@ export function useStandardizedReferenceChoiceLoader({
         rawBaseline,
         destinationPolicy.ok
           ? destinationPolicy.bareKeys
-          : SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+          : ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS
       ),
     [rawBaseline, destinationPolicy]
   );
@@ -1063,7 +1077,7 @@ export function useStandardizedReferenceChoiceLoader({
       latestBaselineForProduct,
       destinationPolicy.ok
         ? destinationPolicy.bareKeys
-        : SUPPORTED_STANDARDIZED_REFERENCE_KEYS
+        : ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS
     );
 
     const evaluatedRecord = evaluateStandardizedReferenceChoicesResponse({
