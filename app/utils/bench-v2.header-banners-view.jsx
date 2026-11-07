@@ -14,6 +14,9 @@ import {
   DETAILS_PANEL_STYLE
 } from "./bench-v2.drawers-view.jsx";
 
+export const BENCH_V2_JSON_DRAFT_PACKET_SCHEMA = "bench_v2_json_draft_packet_v1";
+export const BENCH_V2_JSON_DRAFT_MAX_BYTES = 262144; // 256 KB
+
 export const BANNER_TONE_PALETTES = Object.freeze({
   error: Object.freeze({
     backgroundColor: "#fef2f2",
@@ -166,8 +169,37 @@ export function BenchV2HeaderAndBannersView({
   handleSelectProductGid,
   handleSetAllDrawers,
   dismissCurrentRefChoicesRecord,
-  handleDismissAiScanReport
+  handleDismissAiScanReport,
+  // JSON Draft Importer props (safe backward-compatible defaults until route connection is complete)
+  isJsonImportPanelOpen = false,
+  setIsJsonImportPanelOpen = null,
+  jsonImportPasteText = "",
+  setJsonImportPasteText = null,
+  isJsonImportBusy = false,
+  currentJsonImportReport = null,
+  handleJsonDraftFileSelect = null,
+  handleApplyPastedJsonDraftPacket = null,
+  handleClearJsonImportPasteText = null,
+  handleDismissJsonImportReport = null
 }) {
+  const hasJsonImportWiring = Boolean(
+    typeof setIsJsonImportPanelOpen === "function" &&
+      typeof setJsonImportPasteText === "function" &&
+      typeof handleJsonDraftFileSelect === "function" &&
+      typeof handleApplyPastedJsonDraftPacket === "function"
+  );
+
+  const isJsonImportControlDisabled = Boolean(
+    !hasJsonImportWiring ||
+      isAnyOperationBusy ||
+      isJsonImportBusy ||
+      !currentBaseline ||
+      currentBaseline.productId !== activeProductId
+  );
+
+  const safePasteText =
+    typeof jsonImportPasteText === "string" ? jsonImportPasteText : "";
+
   return (
     <>
       {/* TOP SUMMARY BAR + ACCESSIBLE PRODUCT SEARCH / PICKER + 120x120 THUMBNAILS + DRAWER FILTER */}
@@ -233,37 +265,111 @@ export function BenchV2HeaderAndBannersView({
             <button
               type="button"
               onClick={handleExplicitAiScanProduct}
-              disabled={isAnyOperationBusy || !currentBaseline}
+              disabled={isAnyOperationBusy || isJsonImportBusy || !currentBaseline}
               style={{
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 700,
                 backgroundColor:
-                  isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#1d4ed8",
-                color: isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                  isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                    ? "#cbd5e1"
+                    : "#1d4ed8",
+                color:
+                  isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                    ? "#334155"
+                    : "#ffffff",
                 border: "2px solid #1e3a8a",
                 borderRadius: "8px",
-                cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                cursor:
+                  isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                    ? "not-allowed"
+                    : "pointer"
               }}
             >
               {isAiScanBusy ? "Scanning Photos with Gemini..." : "AI Scan Product"}
+            </button>
+
+            <button
+              type="button"
+              aria-expanded={Boolean(isJsonImportPanelOpen && hasJsonImportWiring)}
+              onClick={() => {
+                if (!hasJsonImportWiring) return;
+                setIsJsonImportPanelOpen((prev) => !prev);
+              }}
+              disabled={
+                !hasJsonImportWiring ||
+                isAnyOperationBusy ||
+                isJsonImportBusy ||
+                !currentBaseline
+              }
+              title={
+                !hasJsonImportWiring
+                  ? "JSON draft import wiring pending route connection."
+                  : "Stage unapproved test/review drafts from a verified Bench V2 JSON packet."
+              }
+              style={{
+                padding: "10px 18px",
+                fontSize: "16px",
+                fontWeight: 700,
+                backgroundColor:
+                  !hasJsonImportWiring ||
+                  isAnyOperationBusy ||
+                  isJsonImportBusy ||
+                  !currentBaseline
+                    ? "#cbd5e1"
+                    : isJsonImportPanelOpen
+                      ? "#334155"
+                      : "#f8fafc",
+                color:
+                  !hasJsonImportWiring ||
+                  isAnyOperationBusy ||
+                  isJsonImportBusy ||
+                  !currentBaseline
+                    ? "#334155"
+                    : isJsonImportPanelOpen
+                      ? "#ffffff"
+                      : "#0f172a",
+                border: "2px solid #334155",
+                borderRadius: "8px",
+                cursor:
+                  !hasJsonImportWiring ||
+                  isAnyOperationBusy ||
+                  isJsonImportBusy ||
+                  !currentBaseline
+                    ? "not-allowed"
+                    : "pointer"
+              }}
+            >
+              {isJsonImportBusy
+                ? "Reading JSON..."
+                : isJsonImportPanelOpen && hasJsonImportWiring
+                  ? "Hide JSON Import"
+                  : "Import JSON Drafts"}
             </button>
 
             {canRetryRefChoicesForCurrentProduct && (
               <button
                 type="button"
                 onClick={handleLoadStandardizedReferenceChoices}
-                disabled={isAnyOperationBusy || !currentBaseline}
+                disabled={isAnyOperationBusy || isJsonImportBusy || !currentBaseline}
                 style={{
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
                   backgroundColor:
-                    isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
-                  color: isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                    isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                      ? "#cbd5e1"
+                      : "#0f766e",
+                  color:
+                    isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                      ? "#334155"
+                      : "#ffffff",
                   border: "2px solid #115e59",
                   borderRadius: "8px",
-                  cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                  cursor:
+                    isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                      ? "not-allowed"
+                      : "pointer"
                 }}
               >
                 Retry Reference Choices
@@ -273,7 +379,7 @@ export function BenchV2HeaderAndBannersView({
             <button
               type="button"
               onClick={handleReloadProduct}
-              disabled={isAnyOperationBusy}
+              disabled={isAnyOperationBusy || isJsonImportBusy}
               style={{
                 padding: "10px 18px",
                 fontSize: "16px",
@@ -282,7 +388,7 @@ export function BenchV2HeaderAndBannersView({
                 color: "#0f172a",
                 border: "2px solid #475569",
                 borderRadius: "8px",
-                cursor: isAnyOperationBusy ? "not-allowed" : "pointer"
+                cursor: isAnyOperationBusy || isJsonImportBusy ? "not-allowed" : "pointer"
               }}
             >
               {isBaselineReloading ? "Loading..." : "Reload Product"}
@@ -291,23 +397,25 @@ export function BenchV2HeaderAndBannersView({
             <button
               type="button"
               onClick={handleExplicitSaveApprovedChanges}
-              disabled={isAnyOperationBusy || validApprovedRowsCount === 0}
+              disabled={
+                isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
+              }
               style={{
                 padding: "10px 22px",
                 fontSize: "16px",
                 fontWeight: 700,
                 backgroundColor:
-                  isAnyOperationBusy || validApprovedRowsCount === 0
+                  isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
                     ? "#cbd5e1"
                     : "#15803d",
                 color:
-                  isAnyOperationBusy || validApprovedRowsCount === 0
+                  isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
                     ? "#334155"
                     : "#ffffff",
                 border: "2px solid #14532d",
                 borderRadius: "8px",
                 cursor:
-                  isAnyOperationBusy || validApprovedRowsCount === 0
+                  isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
                     ? "not-allowed"
                     : "pointer"
               }}
@@ -318,6 +426,197 @@ export function BenchV2HeaderAndBannersView({
             </button>
           </div>
         </div>
+
+        {/* COLLAPSIBLE JSON DRAFT IMPORTER PANEL (FILE UPLOAD + PASTE) */}
+        {isJsonImportPanelOpen && hasJsonImportWiring && (
+          <div
+            role="region"
+            aria-label="Import JSON Drafts Panel"
+            style={{
+              marginTop: "16px",
+              padding: "16px 18px",
+              backgroundColor: "#f8fafc",
+              border: "2px solid #475569",
+              borderRadius: "10px"
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                gap: "10px",
+                marginBottom: "10px"
+              }}
+            >
+              <div style={{ fontSize: "17px", fontWeight: 700, color: "#0f172a" }}>
+                Stage Unapproved Drafts from JSON Packet ({BENCH_V2_JSON_DRAFT_PACKET_SCHEMA})
+              </div>
+              <div style={{ fontSize: "14px", color: "#334155" }}>
+                Target Product: <code>{activeProductId}</code> &bull; Max 256 KB &bull; Stages{" "}
+                <strong>unapproved</strong> drafts only (never auto-approves or saves)
+              </div>
+            </div>
+
+            <div
+              style={{
+                fontSize: "14px",
+                color: "#334155",
+                marginBottom: "12px"
+              }}
+            >
+              All packet entries are validated atomically against the active product GID,
+              single-variant GID, product category, verified Metaobject reference choices,
+              and per-field baseline preconditions before any draft is staged. Existing
+              manual drafts, exact approvals, and Keep Original decisions are protected.
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "12px",
+                marginBottom: "12px"
+              }}
+            >
+              <label
+                htmlFor="bench-v2-json-draft-file-input"
+                style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}
+              >
+                Load .json File:
+              </label>
+              <input
+                id="bench-v2-json-draft-file-input"
+                type="file"
+                accept=".json,application/json"
+                disabled={isJsonImportControlDisabled}
+                onChange={handleJsonDraftFileSelect}
+                style={{
+                  fontSize: "15px",
+                  color: "#0f172a"
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="bench-v2-json-draft-paste-textarea"
+                style={{
+                  display: "block",
+                  fontWeight: 700,
+                  fontSize: "15px",
+                  color: "#0f172a",
+                  marginBottom: "6px"
+                }}
+              >
+                Or Paste JSON Packet Content:
+              </label>
+              <textarea
+                id="bench-v2-json-draft-paste-textarea"
+                rows={6}
+                value={safePasteText}
+                disabled={isJsonImportControlDisabled}
+                onChange={(e) => setJsonImportPasteText(e.target.value)}
+                placeholder={`Paste ${BENCH_V2_JSON_DRAFT_PACKET_SCHEMA} JSON for ${activeProductTitle} (${activeProductId})...`}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  fontSize: "14px",
+                  lineHeight: 1.45,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  border: "2px solid #475569",
+                  borderRadius: "8px",
+                  backgroundColor: "#ffffff",
+                  color: "#0f172a",
+                  boxSizing: "border-box",
+                  resize: "vertical"
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "10px",
+                alignItems: "center",
+                marginTop: "12px"
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleApplyPastedJsonDraftPacket}
+                disabled={isJsonImportControlDisabled || safePasteText.trim() === ""}
+                style={{
+                  padding: "9px 18px",
+                  fontSize: "15px",
+                  fontWeight: 700,
+                  backgroundColor:
+                    isJsonImportControlDisabled || safePasteText.trim() === ""
+                      ? "#cbd5e1"
+                      : "#1d4ed8",
+                  color:
+                    isJsonImportControlDisabled || safePasteText.trim() === ""
+                      ? "#334155"
+                      : "#ffffff",
+                  border: "2px solid #1e3a8a",
+                  borderRadius: "8px",
+                  cursor:
+                    isJsonImportControlDisabled || safePasteText.trim() === ""
+                      ? "not-allowed"
+                      : "pointer"
+                }}
+              >
+                {isJsonImportBusy ? "Validating & Staging..." : "Validate & Stage JSON Drafts"}
+              </button>
+
+              {safePasteText !== "" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof handleClearJsonImportPasteText === "function") {
+                      handleClearJsonImportPasteText();
+                    } else if (typeof setJsonImportPasteText === "function") {
+                      setJsonImportPasteText("");
+                    }
+                  }}
+                  disabled={isJsonImportControlDisabled}
+                  style={{
+                    padding: "9px 14px",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    backgroundColor: "#ffffff",
+                    color: "#0f172a",
+                    border: "1px solid #475569",
+                    borderRadius: "8px",
+                    cursor: isJsonImportControlDisabled ? "not-allowed" : "pointer"
+                  }}
+                >
+                  Clear JSON Text
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsJsonImportPanelOpen(false)}
+                style={{
+                  padding: "9px 14px",
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  backgroundColor: "#ffffff",
+                  color: "#0f172a",
+                  border: "1px solid #475569",
+                  borderRadius: "8px",
+                  cursor: "pointer"
+                }}
+              >
+                Close Panel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 120px BY 120px PRODUCT THUMBNAIL STRIP NEAR PRODUCT CONTROLS */}
         <div
@@ -408,7 +707,7 @@ export function BenchV2HeaderAndBannersView({
                 id="bench-v2-product-search-input"
                 type="text"
                 value={searchInputText}
-                disabled={isAnyOperationBusy}
+                disabled={isAnyOperationBusy || isJsonImportBusy}
                 placeholder="Type product or stone name, then press Enter or Search..."
                 onChange={(e) => setSearchInputText(e.target.value)}
                 style={{
@@ -424,18 +723,25 @@ export function BenchV2HeaderAndBannersView({
 
               <button
                 type="submit"
-                disabled={isAnyOperationBusy || isPickerLoading}
+                disabled={isAnyOperationBusy || isJsonImportBusy || isPickerLoading}
                 style={{
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
                   backgroundColor:
-                    isAnyOperationBusy || isPickerLoading ? "#cbd5e1" : "#0f172a",
-                  color: isAnyOperationBusy || isPickerLoading ? "#334155" : "#ffffff",
+                    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+                      ? "#cbd5e1"
+                      : "#0f172a",
+                  color:
+                    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+                      ? "#334155"
+                      : "#ffffff",
                   border: "2px solid #0f172a",
                   borderRadius: "8px",
                   cursor:
-                    isAnyOperationBusy || isPickerLoading ? "not-allowed" : "pointer"
+                    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+                      ? "not-allowed"
+                      : "pointer"
                 }}
               >
                 {isPickerLoading ? "Searching..." : "Search"}
@@ -445,7 +751,7 @@ export function BenchV2HeaderAndBannersView({
                 <button
                   type="button"
                   onClick={handleClearProductSearch}
-                  disabled={isAnyOperationBusy || isPickerLoading}
+                  disabled={isAnyOperationBusy || isJsonImportBusy || isPickerLoading}
                   style={{
                     padding: "10px 16px",
                     fontSize: "16px",
@@ -455,7 +761,9 @@ export function BenchV2HeaderAndBannersView({
                     border: "2px solid #64748b",
                     borderRadius: "8px",
                     cursor:
-                      isAnyOperationBusy || isPickerLoading ? "not-allowed" : "pointer"
+                      isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+                        ? "not-allowed"
+                        : "pointer"
                   }}
                 >
                   Clear Search
@@ -544,8 +852,8 @@ export function BenchV2HeaderAndBannersView({
                   <button
                     type="button"
                     onClick={handlePreviousProductPage}
-                    disabled={prevPageDisabled}
-                    style={getPagerButtonStyle(prevPageDisabled)}
+                    disabled={prevPageDisabled || isJsonImportBusy}
+                    style={getPagerButtonStyle(prevPageDisabled || isJsonImportBusy)}
                   >
                     Previous 50
                   </button>
@@ -557,8 +865,8 @@ export function BenchV2HeaderAndBannersView({
                   <button
                     type="button"
                     onClick={handleNextProductPage}
-                    disabled={nextPageDisabled}
-                    style={getPagerButtonStyle(nextPageDisabled)}
+                    disabled={nextPageDisabled || isJsonImportBusy}
+                    style={getPagerButtonStyle(nextPageDisabled || isJsonImportBusy)}
                   >
                     Next 50
                   </button>
@@ -677,7 +985,7 @@ export function BenchV2HeaderAndBannersView({
 
                         <button
                           type="button"
-                          disabled={isAnyOperationBusy || isCurrent}
+                          disabled={isAnyOperationBusy || isJsonImportBusy || isCurrent}
                           onClick={() => handleSelectProductGid(item.id)}
                           style={{
                             padding: "9px 18px",
@@ -685,17 +993,19 @@ export function BenchV2HeaderAndBannersView({
                             fontWeight: 700,
                             backgroundColor: isCurrent
                               ? "#15803d"
-                              : isAnyOperationBusy
+                              : isAnyOperationBusy || isJsonImportBusy
                                 ? "#cbd5e1"
                                 : "#0f172a",
                             color:
-                              isCurrent || !isAnyOperationBusy ? "#ffffff" : "#334155",
+                              isCurrent || (!isAnyOperationBusy && !isJsonImportBusy)
+                                ? "#ffffff"
+                                : "#334155",
                             border: isCurrent
                               ? "2px solid #14532d"
                               : "2px solid #0f172a",
                             borderRadius: "8px",
                             cursor:
-                              isAnyOperationBusy || isCurrent
+                              isAnyOperationBusy || isJsonImportBusy || isCurrent
                                 ? "not-allowed"
                                 : "pointer",
                             flexShrink: 0
@@ -813,23 +1123,24 @@ export function BenchV2HeaderAndBannersView({
             color: "#334155"
           }}
         >
-          Connected fields in Drawers 1 to 8 and Drawer 10 unlock for manual edit and
-          exact-value approval only when live Shopify owner/type/completeness evidence (or
-          an explicit reviewed exact PRODUCT text contract on custom.*) is verified. In Drawer 5
-          (Manual Measurements), <strong>Dimensions (mm)</strong> and{" "}
-          <strong>Weight (grams)</strong> are manual-only, while 4 unverified measurement
-          keepers stay on hold. In Drawer 7 (Geology), 12 detailed <code>custom.*</code>{" "}
-          paths are connected, and legacy <code>custom.geological_era</code> is read-only. In
-          Drawer 8 (Channel Attributes), <code>custom.google_product_category</code> (PRODUCT)
-          and manual/preset single-variant <code>mm-google-shopping.age_group</code>,{" "}
-          <code>condition</code>, and <code>gender</code> (PRODUCTVARIANT) are wired when
-          single-variant readiness passes, while <code>mm-google-shopping.custom_product</code>{" "}
-          remains held. In Drawer 10 (Standardized Attributes), all 18 retained{" "}
-          <code>shopify.*</code> reference attributes (including{" "}
-          <code>shopify.jewelry-type</code>, <code>shopify.geological-era</code>,{" "}
-          <code>shopify.material</code>, and <code>shopify.color-pattern</code>) are connected
-          with automatic read-only reference choice loading, product category constraint
-          eligibility, and verified Metaobject definition membership.
+          Connected fields in Drawers 1 to 13 unlock for manual edit and exact-value approval
+          only when live Shopify owner/type/completeness evidence (or an explicit reviewed
+          exact PRODUCT contract on <code>custom.*</code>) is verified. In Drawers 1 and 2
+          (Manual Measurements &amp; Price), 6 physical measurements and single-variant USD{" "}
+          <code>native_price</code> are manual-only while shipping weights remain
+          task-restricted read-only. In Drawers 11 and 12 (Geology), all 12 detailed{" "}
+          <code>custom.*</code> geology paths (including <code>custom.geological_age</code>)
+          and 4 standardized <code>shopify.*</code> geology companions are connected. In
+          Drawer 13 (Channel &amp; Demographic Attributes),{" "}
+          <code>custom.google_product_category</code> (PRODUCT) and manual/preset
+          single-variant <code>mm-google-shopping.age_group</code>, <code>condition</code>,
+          and <code>gender</code> (PRODUCTVARIANT) are wired when single-variant readiness
+          passes, while <code>mm-google-shopping.custom_product</code> remains held. Across
+          the drawers, all 17 retained <code>shopify.*</code> reference attributes (including{" "}
+          <code>shopify.jewelry-type</code>, <code>shopify.material</code>, and{" "}
+          <code>shopify.color-pattern</code>) are connected with automatic read-only
+          reference choice loading, product category constraint eligibility, and verified
+          Metaobject definition membership.
         </div>
 
         <details style={{ marginTop: "10px", fontSize: "14px", color: "#334155" }}>
@@ -989,7 +1300,7 @@ export function BenchV2HeaderAndBannersView({
                   <button
                     type="button"
                     onClick={handleLoadStandardizedReferenceChoices}
-                    disabled={isAnyOperationBusy || !currentBaseline}
+                    disabled={isAnyOperationBusy || isJsonImportBusy || !currentBaseline}
                     style={{
                       padding: "4px 12px",
                       fontSize: "14px",
@@ -998,7 +1309,10 @@ export function BenchV2HeaderAndBannersView({
                       color: "#ffffff",
                       border: "1px solid #115e59",
                       borderRadius: "6px",
-                      cursor: isAnyOperationBusy || !currentBaseline ? "not-allowed" : "pointer"
+                      cursor:
+                        isAnyOperationBusy || isJsonImportBusy || !currentBaseline
+                          ? "not-allowed"
+                          : "pointer"
                     }}
                   >
                     Retry Reference Choices
@@ -1023,6 +1337,102 @@ export function BenchV2HeaderAndBannersView({
                   <li key={idx}>{errText}</li>
                 ))}
               </ul>
+            )}
+        </div>
+      )}
+
+      {/* DISMISSIBLE JSON DRAFT IMPORT REPORT BANNER */}
+      {currentJsonImportReport && (
+        <div
+          role="region"
+          aria-label="JSON Draft Import Report"
+          style={getBannerBoxStyle(
+            currentJsonImportReport.ok ? "info" : "error",
+            "16px 20px"
+          )}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "12px"
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "17px", fontWeight: 700 }}>
+                {currentJsonImportReport.ok
+                  ? `JSON Draft Packet Staged (${currentJsonImportReport.stagedCount || 0} Unapproved Draft${
+                      currentJsonImportReport.stagedCount === 1 ? "" : "s"
+                    })`
+                  : "JSON Draft Packet Rejected (0 Drafts Staged — Atomic Precheck Failed)"}
+              </div>
+              <div style={{ marginTop: "4px", fontSize: "15px", color: "#0f172a" }}>
+                {currentJsonImportReport.summary}
+              </div>
+              {currentJsonImportReport.packetId && (
+                <div style={{ marginTop: "4px", fontSize: "13px", color: "#334155" }}>
+                  Packet ID: <code>{currentJsonImportReport.packetId}</code>
+                  {currentJsonImportReport.sourceName
+                    ? ` | Source: ${currentJsonImportReport.sourceName}`
+                    : ""}
+                  {currentJsonImportReport.completedAt
+                    ? ` | Imported At: ${currentJsonImportReport.completedAt}`
+                    : ""}
+                </div>
+              )}
+            </div>
+            {typeof handleDismissJsonImportReport === "function" && (
+              <button
+                type="button"
+                onClick={handleDismissJsonImportReport}
+                style={DISMISS_BTN_STYLE}
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+
+          {Array.isArray(currentJsonImportReport.rejectionReasons) &&
+            currentJsonImportReport.rejectionReasons.length > 0 && (
+              <div style={{ marginTop: "10px", color: "#7f1d1d" }}>
+                <strong>Atomic Rejection Reasons (Nothing Applied):</strong>
+                <ul style={{ margin: "4px 0 0 0", paddingLeft: "20px", fontSize: "14px" }}>
+                  {currentJsonImportReport.rejectionReasons.map((reason, idx) => (
+                    <li key={idx}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+          {Array.isArray(currentJsonImportReport.stagedDetails) &&
+            currentJsonImportReport.stagedDetails.length > 0 && (
+              <details style={{ marginTop: "10px", fontSize: "14px", color: "#0f172a" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                  Staged Unapproved Drafts ({currentJsonImportReport.stagedDetails.length})
+                </summary>
+                <ul style={{ margin: "6px 0 0 0", paddingLeft: "20px" }}>
+                  {currentJsonImportReport.stagedDetails.map((line, idx) => (
+                    <li key={idx}>{line}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+
+          {Array.isArray(currentJsonImportReport.confirmedExpectedBlocks) &&
+            currentJsonImportReport.confirmedExpectedBlocks.length > 0 && (
+              <details style={{ marginTop: "8px", fontSize: "14px", color: "#334155" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                  Confirmed Expected Blocks / Not Covered ({
+                    currentJsonImportReport.confirmedExpectedBlocks.length
+                  })
+                </summary>
+                <ul style={{ margin: "6px 0 0 0", paddingLeft: "20px" }}>
+                  {currentJsonImportReport.confirmedExpectedBlocks.map((line, idx) => (
+                    <li key={idx}>{line}</li>
+                  ))}
+                </ul>
+              </details>
             )}
         </div>
       )}

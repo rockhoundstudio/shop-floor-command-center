@@ -10,7 +10,8 @@
 // SEO & photo alts, substantive descriptions, physical/optical geology,
 // composition/formation/deep-time geology, Google channel & demographic
 // attributes, and split read-only parked/protected drawers), with per-drawer
-// copy controls and Sidekick live bench snapshot sync.
+// copy controls, atomic JSON draft packet staging, and Sidekick live bench
+// snapshot sync.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -20,6 +21,7 @@ import { loadSingleProductBaselineSnapshot } from "../utils/bench-v2.baseline.se
 import {
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_DRAWER_GROUPS,
+  BENCH_V2_FIELD_CONTRACTS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS,
   BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS,
@@ -35,6 +37,7 @@ import {
   buildBaselineObservation,
   evaluateDestinationTypeAndCompleteness,
   inspectStoredReferenceListRawValue,
+  inspectVerifiedReferenceEvidenceForDestination,
   validateBatch1ProposedValue,
   createExactValueApprovalRecord,
   isExactValueApprovalValid,
@@ -62,6 +65,8 @@ import {
   evaluateAndFilterBenchV2Drawers
 } from "../utils/bench-v2.field-filters.jsx";
 import {
+  BENCH_V2_JSON_DRAFT_PACKET_SCHEMA,
+  BENCH_V2_JSON_DRAFT_MAX_BYTES,
   BenchV2HeaderAndBannersView
 } from "../utils/bench-v2.header-banners-view.jsx";
 import {
@@ -95,6 +100,72 @@ const AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS = Object.freeze(
     ...VISION_BACKED_STANDARDIZED_REFERENCE_DESTINATIONS
   ])
 );
+
+const RETIRED_ERA_DESTINATIONS = Object.freeze(
+  new Set([
+    "geological_era",
+    "geological-era",
+    "custom.geological_era",
+    "custom.geological-era",
+    "shopify.geological-era",
+    "shopify.geological_era"
+  ])
+);
+
+const ALLOWED_TOP_LEVEL_JSON_PACKET_KEYS = Object.freeze(
+  new Set([
+    "schema",
+    "contractVersion",
+    "packetId",
+    "productId",
+    "benchSessionId",
+    "variantId",
+    "productCategoryId",
+    "entries",
+    "expectedBlocks"
+  ])
+);
+
+const ALLOWED_JSON_PACKET_ENTRY_KEYS = Object.freeze(
+  new Set([
+    "destinationKey",
+    "owner",
+    "proposedValue",
+    "source",
+    "expectedPresence",
+    "expectedRawValue"
+  ])
+);
+
+const ALLOWED_JSON_PACKET_EXPECTED_BLOCK_KEYS = Object.freeze(
+  new Set([
+    "destinationKey",
+    "expectedCategory"
+  ])
+);
+
+const ALLOWED_EXPECTED_PRESENCE_VALUES = Object.freeze(
+  new Set(["absent", "null", "empty_string", "present"])
+);
+
+const ALLOWED_EXPECTED_BLOCK_CATEGORIES = Object.freeze(
+  new Set(["read_only_or_parked", "category_ineligible", "held_contract"])
+);
+
+const MAX_JSON_PACKET_ENTRIES = BENCH_V2_FIELD_CONTRACTS.length;
+const MAX_JSON_PACKET_EXPECTED_BLOCKS = BENCH_V2_FIELD_CONTRACTS.length;
+
+function measureUtf8Bytes(str) {
+  if (typeof str !== "string") return 0;
+  try {
+    if (typeof TextEncoder === "function") {
+      return new TextEncoder().encode(str).length;
+    }
+  } catch {
+    // Fallback below
+  }
+  return str.length;
+}
 
 function getProposalValueString(rawEntry) {
   return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
@@ -647,6 +718,15 @@ export default function BenchV2Route() {
   const [pendingGeologyRefCandidatesByProduct, setPendingGeologyRefCandidatesByProduct] =
     useState({});
 
+  // 9D. Atomic JSON Draft Importer State & Replay Protection
+  const [isJsonImportPanelOpen, setIsJsonImportPanelOpen] = useState(false);
+  const [jsonImportPasteText, setJsonImportPasteText] = useState("");
+  const [isJsonImportBusy, setIsJsonImportBusy] = useState(false);
+  const [lastJsonImportReportByProduct, setLastJsonImportReportByProduct] = useState({});
+  const importedPacketIdsByProductRef = useRef(new Map());
+  const activeJsonFileReadIdRef = useRef(null);
+  const isJsonImportBusyRef = useRef(false);
+
   // 10. Presentation-Only State: All drawers initially collapsed + View-Only Drawer Filter
   const [openDrawersById, setOpenDrawersById] = useState(() =>
     BENCH_V2_DRAWER_GROUPS.reduce((acc, drawer) => {
@@ -671,6 +751,8 @@ export default function BenchV2Route() {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      activeJsonFileReadIdRef.current = null;
+      isJsonImportBusyRef.current = false;
       for (const timerId of blurClearTimersRef.current.values()) {
         clearTimeout(timerId);
       }
@@ -885,7 +967,7 @@ export default function BenchV2Route() {
     rawCurrentBaseline,
     baselineByProductRef,
     stagedVisionCandidatesByProductRef,
-    isWriterBusy,
+    isWriterBusy: isWriterBusy || isJsonImportBusy,
     isAiScanBusy,
     isBaselineReloading,
     setClientPrevalidationBanner
@@ -893,16 +975,23 @@ export default function BenchV2Route() {
 
   const currentBaselineRef = useRef(currentBaseline);
   currentBaselineRef.current = currentBaseline;
+  const rawCurrentBaselineRef = useRef(rawCurrentBaseline);
+  rawCurrentBaselineRef.current = rawCurrentBaseline;
   const currentRefChoicesRecordRef = useRef(currentRefChoicesRecord);
   currentRefChoicesRecordRef.current = currentRefChoicesRecord;
   const isCurrentRefChoicesBoundAndFreshRef = useRef(isCurrentRefChoicesBoundAndFresh);
   isCurrentRefChoicesBoundAndFreshRef.current = isCurrentRefChoicesBoundAndFresh;
+  const activeProductIdRef = useRef(activeProductId);
+  activeProductIdRef.current = activeProductId;
+  const isSwitchingSelectedProductRef = useRef(isSwitchingSelectedProduct);
+  isSwitchingSelectedProductRef.current = isSwitchingSelectedProduct;
 
   const currentProposedMap = proposedByProduct[activeProductId] || {};
   const currentAiAlternativesMap = aiAlternativesByProduct[activeProductId] || {};
   const currentApprovalsMap = approvalsByProduct[activeProductId] || {};
   const currentKeepOriginalMap = keepOriginalByProduct[activeProductId] || {};
   const currentAiScanReport = lastAiScanReportByProduct[activeProductId] || null;
+  const currentJsonImportReport = lastJsonImportReportByProduct[activeProductId] || null;
   const currentScanProposalsMetaMap =
     currentAiScanReport?.proposalsByDestination &&
     typeof currentAiScanReport.proposalsByDestination === "object"
@@ -911,6 +1000,9 @@ export default function BenchV2Route() {
 
   const isAnyOperationBusy =
     isWriterBusy || isAiScanBusy || isRefChoicesBusy || isBaselineReloading;
+
+  const isAnyOperationBusyRef = useRef(isAnyOperationBusy);
+  isAnyOperationBusyRef.current = isAnyOperationBusy;
 
   const activeProductPieceName =
     (typeof currentBaseline?.currentMetafields?.["custom.piece_name"] === "string" &&
@@ -962,7 +1054,7 @@ export default function BenchV2Route() {
     if (e && typeof e.preventDefault === "function") {
       e.preventDefault();
     }
-    if (isAnyOperationBusy || isPickerLoading) return;
+    if (isAnyOperationBusy || isJsonImportBusy || isPickerLoading) return;
     const cleanQuery = searchInputText.trim();
     setCommittedSearchQuery(cleanQuery);
     setPickerCursorHistory([]);
@@ -972,7 +1064,7 @@ export default function BenchV2Route() {
   };
 
   const handleClearProductSearch = () => {
-    if (isAnyOperationBusy || isPickerLoading) return;
+    if (isAnyOperationBusy || isJsonImportBusy || isPickerLoading) return;
     setSearchInputText("");
     setCommittedSearchQuery("");
     setPickerCursorHistory([]);
@@ -981,7 +1073,7 @@ export default function BenchV2Route() {
   };
 
   const handleNextProductPage = () => {
-    if (isAnyOperationBusy || isPickerLoading) return;
+    if (isAnyOperationBusy || isJsonImportBusy || isPickerLoading) return;
     const nextCursor = pickerPageState?.pageInfo?.endCursor;
     if (!pickerPageState?.pageInfo?.hasNextPage || !nextCursor) return;
 
@@ -991,7 +1083,14 @@ export default function BenchV2Route() {
   };
 
   const handlePreviousProductPage = () => {
-    if (isAnyOperationBusy || isPickerLoading || pickerCursorHistory.length === 0) return;
+    if (
+      isAnyOperationBusy ||
+      isJsonImportBusy ||
+      isPickerLoading ||
+      pickerCursorHistory.length === 0
+    ) {
+      return;
+    }
     const prevCursor = pickerCursorHistory[pickerCursorHistory.length - 1] ?? null;
     setPickerCursorHistory((prev) => prev.slice(0, -1));
     setCurrentPickerCursor(prevCursor);
@@ -999,20 +1098,24 @@ export default function BenchV2Route() {
   };
 
   const handleSelectProductGid = (nextProductGid) => {
-    if (isWriterBusy || isAiScanBusy || isRefChoicesBusy) {
+    if (isWriterBusy || isAiScanBusy || isRefChoicesBusy || isJsonImportBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
         title: isWriterBusy
           ? "Cannot switch products while saving"
           : isAiScanBusy
             ? "Cannot switch products while AI Scan is running"
-            : "Cannot switch products while loading reference choices",
+            : isJsonImportBusy
+              ? "Cannot switch products while reading JSON draft packet"
+              : "Cannot switch products while loading reference choices",
         reasons: [
           isWriterBusy
             ? "Wait for the current save request to finish before switching products."
             : isAiScanBusy
               ? "Wait for the current AI Scan to finish before switching products."
-              : "Wait for the current reference choices request to finish before switching products."
+              : isJsonImportBusy
+                ? "Wait for the current JSON draft import to finish before switching products."
+                : "Wait for the current reference choices request to finish before switching products."
         ]
       });
       return;
@@ -1029,6 +1132,7 @@ export default function BenchV2Route() {
 
     setClientPrevalidationBanner(null);
     setIsProductPickerOpen(false);
+    setIsJsonImportPanelOpen(false);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set("productId", nextProductGid);
     if (committedSearchQuery) {
@@ -1044,10 +1148,935 @@ export default function BenchV2Route() {
     setSearchParams(nextParams);
   };
 
+  // ==========================================================================
+  // ATOMIC JSON DRAFT PACKET VALIDATOR & UNAPPROVED DRAFT STAGER
+  // ==========================================================================
+  const validateAndApplyBenchV2JsonDraftPacket = useCallback(
+    ({
+      rawJsonText,
+      sourceName = "Pasted JSON",
+      expectedProductIdAtStart = null,
+      expectedSessionIdAtStart = null,
+      expectedContextSigAtStart = null
+    }) => {
+      setClientPrevalidationBanner(null);
+
+      const liveProductId = activeProductIdRef.current;
+      const liveSessionId = benchSessionIdRef.current;
+      const liveRawBaseline =
+        baselineByProductRef.current[liveProductId] || rawCurrentBaselineRef.current || null;
+      const liveMergedBaseline = currentBaselineRef.current;
+      const liveIsRefChoicesFresh = Boolean(isCurrentRefChoicesBoundAndFreshRef.current);
+      const liveContextSig = buildStandardizedBaselineContextSignature(liveRawBaseline);
+
+      const recordRejectedImport = (summary, rejectionReasons = [], packetId = null) => {
+        const targetReportProductId =
+          isExactProductGid(liveProductId) ? liveProductId : activeProductId;
+        setLastJsonImportReportByProduct((prev) => ({
+          ...prev,
+          [targetReportProductId]: {
+            ok: false,
+            packetId: typeof packetId === "string" && packetId.trim() !== "" ? packetId.trim() : null,
+            productId: targetReportProductId,
+            sourceName,
+            completedAt: new Date().toISOString(),
+            stagedCount: 0,
+            summary,
+            rejectionReasons:
+              Array.isArray(rejectionReasons) && rejectionReasons.length > 0
+                ? rejectionReasons
+                : [summary],
+            stagedDetails: [],
+            confirmedExpectedBlocks: []
+          }
+        }));
+        return false;
+      };
+
+      if (
+        isAnyOperationBusyRef.current ||
+        isSwitchingSelectedProductRef.current
+      ) {
+        return recordRejectedImport(
+          "Rejected JSON draft import: another operation or product switch is currently in progress.",
+          [
+            "Wait for Save, AI Scan, Reference Choices, or Product Reload to finish before importing a JSON draft packet."
+          ]
+        );
+      }
+
+      if (
+        (expectedProductIdAtStart && expectedProductIdAtStart !== liveProductId) ||
+        (expectedSessionIdAtStart && expectedSessionIdAtStart !== liveSessionId) ||
+        (expectedContextSigAtStart && expectedContextSigAtStart !== liveContextSig)
+      ) {
+        return recordRejectedImport(
+          "Aborted JSON draft import because the active product, bench session, or factual baseline changed while reading the file.",
+          [
+            "Live state recheck after file read detected a product, session, or baseline change; 0 drafts were staged."
+          ]
+        );
+      }
+
+      if (typeof rawJsonText !== "string" || rawJsonText.trim() === "") {
+        return recordRejectedImport(
+          "Rejected JSON draft import: packet text is empty.",
+          ["Provide a non-empty bench_v2_json_draft_packet_v1 JSON object."]
+        );
+      }
+
+      const byteLength = measureUtf8Bytes(rawJsonText);
+      if (byteLength > BENCH_V2_JSON_DRAFT_MAX_BYTES) {
+        return recordRejectedImport(
+          `Rejected JSON draft import: payload size (${byteLength} bytes) exceeds the ${BENCH_V2_JSON_DRAFT_MAX_BYTES}-byte (256 KB) maximum before parsing.`,
+          [
+            `JSON payload is ${byteLength} bytes; maximum allowed size is ${BENCH_V2_JSON_DRAFT_MAX_BYTES} bytes.`
+          ]
+        );
+      }
+
+      let parsedPacket;
+      try {
+        parsedPacket = JSON.parse(rawJsonText);
+      } catch (parseErr) {
+        return recordRejectedImport(
+          `Rejected JSON draft import: malformed JSON syntax (${parseErr.message}).`,
+          [`JSON.parse failed: ${parseErr.message}`]
+        );
+      }
+
+      if (!parsedPacket || typeof parsedPacket !== "object" || Array.isArray(parsedPacket)) {
+        return recordRejectedImport(
+          "Rejected JSON draft import: top-level payload must be a JSON object.",
+          ["Top-level JSON value must be a plain object."]
+        );
+      }
+
+      const rawPacketId =
+        typeof parsedPacket.packetId === "string" ? parsedPacket.packetId.trim() : "";
+
+      const rejectionReasons = [];
+
+      for (const topKey of Object.keys(parsedPacket)) {
+        if (!ALLOWED_TOP_LEVEL_JSON_PACKET_KEYS.has(topKey)) {
+          rejectionReasons.push(
+            `Unknown top-level key "${topKey}" in JSON draft packet.`
+          );
+        }
+      }
+
+      if (parsedPacket.schema !== BENCH_V2_JSON_DRAFT_PACKET_SCHEMA) {
+        rejectionReasons.push(
+          `Invalid packet schema "${String(parsedPacket.schema ?? "")}"; expected "${BENCH_V2_JSON_DRAFT_PACKET_SCHEMA}".`
+        );
+      }
+
+      if (parsedPacket.contractVersion !== BENCH_V2_CONTRACT_VERSION) {
+        rejectionReasons.push(
+          `Invalid contractVersion "${String(parsedPacket.contractVersion ?? "")}"; expected "${BENCH_V2_CONTRACT_VERSION}".`
+        );
+      }
+
+      if (!rawPacketId || parsedPacket.packetId !== rawPacketId) {
+        rejectionReasons.push(
+          "Missing, blank, or untrimmed packetId; every JSON draft packet requires a non-empty trimmed packetId string."
+        );
+      }
+
+      if (
+        typeof parsedPacket.productId !== "string" ||
+        !isExactProductGid(parsedPacket.productId)
+      ) {
+        rejectionReasons.push(
+          `Invalid packet productId "${String(parsedPacket.productId ?? "")}"; exact Shopify Product GID is required.`
+        );
+      } else if (parsedPacket.productId !== liveProductId) {
+        rejectionReasons.push(
+          `Wrong product: packet targets ${parsedPacket.productId}, but the active product on the bench is ${liveProductId}.`
+        );
+      }
+
+      if (
+        parsedPacket.benchSessionId !== undefined &&
+        parsedPacket.benchSessionId !== null
+      ) {
+        if (
+          typeof parsedPacket.benchSessionId !== "string" ||
+          parsedPacket.benchSessionId.trim() === "" ||
+          parsedPacket.benchSessionId !== liveSessionId
+        ) {
+          rejectionReasons.push(
+            `Mismatched benchSessionId: packet specifies "${String(parsedPacket.benchSessionId)}", but current session is "${liveSessionId}".`
+          );
+        }
+      }
+
+      if (!liveMergedBaseline || liveMergedBaseline.productId !== liveProductId) {
+        rejectionReasons.push(
+          `Product baseline is not loaded for ${liveProductId}; reload product data before importing JSON drafts.`
+        );
+      } else if (
+        liveMergedBaseline.metafieldsReadComplete !== true ||
+        liveMergedBaseline.defsReadComplete !== true
+      ) {
+        rejectionReasons.push(
+          "Product metafields or live PRODUCT definitions read is incomplete; click Reload Product before importing JSON drafts."
+        );
+      }
+
+      const appliedSetForProduct =
+        importedPacketIdsByProductRef.current.get(liveProductId) || new Set();
+      if (rawPacketId && appliedSetForProduct.has(rawPacketId)) {
+        rejectionReasons.push(
+          `Duplicate packet replay rejected: packetId "${rawPacketId}" has already been imported for product ${liveProductId}.`
+        );
+      }
+
+      if (!Array.isArray(parsedPacket.entries) || parsedPacket.entries.length === 0) {
+        rejectionReasons.push(
+          "Packet entries must be a non-empty array of writable field proposals."
+        );
+      } else if (parsedPacket.entries.length > MAX_JSON_PACKET_ENTRIES) {
+        rejectionReasons.push(
+          `Packet entries length (${parsedPacket.entries.length}) exceeds maximum bound (${MAX_JSON_PACKET_ENTRIES}).`
+        );
+      }
+
+      const rawExpectedBlocks =
+        parsedPacket.expectedBlocks === undefined ? [] : parsedPacket.expectedBlocks;
+      if (!Array.isArray(rawExpectedBlocks)) {
+        rejectionReasons.push(
+          "Packet expectedBlocks must be an array when provided."
+        );
+      } else if (rawExpectedBlocks.length > MAX_JSON_PACKET_EXPECTED_BLOCKS) {
+        rejectionReasons.push(
+          `Packet expectedBlocks length (${rawExpectedBlocks.length}) exceeds maximum bound (${MAX_JSON_PACKET_EXPECTED_BLOCKS}).`
+        );
+      }
+
+      if (rejectionReasons.length > 0) {
+        return recordRejectedImport(
+          `JSON draft packet rejected (${rejectionReasons.length} envelope/precondition issue${
+            rejectionReasons.length === 1 ? "" : "s"
+          }) — 0 drafts staged.`,
+          rejectionReasons,
+          rawPacketId
+        );
+      }
+
+      const seenEntryDestinations = new Set();
+      const seenExpectedBlockDestinations = new Set();
+      let hasVariantEntry = false;
+      let hasVariantMetafieldEntry = false;
+      let hasShopifyReferenceEntry = false;
+
+      const liveProposedMap = proposedByProductRef.current[liveProductId] || {};
+      const liveApprovalsMap = approvalsByProductRef.current[liveProductId] || {};
+      const liveKeepOriginalMap = keepOriginalByProductRef.current[liveProductId] || {};
+
+      const validatedEntriesToStage = [];
+      const confirmedExpectedBlocks = [];
+
+      for (let i = 0; i < parsedPacket.entries.length; i++) {
+        const entry = parsedPacket.entries[i];
+        const entryPrefix = `entries[${i}]`;
+
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          rejectionReasons.push(`${entryPrefix}: Entry must be a plain object.`);
+          continue;
+        }
+
+        for (const eKey of Object.keys(entry)) {
+          if (!ALLOWED_JSON_PACKET_ENTRY_KEYS.has(eKey)) {
+            rejectionReasons.push(
+              `${entryPrefix}: Unknown property "${eKey}".`
+            );
+          }
+        }
+
+        const destKey =
+          typeof entry.destinationKey === "string" ? entry.destinationKey.trim() : "";
+        if (!destKey || entry.destinationKey !== destKey) {
+          rejectionReasons.push(
+            `${entryPrefix}: Missing or untrimmed destinationKey.`
+          );
+          continue;
+        }
+
+        if (CANCELLED_INERT_DESTINATIONS.has(destKey)) {
+          rejectionReasons.push(
+            `[${destKey}] Cancelled destination cannot be imported or staged.`
+          );
+          continue;
+        }
+
+        if (RETIRED_ERA_DESTINATIONS.has(destKey)) {
+          rejectionReasons.push(
+            `[${destKey}] Retired Geological Era destination is removed from Bench V2 and cannot be imported.`
+          );
+          continue;
+        }
+
+        if (seenEntryDestinations.has(destKey)) {
+          rejectionReasons.push(
+            `[${destKey}] Duplicate destinationKey in packet entries.`
+          );
+          continue;
+        }
+        seenEntryDestinations.add(destKey);
+
+        const contract = getFieldContractByDestination(destKey);
+        if (!contract) {
+          rejectionReasons.push(
+            `[${destKey}] Unknown or non-active destinationKey in Bench V2 registry.`
+          );
+          continue;
+        }
+
+        if (
+          !contract.isWritableInBatch1 ||
+          !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(contract.destinationKey)
+        ) {
+          rejectionReasons.push(
+            `[${destKey}] Destination is not writable in Batch 1 (${contract.writeCapability}); move read-only or parked fields to expectedBlocks.`
+          );
+          continue;
+        }
+
+        if (typeof entry.owner !== "string" || entry.owner !== contract.owner) {
+          rejectionReasons.push(
+            `[${destKey}] Owner mismatch: entry specifies "${String(entry.owner ?? "")}", but contract owner is "${contract.owner}".`
+          );
+          continue;
+        }
+
+        if (contract.owner === "PRODUCTVARIANT") {
+          hasVariantEntry = true;
+          if (contract.namespace !== "native") {
+            hasVariantMetafieldEntry = true;
+          }
+        }
+
+        if (contract.namespace === "shopify") {
+          hasShopifyReferenceEntry = true;
+        }
+
+        if (typeof entry.proposedValue !== "string") {
+          rejectionReasons.push(
+            `[${destKey}] proposedValue must be a string (no implicit coercion).`
+          );
+          continue;
+        }
+
+        if (
+          typeof entry.expectedPresence !== "string" ||
+          !ALLOWED_EXPECTED_PRESENCE_VALUES.has(entry.expectedPresence)
+        ) {
+          rejectionReasons.push(
+            `[${destKey}] Invalid or missing expectedPresence "${String(entry.expectedPresence ?? "")}"; must be one of: absent, null, empty_string, present.`
+          );
+          continue;
+        }
+
+        if (entry.expectedPresence === "present") {
+          if (typeof entry.expectedRawValue !== "string") {
+            rejectionReasons.push(
+              `[${destKey}] expectedRawValue (string) is required when expectedPresence === "present".`
+            );
+            continue;
+          }
+        } else if (
+          entry.expectedRawValue !== undefined &&
+          entry.expectedRawValue !== null
+        ) {
+          rejectionReasons.push(
+            `[${destKey}] expectedRawValue must be omitted or null when expectedPresence is "${entry.expectedPresence}".`
+          );
+          continue;
+        }
+
+        if (entry.source !== undefined && entry.source !== null) {
+          if (typeof entry.source !== "string" || entry.source.trim() === "") {
+            rejectionReasons.push(
+              `[${destKey}] Optional source must be a non-empty string when provided.`
+            );
+            continue;
+          }
+        }
+
+        const obs = buildBaselineObservation(liveMergedBaseline, destKey);
+        if (!obs.evidenceAvailable) {
+          rejectionReasons.push(
+            `[${destKey}] Live baseline observation is not available (${obs.presence}).`
+          );
+          continue;
+        }
+
+        if (obs.presence !== entry.expectedPresence) {
+          rejectionReasons.push(
+            `[${destKey}] Stale baseline precondition: packet expected presence "${entry.expectedPresence}", but live baseline presence is "${obs.presence}".`
+          );
+          continue;
+        }
+
+        if (
+          entry.expectedPresence === "present" &&
+          obs.rawValue !== entry.expectedRawValue
+        ) {
+          rejectionReasons.push(
+            `[${destKey}] Stale baseline precondition: packet expectedRawValue "${entry.expectedRawValue}" does not match live stored rawValue "${String(obs.rawValue ?? "")}".`
+          );
+          continue;
+        }
+
+        // Protect existing human drafts, exact approvals, and Keep Original decisions
+        const existingDraftEntry = liveProposedMap[destKey];
+        const existingDraftVal = getProposalValueString(existingDraftEntry);
+        const hasExistingDraft = Boolean(
+          existingDraftEntry !== undefined && existingDraftVal.trim() !== ""
+        );
+        const existingApprovalRec = liveApprovalsMap[destKey] || null;
+        const hasValidExistingApproval =
+          hasExistingDraft &&
+          isExactValueApprovalValid({
+            approvalRecord: existingApprovalRec,
+            productId: liveProductId,
+            destinationKey: destKey,
+            currentProposedValue: existingDraftVal,
+            baselineSnapshot: liveMergedBaseline
+          });
+        const existingKeepOrigRec = liveKeepOriginalMap[destKey] || null;
+        const hasValidExistingKeepOriginal =
+          hasExistingDraft &&
+          isKeepOriginalRecordValid({
+            keepOriginalRecord: existingKeepOrigRec,
+            productId: liveProductId,
+            destinationKey: destKey,
+            currentProposedValue: existingDraftVal,
+            baselineSnapshot: liveMergedBaseline
+          });
+
+        if (hasValidExistingKeepOriginal) {
+          rejectionReasons.push(
+            `[${destKey}] Protected operator decision: destination is currently marked Keep Original.`
+          );
+          continue;
+        }
+
+        if (hasValidExistingApproval) {
+          rejectionReasons.push(
+            `[${destKey}] Protected operator decision: destination already has a valid Exact-Value Approval.`
+          );
+          continue;
+        }
+
+        if (hasExistingDraft && existingDraftVal !== entry.proposedValue) {
+          rejectionReasons.push(
+            `[${destKey}] Protected draft conflict: destination already has a staged draft ("${existingDraftVal}") that differs from packet proposedValue ("${entry.proposedValue}"). Clear or resolve the existing draft first.`
+          );
+          continue;
+        }
+
+        const fidelity = checkExistingWriterStringFidelity(entry.proposedValue);
+        if (!fidelity.faithful) {
+          rejectionReasons.push(`[${destKey}] ${fidelity.reason}`);
+          continue;
+        }
+
+        const validation = validateBatch1ProposedValue({
+          productId: liveProductId,
+          destinationKey: destKey,
+          proposedValue: entry.proposedValue,
+          baselineSnapshot: liveMergedBaseline
+        });
+
+        if (!validation.valid) {
+          rejectionReasons.push(`[${destKey}] ${validation.reason}`);
+          continue;
+        }
+
+        if (validation.isUnchangedFromStored) {
+          rejectionReasons.push(
+            `[${destKey}] Unchanged value rejected: proposedValue ("${validation.normalizedValue}") is identical to the stored baseline value and cannot be staged as a write test.`
+          );
+          continue;
+        }
+
+        validatedEntriesToStage.push({
+          destinationKey: destKey,
+          owner: contract.owner,
+          normalizedValue: validation.normalizedValue,
+          verifiedActualType: validation.verifiedActualType,
+          baselinePresence: obs.presence,
+          baselineRawValue: obs.rawValue
+        });
+      }
+
+      if (hasVariantEntry) {
+        if (
+          liveMergedBaseline.variantsReadComplete !== true ||
+          liveMergedBaseline.variantTargetStatus !== "single_variant_verified" ||
+          !isExactProductVariantGid(liveMergedBaseline.primaryVariantId)
+        ) {
+          rejectionReasons.push(
+            `Packet includes PRODUCTVARIANT entries, but single-variant target is not verified on ${liveProductId} (status: ${liveMergedBaseline.variantTargetStatus || "unknown"}).`
+          );
+        } else if (
+          typeof parsedPacket.variantId !== "string" ||
+          parsedPacket.variantId !== liveMergedBaseline.primaryVariantId
+        ) {
+          rejectionReasons.push(
+            `Packet variantId "${String(parsedPacket.variantId ?? "")}" does not match the product's verified single-variant GID "${liveMergedBaseline.primaryVariantId}".`
+          );
+        }
+
+        if (
+          hasVariantMetafieldEntry &&
+          (liveMergedBaseline.variantMetafieldsReadComplete !== true ||
+            liveMergedBaseline.variantDefsReadComplete !== true)
+        ) {
+          rejectionReasons.push(
+            "Packet includes PRODUCTVARIANT metafield entries, but variant metafields or live PRODUCTVARIANT definitions read is incomplete."
+          );
+        }
+      } else if (
+        parsedPacket.variantId !== undefined &&
+        parsedPacket.variantId !== null
+      ) {
+        if (
+          typeof parsedPacket.variantId !== "string" ||
+          !isExactProductVariantGid(parsedPacket.variantId) ||
+          (liveMergedBaseline.primaryVariantId &&
+            parsedPacket.variantId !== liveMergedBaseline.primaryVariantId)
+        ) {
+          rejectionReasons.push(
+            `Packet variantId "${String(parsedPacket.variantId)}" does not match the product's verified single-variant GID "${String(liveMergedBaseline.primaryVariantId ?? "none")}".`
+          );
+        }
+      }
+
+      const liveCategoryId = liveMergedBaseline.productCategory?.id || null;
+      if (hasShopifyReferenceEntry) {
+        if (liveMergedBaseline.productCategoryReadComplete !== true) {
+          rejectionReasons.push(
+            "Packet includes shopify.* standardized reference entries, but product category read is incomplete."
+          );
+        }
+        if (!liveIsRefChoicesFresh) {
+          rejectionReasons.push(
+            "Packet includes shopify.* standardized reference entries, but verified reference choices are not loaded and fresh for the current baseline."
+          );
+        }
+        const packetCatId =
+          parsedPacket.productCategoryId === undefined
+            ? undefined
+            : parsedPacket.productCategoryId;
+        if (packetCatId === undefined || packetCatId !== liveCategoryId) {
+          rejectionReasons.push(
+            `Packet productCategoryId (${String(packetCatId ?? "omitted")}) does not match the product's live taxonomy category ID (${String(liveCategoryId ?? "null")}).`
+          );
+        }
+      } else if (parsedPacket.productCategoryId !== undefined) {
+        if ((parsedPacket.productCategoryId || null) !== liveCategoryId) {
+          rejectionReasons.push(
+            `Packet productCategoryId (${String(parsedPacket.productCategoryId)}) does not match the product's live taxonomy category ID (${String(liveCategoryId ?? "null")}).`
+          );
+        }
+      }
+
+      for (let j = 0; j < rawExpectedBlocks.length; j++) {
+        const blk = rawExpectedBlocks[j];
+        const blkPrefix = `expectedBlocks[${j}]`;
+
+        if (!blk || typeof blk !== "object" || Array.isArray(blk)) {
+          rejectionReasons.push(`${blkPrefix}: Item must be a plain object.`);
+          continue;
+        }
+
+        for (const bKey of Object.keys(blk)) {
+          if (!ALLOWED_JSON_PACKET_EXPECTED_BLOCK_KEYS.has(bKey)) {
+            rejectionReasons.push(
+              `${blkPrefix}: Unknown property "${bKey}".`
+            );
+          }
+        }
+
+        const blkDestKey =
+          typeof blk.destinationKey === "string" ? blk.destinationKey.trim() : "";
+        if (!blkDestKey || blk.destinationKey !== blkDestKey) {
+          rejectionReasons.push(
+            `${blkPrefix}: Missing or untrimmed destinationKey.`
+          );
+          continue;
+        }
+
+        if (CANCELLED_INERT_DESTINATIONS.has(blkDestKey)) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Cancelled destination cannot be listed in expectedBlocks.`
+          );
+          continue;
+        }
+
+        if (RETIRED_ERA_DESTINATIONS.has(blkDestKey)) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Retired Geological Era destination is removed from Bench V2 and cannot be listed in expectedBlocks.`
+          );
+          continue;
+        }
+
+        if (seenEntryDestinations.has(blkDestKey)) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Destination cannot appear in both entries and expectedBlocks.`
+          );
+          continue;
+        }
+
+        if (seenExpectedBlockDestinations.has(blkDestKey)) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Duplicate destinationKey in expectedBlocks.`
+          );
+          continue;
+        }
+        seenExpectedBlockDestinations.add(blkDestKey);
+
+        if (
+          typeof blk.expectedCategory !== "string" ||
+          !ALLOWED_EXPECTED_BLOCK_CATEGORIES.has(blk.expectedCategory)
+        ) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Invalid expectedCategory "${String(blk.expectedCategory ?? "")}"; must be read_only_or_parked, category_ineligible, or held_contract.`
+          );
+          continue;
+        }
+
+        const blkContract = getFieldContractByDestination(blkDestKey);
+        if (!blkContract) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Unknown destinationKey in expectedBlocks.`
+          );
+          continue;
+        }
+
+        const blkObs = buildBaselineObservation(liveMergedBaseline, blkDestKey);
+
+        if (!blkContract.isWritableInBatch1) {
+          const isHeldCapability =
+            blkContract.batchStage === "READ_ONLY_HOLD" ||
+            blkContract.writeCapability === "UNVERIFIED_CONTRACT_HOLD";
+          if (
+            blk.expectedCategory === "category_ineligible"
+          ) {
+            rejectionReasons.push(
+              `[${blkDestKey}] Expected block category mismatch: field is non-writable (${blkContract.writeCapability}), not category_ineligible.`
+            );
+            continue;
+          }
+          if (blk.expectedCategory === "held_contract" && !isHeldCapability) {
+            rejectionReasons.push(
+              `[${blkDestKey}] Expected block category mismatch: field has capability ${blkContract.writeCapability}, not held_contract.`
+            );
+            continue;
+          }
+          confirmedExpectedBlocks.push(
+            `[${blkDestKey}] Confirmed ${blk.expectedCategory} (${blkContract.writeCapability} / ${blkContract.batchStage}) — protected read-only, not staged.`
+          );
+          continue;
+        }
+
+        const blkTypeCheck = evaluateDestinationTypeAndCompleteness({
+          contract: blkContract,
+          baselineObs: blkObs
+        });
+
+        if (!blkTypeCheck.ready) {
+          const isCategoryIneligibleBlock =
+            blkContract.namespace === "shopify" &&
+            blkObs.categoryEligibility?.isComplete === true &&
+            blkObs.categoryEligibility?.isEligible === false;
+
+          if (blk.expectedCategory === "category_ineligible" && !isCategoryIneligibleBlock) {
+            rejectionReasons.push(
+              `[${blkDestKey}] Expected block category mismatch: field is blocked with code "${blkTypeCheck.code}" (${blkTypeCheck.reason}), not a completed category_ineligible check.`
+            );
+            continue;
+          }
+
+          if (blk.expectedCategory === "read_only_or_parked") {
+            rejectionReasons.push(
+              `[${blkDestKey}] Expected block category mismatch: field is a Batch 1 writable contract currently held/blocked (${blkTypeCheck.code}), not read_only_or_parked.`
+            );
+            continue;
+          }
+
+          confirmedExpectedBlocks.push(
+            `[${blkDestKey}] Confirmed ${blk.expectedCategory}: ${
+              blkTypeCheck.reason || `Blocked (${blkTypeCheck.code})`
+            } — not staged.`
+          );
+          continue;
+        }
+
+        if (blkContract.namespace === "shopify") {
+          const refEv = inspectVerifiedReferenceEvidenceForDestination(
+            liveMergedBaseline,
+            blkDestKey,
+            blkObs.restrictedMetaobjectDefinitionId
+          );
+          if (refEv.evidenceLoaded && refEv.isComplete && refEv.entriesByGid.size === 0) {
+            if (blk.expectedCategory !== "held_contract") {
+              rejectionReasons.push(
+                `[${blkDestKey}] Field has 0 Metaobject entries in Shopify; use expectedCategory "held_contract" in expectedBlocks.`
+              );
+              continue;
+            }
+            confirmedExpectedBlocks.push(
+              `[${blkDestKey}] Confirmed held_contract: 0 Metaobject entries exist in Shopify for ${blkObs.restrictedMetaobjectDefinitionId} — not staged.`
+            );
+            continue;
+          }
+        }
+
+        rejectionReasons.push(
+          `[${blkDestKey}] Unexpected writable & ready destination in expectedBlocks: field is eligible and ready on ${liveProductId} and cannot be classified as blocked.`
+        );
+      }
+
+      if (rejectionReasons.length > 0) {
+        return recordRejectedImport(
+          `JSON draft packet rejected (${rejectionReasons.length} validation issue${
+            rejectionReasons.length === 1 ? "" : "s"
+          }) — 0 drafts staged.`,
+          rejectionReasons,
+          rawPacketId
+        );
+      }
+
+      // Final live state recheck right before committing state
+      if (
+        activeProductIdRef.current !== liveProductId ||
+        benchSessionIdRef.current !== liveSessionId ||
+        buildStandardizedBaselineContextSignature(
+          baselineByProductRef.current[liveProductId] || rawCurrentBaselineRef.current
+        ) !== liveContextSig
+      ) {
+        return recordRejectedImport(
+          "Aborted JSON draft import because live product/session/baseline state changed during validation.",
+          ["State changed before commit; 0 drafts were staged."],
+          rawPacketId
+        );
+      }
+
+      const importedAt = new Date().toISOString();
+      const nextProposalsForProduct = {
+        ...(proposedByProductRef.current[liveProductId] || {})
+      };
+      const stagedDetails = [];
+
+      for (const item of validatedEntriesToStage) {
+        nextProposalsForProduct[item.destinationKey] = {
+          value: item.normalizedValue,
+          source: "Manual",
+          origin: "Manual",
+          updatedAt: importedAt
+        };
+        const fromSummary =
+          item.baselinePresence === "present"
+            ? `"${String(item.baselineRawValue ?? "")}"`
+            : `[${item.baselinePresence}]`;
+        stagedDetails.push(
+          `[${item.destinationKey}] (${item.owner}, ${item.verifiedActualType}) Staged unapproved draft ${fromSummary} -> "${item.normalizedValue}"`
+        );
+      }
+
+      // Record packetId in replay set ONLY on committed staging
+      const updatedReplaySet = new Set(
+        importedPacketIdsByProductRef.current.get(liveProductId) || []
+      );
+      updatedReplaySet.add(rawPacketId);
+      importedPacketIdsByProductRef.current.set(liveProductId, updatedReplaySet);
+
+      proposedByProductRef.current = {
+        ...proposedByProductRef.current,
+        [liveProductId]: nextProposalsForProduct
+      };
+      setProposedByProduct((prev) => ({
+        ...prev,
+        [liveProductId]: nextProposalsForProduct
+      }));
+
+      const expectedBlocksNote =
+        confirmedExpectedBlocks.length > 0
+          ? `, ${confirmedExpectedBlocks.length} expected read-only/category block${
+              confirmedExpectedBlocks.length === 1 ? "" : "s"
+            } confirmed and not staged`
+          : "";
+
+      setLastJsonImportReportByProduct((prev) => ({
+        ...prev,
+        [liveProductId]: {
+          ok: true,
+          packetId: rawPacketId,
+          productId: liveProductId,
+          sourceName,
+          completedAt: importedAt,
+          stagedCount: validatedEntriesToStage.length,
+          summary: `Staged ${validatedEntriesToStage.length} changed unapproved draft${
+            validatedEntriesToStage.length === 1 ? "" : "s"
+          } from packet "${rawPacketId}" (${sourceName})${expectedBlocksNote}. Review and check Approve on the fields you want to save.`,
+          rejectionReasons: [],
+          stagedDetails,
+          confirmedExpectedBlocks
+        }
+      }));
+
+      return true;
+    },
+    [activeProductId]
+  );
+
+  const handleJsonDraftFileSelect = useCallback(
+    (e) => {
+      const fileInput = e?.target;
+      const selectedFile = fileInput?.files?.[0] || null;
+      if (!selectedFile) return;
+
+      const fileName = selectedFile.name || "uploaded.json";
+      const fileSize = typeof selectedFile.size === "number" ? selectedFile.size : 0;
+
+      if (fileInput && typeof fileInput.value === "string") {
+        fileInput.value = "";
+      }
+
+      if (isAnyOperationBusyRef.current || isJsonImportBusyRef.current) {
+        setClientPrevalidationBanner({
+          tone: "warning",
+          title: "Cannot import JSON file while another operation is busy",
+          reasons: ["Wait for the current operation to finish before importing a JSON packet."]
+        });
+        return;
+      }
+
+      const startProductId = activeProductIdRef.current;
+      const startSessionId = benchSessionIdRef.current;
+      const startRawBaseline =
+        baselineByProductRef.current[startProductId] || rawCurrentBaselineRef.current || null;
+      const startContextSig = buildStandardizedBaselineContextSignature(startRawBaseline);
+
+      if (fileSize > BENCH_V2_JSON_DRAFT_MAX_BYTES) {
+        setLastJsonImportReportByProduct((prev) => ({
+          ...prev,
+          [startProductId]: {
+            ok: false,
+            packetId: null,
+            productId: startProductId,
+            sourceName: `File: ${fileName}`,
+            completedAt: new Date().toISOString(),
+            stagedCount: 0,
+            summary: `Rejected JSON file "${fileName}": file size (${fileSize} bytes) exceeds the ${BENCH_V2_JSON_DRAFT_MAX_BYTES}-byte (256 KB) limit before reading.`,
+            rejectionReasons: [
+              `File "${fileName}" is ${fileSize} bytes; maximum allowed size is ${BENCH_V2_JSON_DRAFT_MAX_BYTES} bytes.`
+            ],
+            stagedDetails: [],
+            confirmedExpectedBlocks: []
+          }
+        }));
+        return;
+      }
+
+      const readId = `json_file_read_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      activeJsonFileReadIdRef.current = readId;
+      isJsonImportBusyRef.current = true;
+      setIsJsonImportBusy(true);
+
+      const reader = new FileReader();
+      reader.onload = (loadEvt) => {
+        if (!isMountedRef.current || activeJsonFileReadIdRef.current !== readId) {
+          return;
+        }
+        activeJsonFileReadIdRef.current = null;
+        isJsonImportBusyRef.current = false;
+        setIsJsonImportBusy(false);
+
+        const textContent =
+          typeof loadEvt?.target?.result === "string" ? loadEvt.target.result : "";
+        setJsonImportPasteText(textContent);
+
+        validateAndApplyBenchV2JsonDraftPacket({
+          rawJsonText: textContent,
+          sourceName: `File: ${fileName}`,
+          expectedProductIdAtStart: startProductId,
+          expectedSessionIdAtStart: startSessionId,
+          expectedContextSigAtStart: startContextSig
+        });
+      };
+
+      reader.onerror = () => {
+        if (!isMountedRef.current || activeJsonFileReadIdRef.current !== readId) {
+          return;
+        }
+        activeJsonFileReadIdRef.current = null;
+        isJsonImportBusyRef.current = false;
+        setIsJsonImportBusy(false);
+
+        setLastJsonImportReportByProduct((prev) => ({
+          ...prev,
+          [startProductId]: {
+            ok: false,
+            packetId: null,
+            productId: startProductId,
+            sourceName: `File: ${fileName}`,
+            completedAt: new Date().toISOString(),
+            stagedCount: 0,
+            summary: `Failed to read JSON file "${fileName}".`,
+            rejectionReasons: [
+              reader.error?.message || `FileReader failed while reading "${fileName}".`
+            ],
+            stagedDetails: [],
+            confirmedExpectedBlocks: []
+          }
+        }));
+      };
+
+      reader.readAsText(selectedFile);
+    },
+    [validateAndApplyBenchV2JsonDraftPacket]
+  );
+
+  const handleApplyPastedJsonDraftPacket = useCallback(() => {
+    if (isAnyOperationBusyRef.current || isJsonImportBusyRef.current) {
+      return;
+    }
+    const startProductId = activeProductIdRef.current;
+    const startSessionId = benchSessionIdRef.current;
+    const startRawBaseline =
+      baselineByProductRef.current[startProductId] || rawCurrentBaselineRef.current || null;
+    const startContextSig = buildStandardizedBaselineContextSignature(startRawBaseline);
+
+    validateAndApplyBenchV2JsonDraftPacket({
+      rawJsonText: jsonImportPasteText,
+      sourceName: "Pasted JSON",
+      expectedProductIdAtStart: startProductId,
+      expectedSessionIdAtStart: startSessionId,
+      expectedContextSigAtStart: startContextSig
+    });
+  }, [jsonImportPasteText, validateAndApplyBenchV2JsonDraftPacket]);
+
+  const handleClearJsonImportPasteText = useCallback(() => {
+    setJsonImportPasteText("");
+  }, []);
+
+  const handleDismissJsonImportReport = useCallback(() => {
+    setLastJsonImportReportByProduct((prev) => {
+      const next = { ...prev };
+      delete next[activeProductId];
+      return next;
+    });
+  }, [activeProductId]);
+
   const handleExplicitAiScanProduct = () => {
     setClientPrevalidationBanner(null);
 
-    if (isAnyOperationBusy) {
+    if (isAnyOperationBusy || isJsonImportBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
         title: "Operation already in progress",
@@ -1551,7 +2580,7 @@ export default function BenchV2Route() {
     };
 
     for (const [destKey, entry] of Object.entries(combinedProducerAndVisionProposals)) {
-      if (CANCELLED_INERT_DESTINATIONS.has(destKey)) {
+      if (CANCELLED_INERT_DESTINATIONS.has(destKey) || RETIRED_ERA_DESTINATIONS.has(destKey)) {
         continue;
       }
 
@@ -2546,669 +3575,4 @@ export default function BenchV2Route() {
         const prodMap = { ...(prev[submittedProductId] || {}) };
         for (const vDest of verifiedSet) {
           if (!canClearVerifiedDest(vDest)) continue;
-          const currentEntry = prodMap[vDest];
-          const currentVal =
-            currentEntry && typeof currentEntry === "object"
-              ? currentEntry.value
-              : currentEntry;
-          if (currentVal === submittedValuesByDest[vDest]) {
-            delete prodMap[vDest];
-          }
-        }
-        return { ...prev, [submittedProductId]: prodMap };
-      });
-
-      setApprovalsByProduct((prev) => {
-        const prodApprovals = { ...(prev[submittedProductId] || {}) };
-        for (const vDest of verifiedSet) {
-          if (!canClearVerifiedDest(vDest)) continue;
-          const rec = prodApprovals[vDest];
-          if (rec && rec.approvedValue === submittedValuesByDest[vDest]) {
-            delete prodApprovals[vDest];
-          }
-        }
-        return { ...prev, [submittedProductId]: prodApprovals };
-      });
-    }
-
-    setLastSaveReport({
-      submissionId: pendingSub.submissionId,
-      productId: submittedProductId,
-      variantTargetId: submittedVariantTargetId,
-      responseVariantTarget,
-      completedAt: new Date().toISOString(),
-      overallOutcome:
-        rawResponse.success === true &&
-        rawResponse.status === "REPAIRED" &&
-        readBackVerified &&
-        unconfirmedDestinations.length === 0
-          ? "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
-          : verifiedList.length > 0
-            ? "PARTIAL_OR_UNRESOLVED_WRITE_OUTCOME"
-            : "WRITE_FAILED_OR_BLOCKED",
-      writerStatus: String(rawResponse.status || (rawResponse.success ? "OK" : "FAILED")),
-      message:
-        rawResponse.message ||
-        rawResponse.error ||
-        "Save finished. Review the field results below.",
-      submittedDestinations,
-      submittedValuesByDestination: submittedValuesByDest,
-      verifiedDestinations: verifiedList,
-      blockedFields,
-      skippedKeys,
-      unsupportedKeys,
-      unchanged: unchangedList,
-      unresolvedChanges,
-      conflicts,
-      errors: errorsList,
-      unconfirmedDestinations,
-      readBackVerified
-    });
-
-    setActiveSaveSubmission(null);
-    revalidator.revalidate();
-  }, [writerFetcher.state, writerFetcher.data, revalidator]);
-
-  const handleManualProposalChange = (destinationKey, rawNewValue) => {
-    setClientPrevalidationBanner(null);
-    const exactString = typeof rawNewValue === "string" ? rawNewValue : String(rawNewValue ?? "");
-
-    setProposedByProduct((prev) => {
-      const prodMap = { ...(prev[activeProductId] || {}) };
-      prodMap[destinationKey] = {
-        value: exactString,
-        source: "Manual",
-        origin: "Manual",
-        updatedAt: new Date().toISOString()
-      };
-      return { ...prev, [activeProductId]: prodMap };
-    });
-
-    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
-    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
-  };
-
-  /**
-   * Preserves both existing saved Metaobject GIDs on the product AND any valid
-   * Metaobject GIDs already staged in the current proposal when selecting a preset
-   * reference option, so selecting a second choice appends rather than
-   * silently replacing a prior staged addition.
-   */
-  const handleSelectPresetOption = (row, selectedOptionValue) => {
-    const destKey = row.contract.destinationKey;
-    if (row.contract.namespace !== "shopify") {
-      handleManualProposalChange(destKey, selectedOptionValue);
-      return;
-    }
-
-    const storedCheck = inspectStoredReferenceListRawValue(
-      row.baselineObservation?.rawValue
-    );
-    if (!storedCheck.valid) {
-      handleManualProposalChange(destKey, selectedOptionValue);
-      return;
-    }
-
-    let selectedGids = [];
-    try {
-      const parsedOpt = JSON.parse(selectedOptionValue);
-      if (Array.isArray(parsedOpt)) {
-        selectedGids = parsedOpt.filter((g) => typeof g === "string" && isExactMetaobjectGid(g));
-      }
-    } catch {
-      if (isExactMetaobjectGid(selectedOptionValue)) {
-        selectedGids = [selectedOptionValue.trim()];
-      }
-    }
-
-    if (selectedGids.length === 0) {
-      handleManualProposalChange(destKey, selectedOptionValue);
-      return;
-    }
-
-    let currentStagedGids = [];
-    if (row.hasProposalKey && typeof row.proposedValue === "string" && row.proposedValue.trim().startsWith("[")) {
-      try {
-        const parsedCurrent = JSON.parse(row.proposedValue.trim());
-        if (Array.isArray(parsedCurrent)) {
-          const verifiedMap = row.referenceEvidence?.entriesByGid || null;
-          currentStagedGids = parsedCurrent.filter(
-            (g) =>
-              typeof g === "string" &&
-              isExactMetaobjectGid(g) &&
-              (storedCheck.gids.includes(g) || !verifiedMap || verifiedMap.has(g))
-          );
-        }
-      } catch {
-        currentStagedGids = [];
-      }
-    }
-
-    const mergedGids = [];
-    const pushUnique = (gid) => {
-      if (isExactMetaobjectGid(gid) && !mergedGids.includes(gid)) {
-        mergedGids.push(gid);
-      }
-    };
-
-    storedCheck.gids.forEach(pushUnique);
-    currentStagedGids.forEach(pushUnique);
-    selectedGids.forEach(pushUnique);
-
-    handleManualProposalChange(destKey, JSON.stringify(mergedGids));
-  };
-
-  const handleClearDraftProposal = (destinationKey) => {
-    setClientPrevalidationBanner(null);
-    releaseRetainedFieldEditor(activeProductId, destinationKey);
-
-    clearDecisionForDestination(setProposedByProduct, activeProductId, destinationKey);
-    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
-    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
-  };
-
-  const handleToggleApproval = (destinationKey, currentlyApproved) => {
-    setClientPrevalidationBanner(null);
-    releaseRetainedFieldEditor(activeProductId, destinationKey);
-
-    if (currentlyApproved) {
-      clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
-      return;
-    }
-
-    const exactProposedValue = getProposalValueString(currentProposedMap[destinationKey]);
-
-    const fidelity = checkExistingWriterStringFidelity(exactProposedValue);
-    if (!fidelity.faithful) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: `Cannot approve ${destinationKey} yet`,
-        reasons: [fidelity.reason]
-      });
-      return;
-    }
-
-    const created = createExactValueApprovalRecord({
-      productId: activeProductId,
-      destinationKey,
-      proposedValue: exactProposedValue,
-      baselineSnapshot: currentBaseline
-    });
-
-    if (!created.ok || !created.record) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: `Cannot approve ${destinationKey}`,
-        reasons: [created.error || "Proposal failed validation."]
-      });
-      return;
-    }
-
-    clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
-
-    setApprovalsByProduct((prev) => ({
-      ...prev,
-      [activeProductId]: {
-        ...(prev[activeProductId] || {}),
-        [destinationKey]: created.record
-      }
-    }));
-  };
-
-  const handleToggleKeepOriginal = (destinationKey, currentlyKeepOriginal) => {
-    setClientPrevalidationBanner(null);
-    releaseRetainedFieldEditor(activeProductId, destinationKey);
-
-    if (currentlyKeepOriginal) {
-      clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
-      return;
-    }
-
-    const exactProposedValue = getProposalValueString(currentProposedMap[destinationKey]);
-
-    const created = createKeepOriginalRecord({
-      productId: activeProductId,
-      destinationKey,
-      rejectedProposedValue: exactProposedValue,
-      baselineSnapshot: currentBaseline
-    });
-
-    if (!created.ok || !created.record) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: `Cannot mark Keep Original for ${destinationKey}`,
-        reasons: [created.error || "Cannot bind Keep Original record."]
-      });
-      return;
-    }
-
-    clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
-
-    setKeepOriginalByProduct((prev) => ({
-      ...prev,
-      [activeProductId]: {
-        ...(prev[activeProductId] || {}),
-        [destinationKey]: created.record
-      }
-    }));
-  };
-
-  const {
-    activeSaveReportForCurrentProduct,
-    evaluatedDrawerGroups,
-    visibleDrawerGroups,
-    allEvaluatedRows,
-    totalVisibleFilteredRowCount,
-    stagedProposalRows,
-    validApprovedRows,
-    keepOriginalRows,
-    heldAiAlternativesCount
-  } = evaluateAndFilterBenchV2Drawers({
-    activeProductId,
-    currentBaseline,
-    currentProposedMap,
-    currentAiAlternativesMap,
-    currentApprovalsMap,
-    currentKeepOriginalMap,
-    currentScanProposalsMetaMap,
-    retainedFieldEditorsByProduct,
-    lastSaveReport,
-    activeFilter,
-    isRefChoicesBusy,
-    drawerGroups: BENCH_V2_DRAWER_GROUPS
-  });
-
-  const hasBaselineErrors = Boolean(
-    loaderData?.selectionError ||
-      pickerPageState?.error ||
-      loaderData?.loadError ||
-      (Array.isArray(currentBaseline?.errors) && currentBaseline.errors.length > 0) ||
-      currentBaseline?.metafieldsReadComplete !== true ||
-      currentBaseline?.defsReadComplete !== true
-  );
-
-  // ==========================================================================
-  // SIDEKICK LIVE BENCH SNAPSHOT BUILDER & SINGLE-FLIGHT PUBLISHER
-  // ==========================================================================
-  const { telemetrySyncStatus } = useBenchV2LiveTelemetryPublisher({
-    benchSessionId: benchSessionIdRef.current,
-    isSwitchingSelectedProduct,
-    activeProductId,
-    activeProductHeadline,
-    activeProductPieceName,
-    activeProductTitle,
-    currentBaseline,
-    evaluatedDrawerGroups,
-    allEvaluatedRows,
-    totalVisibleFilteredRowCount,
-    stagedProposalRows,
-    validApprovedRows,
-    keepOriginalRows,
-    heldAiAlternativesCount,
-    activeProductMediaItems,
-    currentApprovalsMap,
-    currentKeepOriginalMap,
-    currentAiScanReport,
-    activeSaveReportForCurrentProduct,
-    currentRefChoicesRecord,
-    isCurrentRefChoicesBoundAndFresh,
-    stagedVisionCandidatesByProduct,
-    activeFilter,
-    openDrawersById,
-    isWriterBusy,
-    isAiScanBusy,
-    isRefChoicesBusy,
-    isBaselineReloading,
-    isPickerLoading,
-    hasBaselineErrors,
-    selectionError: loaderData?.selectionError || null,
-    loadError: loaderData?.loadError || null,
-    clientPrevalidationBanner,
-    plainDrawerTitles: PLAIN_DRAWER_TITLES
-  });
-
-  const handleExplicitSaveApprovedChanges = () => {
-    setClientPrevalidationBanner(null);
-
-    if (isWriterBusy || isAiScanBusy || isRefChoicesBusy) {
-      setClientPrevalidationBanner({
-        tone: "warning",
-        title: isWriterBusy
-          ? "Save already in progress"
-          : isAiScanBusy
-            ? "AI Scan in progress"
-            : "Reference choices load in progress",
-        reasons: [
-          isWriterBusy
-            ? "Wait for the current save request to finish before clicking Save again."
-            : isAiScanBusy
-              ? "Wait for the current AI Scan to finish before saving."
-              : "Wait for the current reference choices load to finish before saving."
-        ]
-      });
-      return;
-    }
-
-    if (!currentBaseline || currentBaseline.productId !== activeProductId) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: "Cannot save: Product data not loaded",
-        reasons: [`Live product baseline is not loaded for ${activeProductTitle}.`]
-      });
-      return;
-    }
-
-    const approvalEntries = Object.entries(currentApprovalsMap || {});
-    if (approvalEntries.length === 0) {
-      setClientPrevalidationBanner({
-        tone: "warning",
-        title: "Nothing approved to save",
-        reasons: [
-          "No fields are approved for this product. Edit or review a connected field (where ready on this product) and check Approve before clicking Save."
-        ]
-      });
-      return;
-    }
-
-    const prevalidationErrors = [];
-    const safePlanToSubmit = {};
-    const safeNativeChangesToSubmit = {};
-    let requiredVariantTargetId = null;
-
-    for (const [destKey, approvalRec] of approvalEntries) {
-      const contract = getFieldContractByDestination(destKey);
-      if (
-        !contract ||
-        !contract.isWritableInBatch1 ||
-        !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey)
-      ) {
-        prevalidationErrors.push(
-          `[${destKey}] Not an eligible writable destination.`
-        );
-        continue;
-      }
-
-      const currentProposedValue = getProposalValueString(currentProposedMap[destKey]);
-
-      const keepOrigRec = currentKeepOriginalMap[destKey] || null;
-      if (
-        keepOrigRec &&
-        isKeepOriginalRecordValid({
-          keepOriginalRecord: keepOrigRec,
-          productId: activeProductId,
-          destinationKey: destKey,
-          currentProposedValue,
-          baselineSnapshot: currentBaseline
-        })
-      ) {
-        prevalidationErrors.push(
-          `[${destKey}] Marked Keep Original; cannot be submitted for Save.`
-        );
-        continue;
-      }
-
-      const fidelity = checkExistingWriterStringFidelity(currentProposedValue);
-      if (!fidelity.faithful) {
-        prevalidationErrors.push(`[${destKey}] ${fidelity.reason}`);
-        continue;
-      }
-
-      const validation = validateBatch1ProposedValue({
-        productId: activeProductId,
-        destinationKey: destKey,
-        proposedValue: currentProposedValue,
-        baselineSnapshot: currentBaseline
-      });
-
-      if (!validation.valid) {
-        prevalidationErrors.push(`[${destKey}] ${validation.reason}`);
-        continue;
-      }
-
-      if (validation.isUnchangedFromStored) {
-        prevalidationErrors.push(
-          `[${destKey}] Proposed value matches the saved value; uncheck Approve or enter a changed value.`
-        );
-        continue;
-      }
-
-      const stillValidApproval = isExactValueApprovalValid({
-        approvalRecord: approvalRec,
-        productId: activeProductId,
-        destinationKey: destKey,
-        currentProposedValue,
-        baselineSnapshot: currentBaseline
-      });
-
-      if (!stillValidApproval) {
-        prevalidationErrors.push(
-          `[${destKey}] Approval record is out of date. Please review the value and check Approve again.`
-        );
-        continue;
-      }
-
-      if (contract.owner === "PRODUCTVARIANT") {
-        const obsVariantId = validation.baselineObservation?.variantId || null;
-        const baselinePrimaryVariantId = currentBaseline?.primaryVariantId || null;
-        const isNativeVariantPriceDest =
-          contract.namespace === "native" && destKey === "native_price";
-
-        if (isNativeVariantPriceDest) {
-          if (
-            currentBaseline?.variantsReadComplete !== true ||
-            currentBaseline?.variantTargetStatus !== "single_variant_verified" ||
-            !isExactProductVariantGid(baselinePrimaryVariantId) ||
-            !isExactProductVariantGid(obsVariantId) ||
-            obsVariantId !== baselinePrimaryVariantId ||
-            approvalRec?.owner !== "PRODUCTVARIANT" ||
-            approvalRec?.variantId !== baselinePrimaryVariantId
-          ) {
-            prevalidationErrors.push(
-              `[${destKey}] Single-variant target identity is not verified for this price approval. Reload product data and re-approve.`
-            );
-            continue;
-          }
-        } else if (
-          currentBaseline?.variantsReadComplete !== true ||
-          currentBaseline?.variantTargetStatus !== "single_variant_verified" ||
-          currentBaseline?.variantMetafieldsReadComplete !== true ||
-          currentBaseline?.variantDefsReadComplete !== true ||
-          !isExactProductVariantGid(baselinePrimaryVariantId) ||
-          !isExactProductVariantGid(obsVariantId) ||
-          obsVariantId !== baselinePrimaryVariantId ||
-          approvalRec?.owner !== "PRODUCTVARIANT" ||
-          approvalRec?.variantId !== baselinePrimaryVariantId
-        ) {
-          prevalidationErrors.push(
-            `[${destKey}] Variant target identity or completeness is not verified for this approval. Reload product data and re-approve.`
-          );
-          continue;
-        }
-
-        if (requiredVariantTargetId && requiredVariantTargetId !== baselinePrimaryVariantId) {
-          prevalidationErrors.push(
-            `[${destKey}] Conflicting variantTargetId detected across approved variant fields (${requiredVariantTargetId} vs. ${baselinePrimaryVariantId}).`
-          );
-          continue;
-        }
-        requiredVariantTargetId = baselinePrimaryVariantId;
-      }
-
-      if (destKey === "native_title") {
-        safeNativeChangesToSubmit.title = validation.normalizedValue;
-      }
-
-      safePlanToSubmit[destKey] = validation.normalizedValue;
-    }
-
-    if (prevalidationErrors.length > 0) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: `Save stopped (${prevalidationErrors.length} issue${
-          prevalidationErrors.length === 1 ? "" : "s"
-        } found — nothing was sent)`,
-        reasons: prevalidationErrors
-      });
-      return;
-    }
-
-    const submittedDestinations = Object.keys(safePlanToSubmit);
-    if (submittedDestinations.length === 0) {
-      setClientPrevalidationBanner({
-        tone: "warning",
-        title: "No eligible approved changes",
-        reasons: ["No valid approved changes remained after preflight checks."]
-      });
-      return;
-    }
-
-    const submissionId = `bench_v2_save_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const submissionMeta = {
-      submissionId,
-      productId: activeProductId,
-      variantTargetId: requiredVariantTargetId,
-      submittedDestinations,
-      submittedValuesByDestination: { ...safePlanToSubmit },
-      submittedNativeChanges: { ...safeNativeChangesToSubmit },
-      startedAt: new Date().toISOString()
-    };
-
-    setActiveSaveSubmission(submissionMeta);
-
-    const formData = new FormData();
-    formData.append("intent", "executeRepairPlan");
-    formData.append("benchV2OptIn", "true");
-    formData.append("pieceId", activeProductId);
-    if (requiredVariantTargetId) {
-      formData.append("variantTargetId", requiredVariantTargetId);
-    }
-    formData.append("repairPlan", JSON.stringify(safePlanToSubmit));
-    formData.append("nativeChanges", JSON.stringify(safeNativeChangesToSubmit));
-    formData.append("legacyKeysToRemove", JSON.stringify([]));
-
-    writerFetcher.submit(formData, {
-      method: "POST",
-      action: "/app/meta-injector-api"
-    });
-  };
-
-  const pickerItems = Array.isArray(pickerPageState?.items) ? pickerPageState.items : [];
-  const isSelectedProductInCurrentPickerPage = pickerItems.some(
-    (item) => item.id === activeProductId
-  );
-
-  const prevPageDisabled =
-    isAnyOperationBusy || isPickerLoading || pickerCursorHistory.length === 0;
-  const nextPageDisabled =
-    isAnyOperationBusy ||
-    isPickerLoading ||
-    !pickerPageState?.pageInfo?.hasNextPage ||
-    !pickerPageState?.pageInfo?.endCursor;
-
-  return (
-    <div
-      style={{
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        backgroundColor: "#f1f5f9",
-        color: "#0f172a",
-        minHeight: "100vh",
-        padding: "24px 20px 80px 20px",
-        fontSize: "16px",
-        lineHeight: 1.6
-      }}
-    >
-      <div style={{ maxWidth: "1140px", margin: "0 auto" }}>
-        <BenchV2HeaderAndBannersView
-          activeProductId={activeProductId}
-          activeProductTitle={activeProductTitle}
-          activeProductPieceName={activeProductPieceName}
-          activeProductHeadline={activeProductHeadline}
-          activeProductMediaItems={activeProductMediaItems}
-          stagedProposalRowsCount={stagedProposalRows.length}
-          validApprovedRowsCount={validApprovedRows.length}
-          keepOriginalRowsCount={keepOriginalRows.length}
-          heldAiAlternativesCount={heldAiAlternativesCount}
-          totalVisibleFilteredRowCount={totalVisibleFilteredRowCount}
-          allEvaluatedRowsCount={allEvaluatedRows.length}
-          isAnyOperationBusy={isAnyOperationBusy}
-          isAiScanBusy={isAiScanBusy}
-          isWriterBusy={isWriterBusy}
-          isBaselineReloading={isBaselineReloading}
-          isPickerLoading={isPickerLoading}
-          isRefChoicesBusy={isRefChoicesBusy}
-          currentBaseline={currentBaseline}
-          canRetryRefChoicesForCurrentProduct={canRetryRefChoicesForCurrentProduct}
-          isCurrentRefChoicesBoundAndFresh={isCurrentRefChoicesBoundAndFresh}
-          searchInputText={searchInputText}
-          setSearchInputText={setSearchInputText}
-          committedSearchQuery={committedSearchQuery}
-          isProductPickerOpen={isProductPickerOpen}
-          setIsProductPickerOpen={setIsProductPickerOpen}
-          pickerItems={pickerItems}
-          pickerCursorHistoryLength={pickerCursorHistory.length}
-          isSelectedProductInCurrentPickerPage={isSelectedProductInCurrentPickerPage}
-          prevPageDisabled={prevPageDisabled}
-          nextPageDisabled={nextPageDisabled}
-          proposedByProduct={proposedByProduct}
-          approvalsByProduct={approvalsByProduct}
-          activeFilter={activeFilter}
-          setActiveFilter={setActiveFilter}
-          telemetrySyncStatus={telemetrySyncStatus}
-          hasBaselineErrors={hasBaselineErrors}
-          selectionError={loaderData?.selectionError || null}
-          pickerPageError={pickerPageState?.error || null}
-          loadError={loaderData?.loadError || null}
-          currentRefChoicesRecord={currentRefChoicesRecord}
-          currentAiScanReport={currentAiScanReport}
-          clientPrevalidationBanner={clientPrevalidationBanner}
-          setClientPrevalidationBanner={setClientPrevalidationBanner}
-          lastSaveReport={lastSaveReport}
-          setLastSaveReport={setLastSaveReport}
-          handleExplicitAiScanProduct={handleExplicitAiScanProduct}
-          handleLoadStandardizedReferenceChoices={handleLoadStandardizedReferenceChoices}
-          handleReloadProduct={handleReloadProduct}
-          handleExplicitSaveApprovedChanges={handleExplicitSaveApprovedChanges}
-          handleSearchFormSubmit={handleSearchFormSubmit}
-          handleClearProductSearch={handleClearProductSearch}
-          handlePreviousProductPage={handlePreviousProductPage}
-          handleNextProductPage={handleNextProductPage}
-          handleSelectProductGid={handleSelectProductGid}
-          handleSetAllDrawers={handleSetAllDrawers}
-          dismissCurrentRefChoicesRecord={dismissCurrentRefChoicesRecord}
-          handleDismissAiScanReport={handleDismissAiScanReport}
-        />
-
-        <BenchV2DrawersView
-          activeFilter={activeFilter}
-          setActiveFilter={setActiveFilter}
-          totalVisibleFilteredRowCount={totalVisibleFilteredRowCount}
-          activeProductId={activeProductId}
-          activeProductTitle={activeProductTitle}
-          benchSessionId={benchSessionIdRef.current}
-          telemetrySyncStatus={telemetrySyncStatus}
-          validApprovedRowsCount={validApprovedRows.length}
-          keepOriginalRowsCount={keepOriginalRows.length}
-          visibleDrawerGroups={visibleDrawerGroups}
-          openDrawersById={openDrawersById}
-          canRetryRefChoicesForCurrentProduct={canRetryRefChoicesForCurrentProduct}
-          isAnyOperationBusy={isAnyOperationBusy}
-          currentBaseline={currentBaseline}
-          isRefChoicesBusy={isRefChoicesBusy}
-          isCurrentRefChoicesBoundAndFresh={isCurrentRefChoicesBoundAndFresh}
-          currentRefChoicesRecord={currentRefChoicesRecord}
-          handleToggleDrawer={handleToggleDrawer}
-          handleLoadStandardizedReferenceChoices={handleLoadStandardizedReferenceChoices}
-          handleFieldEditorFocus={handleFieldEditorFocus}
-          handleFieldEditorBlur={handleFieldEditorBlur}
-          handleSelectPresetOption={handleSelectPresetOption}
-          handleManualProposalChange={handleManualProposalChange}
-          handleClearDraftProposal={handleClearDraftProposal}
-          handleAcceptAiAlternative={handleAcceptAiAlternative}
-          handleDismissAiAlternative={handleDismissAiAlternative}
-          handleToggleApproval={handleToggleApproval}
-          handleToggleKeepOriginal={handleToggleKeepOriginal}
-        />
-      </div>
-    </div>
-  );
-}
+          const currentEntry = prodMap
