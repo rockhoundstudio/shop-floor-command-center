@@ -35,10 +35,8 @@ export const ALLOWED_PROVENANCE_FIELD_KEYS = new Set([
 ]);
 
 export const CLASSIFICATION_OVERRIDE_KEYS = new Set([
-  "primary_use",
   "jewelry_type",
   "product_format",
-  "necklace_design",
   "google_product_category"
 ]);
 

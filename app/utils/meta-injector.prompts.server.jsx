@@ -53,7 +53,7 @@ Also return a separate top-level JSON object key named "standardized_candidates"
 - "chain-link-type": Preserve "Cord" as an evidence-supported REVIEW candidate where explicitly supplied, but do not claim it is a verified allowed reference choice. Do not turn "Cord" into "Snake Chain".
 - "construction": Metalwork construction, NOT craftsmanship or pendant assembly. Verified choices: "Clad", "Filled", "Other", "Plated", "Solid", "Toned", "Vermeil", "Whole". Propose only an evidence-supported choice. Explicit silver-plated or gold-plated hardware supports "Plated". Do not infer the construction of every component from one bail or infer plating/alloy from a front photo alone. Evidence must identify the component supporting the choice. Never default to "Solid" or "Other". Do NOT place "Handcrafted" in standardized "construction" candidates.
 - "jewelry-finding-type": Preserve explicitly supplied component facts such as "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting", or verified bezel findings when supplied in facts. These remain review candidates until exact reference matching. Do not claim the detailed label is accepted reference vocabulary. Do not infer hidden hardware or propose bezel or glue-on findings from a decorative rim or top loop alone.
-- "material-origin": Physical product form/mounting state, NOT geography, natural/synthetic status, or intended use. Relevant verified choices: "Finished product (jewelry/watch)", "Loose/unmounted". Propose "Finished product (jewelry/watch)" ONLY when actual mounted or wear-ready evidence (such as an installed pinch bail, glue-on/mounted setting with top loop, wire wrap, verified bezel setting, finished drilled wear-ready form, or explicit operator finished-jewelry facts) establishes a finished wearable piece. Intended pendant/jewelry use, a bare "Pendant" label in primary_use/jewelry_type/necklace_design, or an unattached chain/cord alone does NOT establish "Finished product (jewelry/watch)". Propose "Loose/unmounted" when explicit facts or clear multi-angle/hero evidence establish an unmounted, undrilled loose stone or cabochon. Missing hardware in a single photo alone is not conclusive; if physical mounting/drilling state is uncertain, omit "material-origin". "Natural/Untreated" does not establish either choice. Do NOT use geographic collecting location.
+- "material-origin": Physical product form/mounting state, NOT geography, natural/synthetic status, or intended use. Relevant verified choices: "Finished product (jewelry/watch)", "Loose/unmounted". Propose "Finished product (jewelry/watch)" ONLY when actual mounted or wear-ready evidence (such as an installed pinch bail, glue-on/mounted setting with top loop, wire wrap, verified bezel setting, finished drilled wear-ready form, or explicit operator finished-jewelry facts) establishes a finished wearable piece. Intended pendant/jewelry use, a bare "Pendant" label in jewelry_type, or an unattached chain/cord alone does NOT establish "Finished product (jewelry/watch)". Propose "Loose/unmounted" when explicit facts or clear multi-angle/hero evidence establish an unmounted, undrilled loose stone or cabochon. Missing hardware in a single photo alone is not conclusive; if physical mounting/drilling state is uncertain, omit "material-origin". "Natural/Untreated" does not establish either choice. Do NOT use geographic collecting location.
 - "product-classification": Precious-material/item classification, NOT "Pendant" product format. Verified relevant choices include: "Semi-precious stones", "Loose precious stones". Do not infer material grade from photos. Propose only when trusted supplied material facts support the choice; otherwise omit it pending verified classification evidence. "Pendant" alone is insufficient evidence.
 - "product-use": Intended or actual use. Relevant verified choice: "Jewelry/ornament". Use when supplied facts or visible form establish finished jewelry, ornament, or intended jewelry-making/pendant use. Keep "product-use" distinct from physical "material-origin" ("Jewelry/ornament" does NOT by itself make an unmounted stone a "Finished product (jewelry/watch)"). Do not output "Finished Jewelry" as though it were an accepted label. Do not default unrelated display/specimen products to "Jewelry/ornament".
 
@@ -75,7 +75,7 @@ STRICT RULES FOR standardized_candidates:
 - Omit any of the six keys that lack clear factual/visual support.
 - Never output empty arrays, "None", "Unknown", "N/A", guessed GIDs, taxonomy IDs, or definition IDs.
 - Do not infer hidden hardware or undisclosed treatment.
-- Preserve existing legacy keys (chain_link_type, jewelry_finding_type, primary_use, craftsmanship, seo_title, etc.) alongside standardized_candidates.
+- Preserve existing legacy keys (chain_link_type, jewelry_finding_type, craftsmanship, seo_title, etc.) alongside standardized_candidates.
 `;
 
 // ==========================================
@@ -108,7 +108,6 @@ ${provenanceRuleLine}
 - Collection Name: ${fullCollectionTitle} (Canonical Name: Use this exact name in prose instead of legacy titles found in the lore text)
 - Collection Lore: ${collectionStory}
 - Product Format: ${pieceData.product_format || ""}
-- Primary Use: ${pieceData.primary_use || "N/A"}
 - Jewelry Type: ${pieceData.jewelry_type || "N/A"}
 - Finding/Setting Type: ${pieceData.jewelry_finding_type || "N/A"}
 - Setting Ready: ${pieceData.setting_ready || "N/A"}
@@ -127,7 +126,6 @@ ${provenanceRuleLine}
 - Primary Color: ${pieceData.primary_color || ""}
 - Secondary Colors: ${pieceData.secondary_colors || ""}
 - Color Pattern: ${pieceData.color_pattern || ""}
-- Character Marks: ${pieceData.character_marks || ""}
 - Honest Flaws and Character: ${pieceData.honest_flaws_and_character || ""}
 - Chain Type: ${pieceData.chain_link_type || ""}
 - Human Identifier (Internal only, do not rename): ${pieceData.piece_name || "None"}
@@ -181,7 +179,7 @@ Includes: [List bail/chain/cord. If none exist AND it is confirmed loose, state 
 5. CHARACTER
 Geology: Do not output a geology row or geological properties; these belong in the existing product-page geology table.
 Do not repeat hardness, age, era, composition, formation, crystal system, mineral class, specific gravity, luster, cleavage, fracture, tenacity, or diaphaneity in the description.
-Character: [Include supported character_marks and honest_flaws_and_character distinctly; omit missing facts.]
+Character: [Include supported honest_flaws_and_character distinctly; omit missing facts.]
 
 6. ARTIST CALLOUT — only if loose stone or setting ready
 One plain sentence for jewelers and makers. Dimensions, drill status, setting suitability.
@@ -273,7 +271,6 @@ REQUIRED JSON KEYS:
 - surface_finish
 - overall_solid_length_in: Photo-based measurement in decimal inches (number only, e.g. 1.75) read directly from a measuring tape or ruler deliberately aligned with the product in the photo. Require readable tape/ruler markings, identifiable units, and both solid-product endpoints visible (from the bottom tip of the stone/piece to the top of the solid setting or bail, strictly excluding any flexible necklace chain or cord; necklace chain/cord is a separate confirmed 18 inches). Omit completely if no tape/ruler is visible or if markings, units, or endpoints cannot be read reliably. Never calculate from dimensions_mm alone.
 - honest_flaws_and_character
-- character_marks
 - secondary_medium: Metal/setting hardware medium only when explicitly supplied in bench facts or unambiguously known; do not guess alloy or plating from a photo.
 - wire_material: Plain text description of wire material if visibly wire-wrapped or supplied in bench facts; omit if not applicable.
 - setting_ready: Exact supplied value ("Yes" / "No" / "true"), or "Yes" if visibly mounted/wear-ready, or "No" if confirmed loose/unmounted. Never infer "Bezel Setting - Ready to Wear" from a photo unless explicitly supplied in bench facts.
@@ -284,7 +281,6 @@ REQUIRED JSON KEYS:
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. Select "N/A" when the piece is an unmounted loose stone, cabochon, display piece, or specimen without mounted/wear-ready evidence or explicit finished-jewelry bench facts.
 - google_product_category: "Apparel & Accessories > Jewelry"
 - origin_location: Cross-reference "${originSegment}" with LIVE STORE DIRECTORY and supplied bench facts. Return geographic name ONLY. Do not invent an origin if unknown, and never override an explicit purchased source with a title or collection name. Purchase source does not establish geological origin.
-- primary_use: Select EXACTLY one from the supported dropdown vocabulary: "Wearable Art", "Pendant", "Display Piece", "Cabochon — Setting Ready", "Collector Specimen". Use "Pendant" or "Wearable Art" ONLY when mounted/wear-ready evidence or explicit bench facts support it; use "Cabochon — Setting Ready", "Display Piece", or "Collector Specimen" for loose/unmounted stones as supported by form.
 - primary_medium: Must be the STONE/MINERAL identity or variety ONLY (never the bare word "Stone", and NEVER metal, plating, wire, alloy, or setting hardware). Keep stone family (e.g. Agate) and variety (e.g. Botswana Agate) distinct when applicable; omit if stone identity is unknown.
 - alt_text: Descriptive for THIS single photo only, max 125 chars. Describe visible stone, decorative rim, or top loop/pinch bail truthfully; never claim "bezel" or "glue-on" unless explicitly supplied in bench facts.
 - found_object: Preserve supplied value/polarity if provided; otherwise omit if unknown (never guess from appearance or collection).
@@ -405,7 +401,7 @@ CRITICAL RULES FOR TAB 3:
 9. Treat origin_story as hidden, read-only context from the existing origin page. Do not generate or save an origin story. Use the page only for supported metadata.
 10. Never write "None" or "Unknown" as filler.
 11. Do not invent details or lived history. Leave unknown fields entirely unset.
-12. Distinguish physical finished form from intended pendant/jewelry use: set product_format to "Pendant" (or similar finished wearable form) ONLY when authoritative hardware/mounting facts (such as an installed bail, mounted setting with loop, wire wrap, verified bezel setting, or finished drilled wear-ready form) or clear visible mounted hardware establish a finished piece. A bare passive "Pendant" label in primary_use, jewelry_type, or necklace_design, or an unattached chain/cord alone, does NOT establish finished jewelry or force product_format to "Pendant".
+12. Distinguish physical finished form from intended pendant/jewelry use: set product_format to "Pendant" (or similar finished wearable form) ONLY when authoritative hardware/mounting facts (such as an installed bail, mounted setting with loop, wire wrap, verified bezel setting, or finished drilled wear-ready form) or clear visible mounted hardware establish a finished piece. A bare passive "Pendant" label in jewelry_type, or an unattached chain/cord alone, does NOT establish finished jewelry or force product_format to "Pendant".
 13. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve supplied found_object values and polarity verbatim. Preserve supplied treatment and operator-locked hardware phrases verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
 14. PURCHASE VS. FIELD COLLECTION PROVENANCE: When CURRENT KNOWN DATA indicates purchased material (e.g., found_object is false/"No"/"No — purchased rough" or an explicit operator-locked purchase source is provided), NEVER write "Found at..." or river/field-collection claims in seo_title or poetic_hook, and NEVER override the purchase source with a river or collection name. Purchase location does not establish geological origin.
 15. PHOTO-BASED SOLID LENGTH MEASUREMENT (overall_solid_length_in): Read the measuring tape or ruler markings, identifiable units, and both solid-product endpoints from the photo where the product is deliberately aligned with the tape/ruler. Return decimal inches (including setting/bail, excluding any flexible necklace chain/cord; necklace chain/cord is a separate confirmed 18 inches). Preserve any existing nonblank overall_solid_length_in in CURRENT KNOWN DATA. If the markings, units, or solid endpoints are not clearly readable in the photo(s), omit overall_solid_length_in completely (never guess or derive from dimensions_mm text).
@@ -428,7 +424,6 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - secondary_colors: Visible secondary or accent colors in the stone (plain text); omit if monochromatic or unsupported by image evidence.
 - color_pattern
 - honest_flaws_and_character
-- character_marks
 - mohs_hardness
 - specific_gravity
 - crystal_system
@@ -445,7 +440,6 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - origin_handle
 - collection_name
 - collection_location
-- primary_use: Select from the supported dropdown vocabulary ("Wearable Art", "Pendant", "Display Piece", "Cabochon — Setting Ready", "Collector Specimen"). Keep current operator-locked value; if listed under PASSED STORED CLASSIFICATIONS, propose a corrected value only when supported by clear physical/visual evidence.
 - primary_medium: Evidenced stone/mineral or material variety identity ONLY (never the generic word "Stone", and never setting metal, plating, wire, or hardware; do not infer variety from geography; omit when unknown).
 - secondary_medium: Preserve operator-locked value; never guess metal alloy or plating from front photos.
 - wire_material: Plain text wire material when supported by facts/visible wire wrap.

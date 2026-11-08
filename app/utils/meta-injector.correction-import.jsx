@@ -5,6 +5,11 @@
 // ==========================================================================
 
 import {
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   TAB3_INSPECTABLE_TEMPLATE_GROUPS,
   COMPATIBILITY_ADAPTER_FIELDS
 } from "./meta-injector.constants.jsx";
@@ -69,9 +74,30 @@ export const DISALLOWED_CORRECTION_FIELD_KEYS = Object.freeze(
     "custom.custom_product",
     "native_image_alt",
     "standardized_candidates",
-    "custom.standardized_candidates"
+    "custom.standardized_candidates",
+    ...REMOVED_PARKED_DESTINATION_LIST,
+    ...REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST
   ])
 );
+
+function isRetiredCorrectionDestinationOrAlias(rawKey) {
+  if (typeof rawKey !== "string" || !rawKey.trim()) return false;
+  const trimmed = rawKey.trim();
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${trimmed}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${trimmed}`)
+  ) {
+    return true;
+  }
+  if (!trimmed.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+  if (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+  return false;
+}
 
 const ALLOWED_TOP_LEVEL_PACKET_KEYS = new Set([
   "schemaVersion",
@@ -853,6 +879,7 @@ export function validateAndPlanTab3CorrectionImport({
 
     if (
       isParkedExcludedKey(rawFieldKey) ||
+      isRetiredCorrectionDestinationOrAlias(rawFieldKey) ||
       DISALLOWED_CORRECTION_FIELD_KEYS.has(rawFieldKey)
     ) {
       rejectedItems.push({
@@ -875,6 +902,8 @@ export function validateAndPlanTab3CorrectionImport({
       !approvalStorageKey ||
       isParkedExcludedKey(targetKeyForProposal) ||
       isParkedExcludedKey(approvalStorageKey) ||
+      isRetiredCorrectionDestinationOrAlias(targetKeyForProposal) ||
+      isRetiredCorrectionDestinationOrAlias(approvalStorageKey) ||
       DISALLOWED_CORRECTION_FIELD_KEYS.has(targetKeyForProposal) ||
       DISALLOWED_CORRECTION_FIELD_KEYS.has(approvalStorageKey)
     ) {
@@ -938,6 +967,27 @@ export function validateAndPlanTab3CorrectionImport({
         f?.registryIdentity === approvalStorageKey ||
         f?.registryIdentity === rawFieldKey
     );
+
+    const matchedRegistryIdentity =
+      matchedConfig?.registryIdentity ||
+      (matchedConfig ? resolveConfigFieldDestination(matchedConfig) : null);
+    const matchedOwner = matchedConfig?.registryOwner || "PRODUCT";
+
+    if (
+      matchedRegistryIdentity &&
+      (REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${matchedOwner}:${matchedRegistryIdentity}`) ||
+        isRetiredCorrectionDestinationOrAlias(matchedRegistryIdentity))
+    ) {
+      rejectedItems.push({
+        index: i,
+        fieldKey: rawFieldKey,
+        targetKey: targetKeyForProposal,
+        approvalKey: approvalStorageKey,
+        code: "destination_disallowed",
+        reason: `Resolved destination "${matchedRegistryIdentity}" (${matchedOwner}) is retired and disallowed for correction import.`
+      });
+      continue;
+    }
 
     if (
       matchedConfig?.registryRole === "EXCLUDED_INPUT" ||

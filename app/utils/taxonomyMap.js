@@ -33,14 +33,6 @@ export const TAXONOMY_GIDS = {
     "Hexagonal": "gid://shopify/Metaobject/154307625211",
     "Triclinic": "gid://shopify/Metaobject/154308706555"
   },
-  "authenticity": {
-    "Genuine": "gid://shopify/Metaobject/151951114491",
-    "Replica": "gid://shopify/Metaobject/156128346363"
-  },
-  "rarity": {
-    "Common": "gid://shopify/Metaobject/151951147259",
-    "Rare": "gid://shopify/Metaobject/154252050683"
-  },
   "condition": {
     "Mint (M)": "gid://shopify/Metaobject/154252017915",
     "Excellent (EX)": "gid://shopify/Metaobject/151951180027"

@@ -1,6 +1,14 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { FIELD_CATALOG, ROCKHOUND_FIELDS } from "./meta-injector.constants.jsx";
+import {
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
+  FIELD_CATALOG,
+  ROCKHOUND_FIELDS
+} from "./meta-injector.constants.jsx";
 import { data as json } from "react-router";
 import React, { useEffect } from "react";
 import { useNavigate, useFetcher } from "react-router";
@@ -111,7 +119,9 @@ const RETIRED_SAVE_KEYS = new Set([
   "artist_notes", "bench_notes", "handcrafted_by", "color",
   "cut_and_shape", "stone_shape", "primary_use",
   "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
-  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
+  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use",
+  ...REMOVED_PARKED_DESTINATION_LIST,
+  ...REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST
 ]);
 
 const ALLOWED_STANDARDIZED_SAVE_KEYS = new Set([
@@ -123,6 +133,34 @@ const ALLOWED_STANDARDIZED_SAVE_KEYS = new Set([
   "product-use"
 ]);
 
+function isRetiredLoaderMetafieldInput(rawNs, rawKey, resolvedOwner = "PRODUCT") {
+  const cleanNs = typeof rawNs === "string" ? rawNs.trim() : "";
+  const cleanKey = typeof rawKey === "string" ? rawKey.trim() : "";
+  const fullDest = cleanNs && cleanKey ? `${cleanNs}.${cleanKey}` : cleanKey;
+
+  if (
+    RETIRED_SAVE_KEYS.has(fullDest) ||
+    REMOVED_PARKED_DESTINATIONS.has(fullDest) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${resolvedOwner}:${fullDest}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${fullDest}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${fullDest}`)
+  ) {
+    return true;
+  }
+
+  if (
+    resolvedOwner === "PRODUCT" &&
+    (!cleanNs || cleanNs === "custom") &&
+    (RETIRED_SAVE_KEYS.has(cleanKey) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(cleanKey) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(fullDest))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 const CATALOG_DESTINATION_MAP = new Map();
 if (Array.isArray(FIELD_CATALOG)) {
   FIELD_CATALOG.forEach((f) => {
@@ -132,7 +170,10 @@ if (Array.isArray(FIELD_CATALOG)) {
     const mk = f.metaKey || f.key;
     if (!ns || !mk) return;
     const dest = `${ns}.${mk}`;
-    if (RETIRED_SAVE_KEYS.has(mk) || RETIRED_SAVE_KEYS.has(dest)) return;
+    const resolvedOwner =
+      f.registryOwner ||
+      (f.owner === "variant_metafield" ? "PRODUCTVARIANT" : "PRODUCT");
+    if (isRetiredLoaderMetafieldInput(ns, mk, resolvedOwner)) return;
     CATALOG_DESTINATION_MAP.set(dest, {
       namespace: ns,
       key: mk,
@@ -346,7 +387,7 @@ export async function action({ request }) {
 
         const fullDest = `${rawNs}.${rawKey}`;
 
-        if (RETIRED_SAVE_KEYS.has(rawKey) || RETIRED_SAVE_KEYS.has(fullDest)) {
+        if (isRetiredLoaderMetafieldInput(rawNs, rawKey, "PRODUCT")) {
           skippedKeys.push(fullDest);
           continue;
         }
@@ -732,6 +773,7 @@ export async function action({ request }) {
         let addedToThisProduct = false;
 
         const pushUpdate = (key, value, type) => {
+          if (isRetiredLoaderMetafieldInput("custom", key, "PRODUCT")) return;
           pendingUpdates.push({
             update: { ownerId: product.id, namespace: "custom", key, value, type },
             title: product.title

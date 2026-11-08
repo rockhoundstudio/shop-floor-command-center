@@ -6,6 +6,8 @@
 // ==========================================================================
 
 import {
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
   DEV_SHOW_ALL_TEMPLATE_FIELDS,
   PRODUCT_TEMPLATE_GROUPS,
   TAB3_PARKED_DRAWER_HEADING,
@@ -44,10 +46,14 @@ export const DESCRIPTION_REVIEW_EXCLUDED_KEYS = ["native_description", "custom.g
 // Used strictly for global telemetry tracking and source-context preservation in normal 62-slot projection.
 export const HIDDEN_CONTEXT_FIELDS = ["custom.origin_story"];
 
-export const RETIRED_KEYS = [
-  "artist_notes", "bench_notes", "handcrafted_by", "primary_use",
-  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.primary_use"
-];
+export const RETIRED_KEYS = Array.from(
+  new Set([
+    "artist_notes", "bench_notes", "handcrafted_by", "primary_use",
+    "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.primary_use",
+    ...REMOVED_PARKED_DESTINATION_LIST,
+    ...REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST
+  ])
+);
 
 export const NON_ORDINARY_COMPAT_AND_EXCLUDED_SET = (() => {
   const s = new Set([
@@ -64,7 +70,9 @@ export const NON_ORDINARY_COMPAT_AND_EXCLUDED_SET = (() => {
     "target_gender",
     "custom.target_gender",
     "alt_text",
-    "custom.alt_text"
+    "custom.alt_text",
+    ...REMOVED_PARKED_DESTINATION_LIST,
+    ...REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST
   ]);
 
   const addCatalogEntryKeys = (entry) => {
@@ -228,7 +236,7 @@ export const getDynamicSections = (manifest, options = null) => {
       if (f.key === "native_image_alt") {
         // When custom.alt_text compatibility metafield already exists on the loaded product,
         // surface it in section.keys for independent review/edit alongside per-image media alt controls.
-        // Do NOT append a new entry to group.fields so the canonical 62 / 93 logical capability count remains unchanged.
+        // Do NOT append a new entry to group.fields so the canonical logical capability count remains unchanged.
         if (hasExistingGeneralAlt && !keys.includes("custom.alt_text")) {
           keys.push("custom.alt_text");
         }
@@ -258,7 +266,7 @@ export const getDynamicSections = (manifest, options = null) => {
     });
     
     // In the default 62-slot projection, retain custom.origin_story as hidden diagnostic source context in Origin and collection.
-    // In the 93-slot Tab 3 inspectable projection, custom.origin_story lives once inside the Parked / Excluded drawer.
+    // In the Tab 3 inspectable projection, custom.origin_story lives once inside the Parked / Excluded drawer.
     if (
       !includeTab3InspectableInventory &&
       (group.heading === "3. Origin, Story, and Collection" || group.heading === "Origin and collection")
@@ -287,9 +295,10 @@ export const getStatusTone = (status) => {
 };
 
 export const isMultilineKey = (k, control) => control === "multiline" || [
-  "custom.generated_description", "custom.stone_story", 
-  "custom.bench_notes", "custom.character_marks", "custom.honest_flaws_and_character", 
-  "custom.artist_notes", "custom.origin_story", "native_seo_description"
+  "custom.generated_description",
+  "custom.honest_flaws_and_character",
+  "custom.origin_story",
+  "native_seo_description"
 ].includes(k);
 
 export const computeSystemStatus = ({

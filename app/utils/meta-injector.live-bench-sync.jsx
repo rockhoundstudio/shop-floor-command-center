@@ -56,7 +56,6 @@ export function createInitialDraftSourceContext() {
   return {
     rawSeedInput: "",
     explicitTitleOverride: "",
-    primary_use: "",
     origin_story: "",
     honest_flaws_and_character: ""
   };

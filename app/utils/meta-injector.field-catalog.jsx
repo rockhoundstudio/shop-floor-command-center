@@ -5,7 +5,108 @@
 // ==========================================================================
 
 // ==========================================================================
-// AUTHORITATIVE OWNER + IDENTITY REGISTRY CONTRACT (138 ROWS + 5 ADDITIONS)
+// AUTHORITATIVE RETIRED / REMOVED PARKED DESTINATION IDENTITIES
+// ==========================================================================
+// Single shared leaf authority for the 29 removed parked destinations and
+// their 12 custom product metafield input aliases.
+// Note: Bare "price", "age_group", "condition", "custom_product",
+// "authenticity", and "rarity" are NEVER placed in global retirement sets
+// so surviving native_price/price, variant mm-google-shopping.*, standardized
+// shopify.*, internal profile/geology lookups, and geo.* fields remain intact.
+
+export const REMOVED_PARKED_CANONICAL_IDENTITY_LIST = Object.freeze([
+  "PRODUCT:custom.character_marks",
+  "PRODUCT:custom.rescued_by",
+  "PRODUCT:custom.official_name",
+  "PRODUCT:custom.stone_story",
+  "PRODUCT:custom.artist_notes",
+  "PRODUCT:custom.bench_notes",
+  "PRODUCT:custom.handcrafted_by",
+  "PRODUCT:custom.story_theme",
+  "PRODUCT:custom.primary_use",
+  "PRODUCT:custom.necklace_design",
+  "PRODUCT:custom.authenticity",
+  "PRODUCT:custom.rarity",
+  "PRODUCT:custom.custom_product",
+  "PRODUCT:custom.age_group",
+  "PRODUCT:custom.condition",
+  "PRODUCT:custom.price",
+  "PRODUCT:shopify.authenticity",
+  "PRODUCT:shopify.necklace-design",
+  "PRODUCT:shopify.rarity",
+  "PRODUCT:app--3026047.conversation_starters",
+  "PRODUCTVARIANT:global.harmonized_system_code",
+  "PRODUCTVARIANT:mm-google-shopping.mpn",
+  "PRODUCTVARIANT:mm-google-shopping.custom_label_0",
+  "PRODUCTVARIANT:mm-google-shopping.custom_label_1",
+  "PRODUCTVARIANT:mm-google-shopping.custom_label_2",
+  "PRODUCTVARIANT:mm-google-shopping.custom_label_3",
+  "PRODUCTVARIANT:mm-google-shopping.custom_label_4",
+  "PRODUCTVARIANT:mm-google-shopping.size_system",
+  "PRODUCTVARIANT:mm-google-shopping.size_type"
+]);
+
+export const REMOVED_PARKED_DESTINATION_LIST = Object.freeze([
+  "custom.character_marks",
+  "custom.rescued_by",
+  "custom.official_name",
+  "custom.stone_story",
+  "custom.artist_notes",
+  "custom.bench_notes",
+  "custom.handcrafted_by",
+  "custom.story_theme",
+  "custom.primary_use",
+  "custom.necklace_design",
+  "custom.authenticity",
+  "custom.rarity",
+  "custom.custom_product",
+  "custom.age_group",
+  "custom.condition",
+  "custom.price",
+  "shopify.authenticity",
+  "shopify.necklace-design",
+  "shopify.rarity",
+  "app--3026047.conversation_starters",
+  "global.harmonized_system_code",
+  "mm-google-shopping.mpn",
+  "mm-google-shopping.custom_label_0",
+  "mm-google-shopping.custom_label_1",
+  "mm-google-shopping.custom_label_2",
+  "mm-google-shopping.custom_label_3",
+  "mm-google-shopping.custom_label_4",
+  "mm-google-shopping.size_system",
+  "mm-google-shopping.size_type"
+]);
+
+export const REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST = Object.freeze([
+  "character_marks",
+  "rescued_by",
+  "official_name",
+  "stone_story",
+  "artist_notes",
+  "bench_notes",
+  "handcrafted_by",
+  "story_theme",
+  "primary_use",
+  "necklace_design",
+  "necklace-design",
+  "custom.necklace-design"
+]);
+
+export const REMOVED_PARKED_CANONICAL_IDENTITIES = new Set(
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST
+);
+
+export const REMOVED_PARKED_DESTINATIONS = new Set(
+  REMOVED_PARKED_DESTINATION_LIST
+);
+
+export const REMOVED_PARKED_CUSTOM_INPUT_ALIASES = new Set(
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST
+);
+
+// ==========================================================================
+// AUTHORITATIVE OWNER + IDENTITY REGISTRY CONTRACT (108 ROWS + 5 ADDITIONS)
 // ==========================================================================
 
 export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
@@ -19,14 +120,10 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
   registry: [
     { row: 1, owner: "PRODUCT", identity: "app--3890849--eligibility.eligibility_details", role: "PROTECTED_DATA" },
     { row: 2, owner: "PRODUCT", identity: "custom.alt_text", role: "COMPAT_REP" },
-    { row: 3, owner: "PRODUCT", identity: "custom.artist_notes", role: "EXCLUDED_INPUT" },
-    { row: 4, owner: "PRODUCT", identity: "custom.authenticity", role: "EXCLUDED_INPUT" },
     { row: 5, owner: "PRODUCT", identity: "custom.badge", role: "DUPLICATE_ALIAS" },
     { row: 6, owner: "PRODUCT", identity: "custom.bail_included", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 7, owner: "PRODUCT", identity: "custom.bench_notes", role: "EXCLUDED_INPUT" },
     { row: 8, owner: "PRODUCT", identity: "custom.chain_link_type", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 9, owner: "PRODUCT", identity: "custom.chain_material", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 10, owner: "PRODUCT", identity: "custom.character_marks", role: "EXCLUDED_INPUT" },
     { row: 11, owner: "PRODUCT", identity: "custom.cleavage", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 12, owner: "PRODUCT", identity: "custom.collection_date", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 13, owner: "PRODUCT", identity: "custom.collection_location", role: "PRIMARY_CANDIDATE_DESTINATION" },
@@ -35,7 +132,6 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 16, owner: "PRODUCT", identity: "custom.color_pattern", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 17, owner: "PRODUCT", identity: "custom.crystal_system", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 18, owner: "PRODUCT", identity: "custom.crystal-system", role: "DUPLICATE_ALIAS" },
-    { row: 19, owner: "PRODUCT", identity: "custom.custom_product", role: "EXCLUDED_INPUT" },
     { row: 20, owner: "PRODUCT", identity: "custom.cut_and_shape", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 21, owner: "PRODUCT", identity: "custom.diaphaneity", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 22, owner: "PRODUCT", identity: "custom.dimensions_mm", role: "PRIMARY_CANDIDATE_DESTINATION" },
@@ -46,7 +142,6 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 27, owner: "PRODUCT", identity: "custom.geological_era", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 28, owner: "PRODUCT", identity: "custom.geological-era", role: "DUPLICATE_ALIAS" },
     { row: 29, owner: "PRODUCT", identity: "custom.google_product_category", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 30, owner: "PRODUCT", identity: "custom.handcrafted_by", role: "EXCLUDED_INPUT" },
     { row: 31, owner: "PRODUCT", identity: "custom.honest_flaws_and_character", role: "EXCLUDED_INPUT" },
     { row: 32, owner: "PRODUCT", identity: "custom.is_one_of_a_kind", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 33, owner: "PRODUCT", identity: "custom.is_ooak", role: "COMPAT_REP" },
@@ -57,19 +152,13 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 38, owner: "PRODUCT", identity: "custom.mineral_class", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 39, owner: "PRODUCT", identity: "custom.mineral-class", role: "DUPLICATE_ALIAS" },
     { row: 40, owner: "PRODUCT", identity: "custom.mohs_hardness", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 41, owner: "PRODUCT", identity: "custom.necklace_design", role: "EXCLUDED_INPUT" },
-    { row: 42, owner: "PRODUCT", identity: "custom.necklace-design", role: "DUPLICATE_ALIAS" },
     { row: 43, owner: "PRODUCT", identity: "custom.origin_handle", role: "DUPLICATE_ALIAS" },
     { row: 44, owner: "PRODUCT", identity: "custom.origin_location", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 45, owner: "PRODUCT", identity: "custom.origin_page_handle", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 46, owner: "PRODUCT", identity: "custom.origin_story", role: "EXCLUDED_INPUT" },
     { row: 47, owner: "PRODUCT", identity: "custom.piece_name", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 48, owner: "PRODUCT", identity: "custom.price", role: "EXCLUDED_INPUT" },
     { row: 49, owner: "PRODUCT", identity: "custom.primary_color", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 50, owner: "PRODUCT", identity: "custom.primary_medium", role: "COMPAT_REP" },
-    { row: 51, owner: "PRODUCT", identity: "custom.primary_use", role: "EXCLUDED_INPUT" },
-    { row: 52, owner: "PRODUCT", identity: "custom.rarity", role: "EXCLUDED_INPUT" },
-    { row: 53, owner: "PRODUCT", identity: "custom.rescued_by", role: "EXCLUDED_INPUT" },
     { row: 54, owner: "PRODUCT", identity: "custom.review_widget_data", role: "DUPLICATE_ALIAS" },
     { row: 55, owner: "PRODUCT", identity: "custom.rock_composition", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 56, owner: "PRODUCT", identity: "custom.rock_formation", role: "PRIMARY_CANDIDATE_DESTINATION" },
@@ -90,7 +179,6 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 71, owner: "PRODUCT", identity: "custom.widget", role: "DUPLICATE_ALIAS" },
     { row: 72, owner: "PRODUCT", identity: "custom.wire_material", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 73, owner: "PRODUCT", identity: "global.description_tag", role: "COMPAT_REP" },
-    { row: 74, owner: "PRODUCTVARIANT", identity: "global.harmonized_system_code", role: "EXCLUDED_INPUT" },
     { row: 75, owner: "PRODUCT", identity: "global.title_tag", role: "COMPAT_REP" },
     { row: 76, owner: "PRODUCT", identity: "google.age_group", role: "COMPAT_REP" },
     { row: 77, owner: "PRODUCTVARIANT", identity: "google.age_group", role: "PRIMARY_CANDIDATE_DESTINATION" },
@@ -109,9 +197,7 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 90, owner: "PRODUCT", identity: "mm-google-shopping.custom_product", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 91, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.gender", role: "COMPAT_REP" },
     { row: 92, owner: "PRODUCT", identity: "mm-google-shopping.google_product_category", role: "COMPAT_REP" },
-    { row: 93, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.mpn", role: "EXCLUDED_INPUT" },
     { row: 94, owner: "PRODUCT", identity: "shopify.age-group", role: "COMPAT_REP" },
-    { row: 95, owner: "PRODUCT", identity: "shopify.authenticity", role: "EXCLUDED_INPUT" },
     { row: 96, owner: "PRODUCT", identity: "shopify.chain-link-type", role: "COMPAT_REP" },
     { row: 97, owner: "PRODUCT", identity: "shopify.color-pattern", role: "COMPAT_REP" },
     { row: 98, owner: "PRODUCT", identity: "shopify.condition", role: "COMPAT_REP" },
@@ -124,29 +210,14 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 105, owner: "PRODUCT", identity: "shopify.material", role: "COMPAT_REP" },
     { row: 106, owner: "PRODUCT", identity: "shopify.material-origin", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 107, owner: "PRODUCT", identity: "shopify.mineral-class", role: "COMPAT_REP" },
-    { row: 108, owner: "PRODUCT", identity: "shopify.necklace-design", role: "EXCLUDED_INPUT" },
     { row: 109, owner: "PRODUCT", identity: "shopify.product-classification", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 110, owner: "PRODUCT", identity: "shopify.product-use", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 111, owner: "PRODUCT", identity: "shopify.rarity", role: "EXCLUDED_INPUT" },
     { row: 112, owner: "PRODUCT", identity: "shopify.rock-composition", role: "COMPAT_REP" },
     { row: 113, owner: "PRODUCT", identity: "shopify.rock-formation", role: "COMPAT_REP" },
     { row: 114, owner: "PRODUCT", identity: "shopify.target-gender", role: "COMPAT_REP" },
-    { row: 115, owner: "PRODUCT", identity: "custom.official_name", role: "EXCLUDED_INPUT" },
-    { row: 116, owner: "PRODUCT", identity: "custom.stone_story", role: "EXCLUDED_INPUT" },
     { row: 117, owner: "PRODUCT", identity: "custom.cut_type", role: "COMPAT_REP" },
     { row: 118, owner: "PRODUCT", identity: "custom.secondary_colors", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 119, owner: "PRODUCT", identity: "custom.tenacity", role: "PRIMARY_CANDIDATE_DESTINATION" },
-    { row: 120, owner: "PRODUCT", identity: "custom.age_group", role: "EXCLUDED_INPUT" },
-    { row: 121, owner: "PRODUCT", identity: "custom.condition", role: "EXCLUDED_INPUT" },
-    { row: 122, owner: "PRODUCT", identity: "custom.story_theme", role: "EXCLUDED_INPUT" },
-    { row: 123, owner: "PRODUCT", identity: "app--3026047.conversation_starters", role: "EXCLUDED_INPUT" },
-    { row: 124, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.custom_label_0", role: "EXCLUDED_INPUT" },
-    { row: 125, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.custom_label_1", role: "EXCLUDED_INPUT" },
-    { row: 126, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.custom_label_2", role: "EXCLUDED_INPUT" },
-    { row: 127, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.custom_label_3", role: "EXCLUDED_INPUT" },
-    { row: 128, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.custom_label_4", role: "EXCLUDED_INPUT" },
-    { row: 129, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.size_system", role: "EXCLUDED_INPUT" },
-    { row: 130, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.size_type", role: "EXCLUDED_INPUT" },
     { row: 131, owner: "PRODUCT", identity: "native_title", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 132, owner: "PRODUCT", identity: "native_description", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 133, owner: "PRODUCT", identity: "native_seo_title", role: "PRIMARY_CANDIDATE_DESTINATION" },
@@ -262,7 +333,6 @@ export const PRODUCER_ALIGNMENT_PENDING_KEYS = Object.freeze([]);
 
 const STANDARDIZED_ATTRIBUTE_KEYS = [
   "age-group",
-  "authenticity",
   "chain-link-type",
   "color-pattern",
   "condition",
@@ -275,10 +345,8 @@ const STANDARDIZED_ATTRIBUTE_KEYS = [
   "material",
   "material-origin",
   "mineral-class",
-  "necklace-design",
   "product-classification",
   "product-use",
-  "rarity",
   "rock-composition",
   "rock-formation",
   "target-gender"
@@ -291,11 +359,7 @@ const CANONICAL_SHOPIFY_STANDARDIZED_KEYS = new Set([
   "product-use"
 ]);
 
-const EXCLUDED_SHOPIFY_STANDARDIZED_KEYS = new Set([
-  "authenticity",
-  "necklace-design",
-  "rarity"
-]);
+const EXCLUDED_SHOPIFY_STANDARDIZED_KEYS = new Set([]);
 
 const STANDARDIZED_CAPABILITY_NOTES = {
   "construction": "Retained for bails.",
@@ -308,7 +372,7 @@ export const TAB3_PARKED_DRAWER_HEADING = "Parked / Excluded Inventory (Read-Onl
 
 // 🟢 MASTER FIELD CATALOG
 // Single source of truth driving Target Keys, Rockhound Fields, UI Groups, Metafield Configs,
-// the 62-Capability Projection, and the 93-Slot Tab 3 Inspectable Inventory.
+// the 62-Capability Projection, and the Tab 3 Inspectable Inventory.
 export const FIELD_CATALOG = [
   // 🟢 CORE IGNITION & LORE
   {
@@ -344,20 +408,6 @@ export const FIELD_CATALOG = [
     registryRole: "PRIMARY_CANDIDATE_DESTINATION",
     applicability: "all_products",
     mappingStatus: "active"
-  },
-  {
-    key: "official_name",
-    label: "Official Name",
-    colorGroup: "green",
-    targetIndex: 0,
-    rockhoundIndex: 1,
-    rockhoundConfig: { type: "single_line_text_field" },
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.official_name",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "excluded"
   },
   {
     key: "seo_title",
@@ -509,21 +559,6 @@ export const FIELD_CATALOG = [
     mappingStatus: "compatibility"
   },
   {
-    key: "rescued_by",
-    label: "Rescued By",
-    colorGroup: "green",
-    targetIndex: 55,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    role: "origin",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.rescued_by",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "compatibility"
-  },
-  {
     key: "origin_story",
     label: "Origin Story",
     colorGroup: "green",
@@ -538,18 +573,6 @@ export const FIELD_CATALOG = [
     registryRole: "EXCLUDED_INPUT",
     mappingStatus: "compatibility",
     control: "multiline"
-  },
-  {
-    key: "stone_story",
-    label: "Stone Story",
-    colorGroup: "green",
-    targetIndex: 1,
-    metaConfig: { type: "list.single_line_text_field" },
-    uiConfig: { type: "text", multiline: true },
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.stone_story",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "excluded"
   },
   {
     key: "generated_description",
@@ -626,21 +649,6 @@ export const FIELD_CATALOG = [
     registryRole: "COMPAT_REP",
     canonicalTarget: "native_shipping_weight",
     mappingStatus: "compatibility"
-  },
-  {
-    key: "price",
-    label: "Price",
-    colorGroup: "blue",
-    targetIndex: 54,
-    rockhoundIndex: 13,
-    rockhoundConfig: { type: "single_line_text_field" },
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.price",
-    registryRole: "EXCLUDED_INPUT",
-    canonicalTarget: "native_price",
-    mappingStatus: "excluded"
   },
   {
     key: "cut_type",
@@ -824,24 +832,6 @@ export const FIELD_CATALOG = [
     registryRole: "PRIMARY_CANDIDATE_DESTINATION",
     applicability: "stone_bearing_products",
     mappingStatus: "active"
-  },
-  {
-    key: "character_marks",
-    label: "Character Marks",
-    colorGroup: "blue",
-    targetIndex: 8,
-    rockhoundIndex: 25,
-    rockhoundConfig: { type: "single_line_text_field", multiline: true },
-    metaConfig: { type: "list.single_line_text_field" },
-    uiConfig: { type: "text", multiline: true },
-    role: "appearance",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.character_marks",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "excluded",
-    control: "multiline"
   },
   {
     key: "honest_flaws_and_character",
@@ -1217,20 +1207,6 @@ export const FIELD_CATALOG = [
 
   // 🟣 JEWELRY & HARDWARE SETTINGS
   {
-    key: "primary_use",
-    label: "Primary Use",
-    colorGroup: "purple",
-    rockhoundIndex: 17,
-    rockhoundConfig: { isDropdown: true },
-    uiConfig: { type: "text" },
-    optionsKey: "primary_use",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.primary_use",
-    registryRole: "EXCLUDED_INPUT",
-    canonicalTarget: "shopify.product-use",
-    mappingStatus: "excluded"
-  },
-  {
     key: "primary_medium",
     label: "Primary Medium",
     colorGroup: "purple",
@@ -1304,22 +1280,6 @@ export const FIELD_CATALOG = [
     registryIdentity: "custom.jewelry_type",
     registryRole: "PRIMARY_CANDIDATE_DESTINATION",
     mappingStatus: "active"
-  },
-  {
-    key: "necklace_design",
-    label: "Necklace Design",
-    colorGroup: "purple",
-    targetIndex: 32,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    role: "conditional_fact",
-    applicability: "optional_when_inapplicable",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.necklace_design",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "compatibility"
   },
   {
     key: "setting_ready",
@@ -1451,21 +1411,6 @@ export const FIELD_CATALOG = [
     mappingStatus: "active"
   },
   {
-    key: "age_group",
-    label: "Age Group (Custom Excluded)",
-    colorGroup: "yellow",
-    targetIndex: 47,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.age_group",
-    registryRole: "EXCLUDED_INPUT",
-    canonicalTarget: "google.age_group",
-    mappingStatus: "excluded"
-  },
-  {
     key: "target_gender",
     label: "Target Gender (Custom Compat)",
     colorGroup: "yellow",
@@ -1479,66 +1424,6 @@ export const FIELD_CATALOG = [
     registryIdentity: "custom.target_gender",
     registryRole: "COMPAT_REP",
     canonicalTarget: "google.target_gender",
-    mappingStatus: "compatibility"
-  },
-  {
-    key: "condition",
-    label: "Condition (Custom Excluded)",
-    colorGroup: "yellow",
-    targetIndex: 49,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.condition",
-    registryRole: "EXCLUDED_INPUT",
-    canonicalTarget: "google.condition",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "authenticity",
-    label: "Authenticity",
-    colorGroup: "yellow",
-    targetIndex: 28,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.authenticity",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "rarity",
-    label: "Rarity",
-    colorGroup: "yellow",
-    targetIndex: 29,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    role: "custom_fact",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.rarity",
-    registryRole: "EXCLUDED_INPUT",
-    mappingStatus: "compatibility"
-  },
-  {
-    key: "custom_product",
-    label: "Custom Product (Custom Excluded)",
-    colorGroup: "yellow",
-    targetIndex: 57,
-    metaConfig: { type: "single_line_text_field" },
-    uiConfig: { type: "text" },
-    role: "channel_compatibility",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.custom_product",
-    registryRole: "EXCLUDED_INPUT",
-    canonicalTarget: "mm-google-shopping.custom_product",
     mappingStatus: "compatibility"
   },
   {
@@ -1788,195 +1673,7 @@ export const FIELD_CATALOG = [
       ...(STANDARDIZED_CAPABILITY_NOTES[k] ? { capabilityNote: STANDARDIZED_CAPABILITY_NOTES[k] } : {}),
       metaConfig: { type: "list.metaobject_reference", namespace: "shopify" }
     };
-  }),
-
-  // ⚪ RECONCILED PARKED / EXCLUDED REGISTRY ENTRIES (14 Additional EXCLUDED_INPUT Rows for Complete 31-Entry Tab 3 Inventory)
-  {
-    key: "artist_notes",
-    metaKey: "artist_notes",
-    label: "Artist Notes (Parked)",
-    role: "parked_excluded",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.artist_notes",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded",
-    control: "multiline"
-  },
-  {
-    key: "bench_notes",
-    metaKey: "bench_notes",
-    label: "Bench Notes (Parked)",
-    role: "parked_excluded",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.bench_notes",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded",
-    control: "multiline"
-  },
-  {
-    key: "handcrafted_by",
-    metaKey: "handcrafted_by",
-    label: "Handcrafted By (Parked)",
-    role: "parked_excluded",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.handcrafted_by",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "story_theme",
-    metaKey: "story_theme",
-    label: "Story Theme (Parked)",
-    role: "parked_excluded",
-    namespace: "custom",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "custom.story_theme",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "app--3026047.conversation_starters",
-    metaKey: "conversation_starters",
-    label: "Conversation Starters (Parked App Metafield)",
-    role: "parked_excluded",
-    namespace: "app--3026047",
-    owner: "metafield",
-    registryOwner: "PRODUCT",
-    registryIdentity: "app--3026047.conversation_starters",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "global.harmonized_system_code",
-    metaKey: "harmonized_system_code",
-    label: "Harmonized System Code (Parked Variant Customs Code)",
-    role: "parked_excluded",
-    namespace: "global",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "global.harmonized_system_code",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded",
-    capabilityNote: "Parked customs code (customsCodePolicy: parked_no_deletion). Variant-owned (PRODUCTVARIANT); read-only."
-  },
-  {
-    key: "mm-google-shopping.mpn",
-    metaKey: "mpn",
-    label: "Google Shopping MPN (Excluded Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.mpn",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded",
-    capabilityNote: "Excluded for all products (mpnPolicy: excluded_for_all_products). Variant-owned (PRODUCTVARIANT); read-only."
-  },
-  {
-    key: "mm-google-shopping.custom_label_0",
-    metaKey: "custom_label_0",
-    label: "Google Shopping Custom Label 0 (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.custom_label_0",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "mm-google-shopping.custom_label_1",
-    metaKey: "custom_label_1",
-    label: "Google Shopping Custom Label 1 (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.custom_label_1",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "mm-google-shopping.custom_label_2",
-    metaKey: "custom_label_2",
-    label: "Google Shopping Custom Label 2 (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.custom_label_2",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "mm-google-shopping.custom_label_3",
-    metaKey: "custom_label_3",
-    label: "Google Shopping Custom Label 3 (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.custom_label_3",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "mm-google-shopping.custom_label_4",
-    metaKey: "custom_label_4",
-    label: "Google Shopping Custom Label 4 (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.custom_label_4",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "mm-google-shopping.size_system",
-    metaKey: "size_system",
-    label: "Google Shopping Size System (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.size_system",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  },
-  {
-    key: "mm-google-shopping.size_type",
-    metaKey: "size_type",
-    label: "Google Shopping Size Type (Parked Variant Field)",
-    role: "parked_excluded",
-    namespace: "mm-google-shopping",
-    owner: "variant_metafield",
-    registryOwner: "PRODUCTVARIANT",
-    registryIdentity: "mm-google-shopping.size_type",
-    registryRole: "EXCLUDED_INPUT",
-    applicability: "parked_excluded",
-    mappingStatus: "excluded"
-  }
+  })
 ];
 
 // ==========================================================================

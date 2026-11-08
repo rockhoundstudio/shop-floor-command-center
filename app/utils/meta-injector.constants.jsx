@@ -5,6 +5,12 @@
 // ==========================================================================
 
 import {
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   UNIVERSAL_CAPABILITY_CONTRACT,
   OWNER_IDENTITY_REGISTRY,
   APPROVED_MEASUREMENT_ADDITIONS,
@@ -26,6 +32,12 @@ import {
 } from "./meta-injector.field-catalog.jsx";
 
 export {
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   UNIVERSAL_CAPABILITY_CONTRACT,
   OWNER_IDENTITY_REGISTRY,
   APPROVED_MEASUREMENT_ADDITIONS,
@@ -52,7 +64,6 @@ export {
 export const DEV_SHOW_ALL_TEMPLATE_FIELDS = true;
 
 export const STUDIO_DEFAULTS = {
-  rescued_by: "Bob and Janyce",
   is_ooak: "true",
   is_one_of_a_kind: "true",
   treated: "Untreated — Natural",
@@ -199,14 +210,6 @@ DROPDOWN_OPTIONS.treated = [
 DROPDOWN_OPTIONS.found_object = [
   { label: "Yes — found in the wild", value: "true" },
   { label: "No — purchased rough", value: "No — purchased rough" }
-];
-
-DROPDOWN_OPTIONS.primary_use = [
-  { label: "Wearable Art", value: "Wearable Art" },
-  { label: "Pendant", value: "Pendant" },
-  { label: "Display Piece", value: "Display Piece" },
-  { label: "Cabochon — Setting Ready", value: "Cabochon — Setting Ready" },
-  { label: "Collector Specimen", value: "Collector Specimen" }
 ];
 
 DROPDOWN_OPTIONS.setting_ready = [
@@ -367,8 +370,8 @@ export const PRODUCT_TEMPLATE_GROUPS = TEMPLATE_GROUP_DEFINITIONS.map(groupDef =
   };
 });
 
-// Tab 3 Complete Inspectable Inventory (93 logical slots = 62 canonical working slots + 31 parked/excluded entries).
-// Reconciled directly from EXCLUDED_INPUT_ENTRIES in registry order so all 31 parked entries are owner-aware and unique.
+// Tab 3 Complete Inspectable Inventory (64 logical slots = 62 canonical working slots + 2 surviving parked/excluded entries).
+// Reconciled directly from EXCLUDED_INPUT_ENTRIES in registry order so surviving parked entries are owner-aware and unique.
 const TAB3_PARKED_TEMPLATE_FIELDS = Object.freeze(
   EXCLUDED_INPUT_ENTRIES.map(regEntry => {
     const matchedCatalogEntry = FIELD_CATALOG.find(
@@ -434,7 +437,7 @@ const isGeneralAltCompatibilityRowKey = (rawKey) =>
  * When an existing `custom.alt_text` compatibility row is rendered alongside `native_image_alt`
  * controls, it is counted accurately in `renderedCount` / `totalRenderedRows` and tracked
  * explicitly in `compatibilityRowCount` (and group `compatibilityRenderedCount`) so it never
- * inflates logical capability counts (62 / 93 / 7), never inflates `mediaControlCount`
+ * inflates logical capability counts, never inflates `mediaControlCount`
  * (per-photo alt rows), and never produces a false `nonMediaDiscrepancy`.
  *
  * @param {Array} templateGroups - Array of template group objects (defaults to PRODUCT_TEMPLATE_GROUPS).
@@ -681,7 +684,7 @@ export const CHANNEL_REQUIREMENTS = {
     "piece_name", "primary_medium", "is_ooak", "is_one_of_a_kind",
     "treated", "material", "stone_family",
     "surface_finish", "dimensions_mm", "weight_grams", "origin_story",
-    "collection_name", "origin_handle", "origin_page_handle", "primary_use"
+    "collection_name", "origin_handle", "origin_page_handle"
   ],
   point_of_sale: [
     "piece_name", "primary_medium", "material", "price",
@@ -689,20 +692,20 @@ export const CHANNEL_REQUIREMENTS = {
   ],
   shop_app: [
     "piece_name", "primary_medium", "material", "stone_family",
-    "surface_finish", "origin_story", "primary_use",
+    "surface_finish", "origin_story",
     "is_ooak", "is_one_of_a_kind", "treated"
   ],
   facebook_instagram: [
     "piece_name", "primary_medium", "material", "price",
-    "primary_use", "is_ooak", "is_one_of_a_kind", "treated",
+    "is_ooak", "is_one_of_a_kind", "treated",
     "surface_finish", "dimensions_mm", "weight_grams"
   ],
   google_youtube: [
     "piece_name", "primary_medium", "material", "price",
-    "primary_use", "setting_ready", "bail_included",
+    "setting_ready", "bail_included",
     "is_ooak", "is_one_of_a_kind", "treated", "surface_finish",
     "dimensions_mm", "weight_grams", "found_object", "condition",
-    "age_group", "target_gender", "authenticity", "rarity", "color_pattern"
+    "age_group", "target_gender", "color_pattern"
   ],
   inbox: [
     "piece_name", "primary_medium", "material", "price"
@@ -713,19 +716,16 @@ export function getFieldStatus(key, value, context = {}) {
   const isFilled = value !== undefined && value !== null && value.toString().trim() !== "";
   if (isFilled) return "green";
 
-  const primaryUse = context.primary_use || "";
-  const isJewelry = primaryUse === "Wearable Art" || primaryUse === "Pendant";
-
   const JEWELRY_ONLY_FIELDS = [
-    "jewelry_type", "necklace_design", "chain_link_type", "chain_material",
+    "jewelry_type", "chain_link_type", "chain_material",
     "jewelry_finding_type", "bail_included", "setting_ready", "wire_material",
     "chain_cord_length_in", "fitting_opening_mm"
   ];
 
   const ALWAYS_OPTIONAL_FIELDS = [
-    "honest_flaws_and_character", "character_marks",
+    "honest_flaws_and_character",
     "secondary_medium", "collection_date", "wire_material",
-    "stone_story", "custom_product", "trip_or_series", "alt_text",
+    "custom_product", "trip_or_series", "alt_text",
     "overall_solid_length_in", "whole_product_weight_grams",
     "chain_cord_length_in", "accessory_dimensions_mm", "fitting_opening_mm"
   ];
@@ -733,10 +733,6 @@ export function getFieldStatus(key, value, context = {}) {
   if (ALWAYS_OPTIONAL_FIELDS.includes(key)) return "yellow";
 
   if (JEWELRY_ONLY_FIELDS.includes(key)) {
-    if (isJewelry) {
-      const isRequiredByAnyChannel = Object.values(CHANNEL_REQUIREMENTS).some(fields => fields.includes(key));
-      return isRequiredByAnyChannel ? "red" : "yellow";
-    }
     return "yellow";
   }
 
@@ -839,7 +835,6 @@ export const DEFAULT_DROPDOWNS = {
   is_one_of_a_kind: "",
   treated: "",
   found_object: "",
-  primary_use: "",
   setting_ready: "",
   bail_included: "",
   chain_material: "",

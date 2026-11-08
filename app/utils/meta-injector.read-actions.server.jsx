@@ -1,4 +1,11 @@
-import { FIELD_CATALOG } from "./meta-injector.constants.jsx";
+import {
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
+  FIELD_CATALOG
+} from "./meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS,
   SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
@@ -16,17 +23,59 @@ import {
 
 // 🟢 Read-Only Actions Engine — No Prisma Import, No Mutations Here
 
-export const RETIRED_KEYS = [
-  "artist_notes", "bench_notes", "handcrafted_by", "color",
-  "cut_and_shape", "stone_shape", "primary_use",
-  "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
-  "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use"
-];
+export const RETIRED_KEYS = Array.from(
+  new Set([
+    "artist_notes", "bench_notes", "handcrafted_by", "color",
+    "cut_and_shape", "stone_shape", "primary_use",
+    "custom.artist_notes", "custom.bench_notes", "custom.handcrafted_by", "custom.color",
+    "custom.cut_and_shape", "custom.stone_shape", "custom.primary_use",
+    ...REMOVED_PARKED_DESTINATION_LIST,
+    ...REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST
+  ])
+);
+
+const RETIRED_KEYS_SET = new Set(RETIRED_KEYS);
+
+function isRetiredCatalogMetafieldEntry(field, destKey) {
+  if (!field || typeof destKey !== "string" || !destKey.trim()) return true;
+  const resolvedOwner =
+    field.registryOwner ||
+    (field.owner === "variant_metafield" ? "PRODUCTVARIANT" : "PRODUCT");
+  const rawKey = typeof field.key === "string" ? field.key.trim() : "";
+
+  if (
+    RETIRED_KEYS_SET.has(destKey) ||
+    RETIRED_KEYS_SET.has(rawKey) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${resolvedOwner}:${destKey}`) ||
+    REMOVED_PARKED_DESTINATIONS.has(destKey)
+  ) {
+    return true;
+  }
+
+  if (
+    resolvedOwner === "PRODUCT" &&
+    (field.namespace === "custom" || (!field.namespace && !rawKey.includes("."))) &&
+    (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(rawKey) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(destKey))
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 export const ALL_STANDARDIZED_META_KEYS = Array.from(
   new Set(
     FIELD_CATALOG
-      .filter(f => f.role === "standardized_attribute" || f.namespace === "shopify")
+      .filter(f => {
+        if (!f || (f.role !== "standardized_attribute" && f.namespace !== "shopify")) return false;
+        const mk = f.metaKey || f.key;
+        const destKey = `shopify.${mk}`;
+        return (
+          !REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${destKey}`) &&
+          !REMOVED_PARKED_DESTINATIONS.has(destKey)
+        );
+      })
       .map(f => f.metaKey || f.key)
   )
 );
@@ -39,7 +88,10 @@ const CATALOG_METAFIELD_DESTINATIONS = Array.from(
       .filter(f => {
         if (!f || f.owner === "native" || f.namespace === "native" || f.key.startsWith("native_")) return false;
         if (f.key === "shopify_title" || f.key === "price") return false;
-        if (RETIRED_KEYS.includes(f.key)) return false;
+        const ns = f.namespace || f.metaConfig?.namespace || "custom";
+        const mk = f.metaKey || f.key;
+        const destKey = `${ns}.${mk}`;
+        if (isRetiredCatalogMetafieldEntry(f, destKey)) return false;
         return true;
       })
       .map(f => {
@@ -50,15 +102,16 @@ const CATALOG_METAFIELD_DESTINATIONS = Array.from(
   )
 );
 
-const CATALOG_READ_ONLY_DESTINATIONS = new Set(
-  FIELD_CATALOG
+const CATALOG_READ_ONLY_DESTINATIONS = new Set([
+  ...FIELD_CATALOG
     .filter(f => f.mappingStatus === "pending_read_only" || f.key === "is_ooak")
     .map(f => {
       const ns = f.namespace || f.metaConfig?.namespace || "custom";
       const mk = f.metaKey || f.key;
       return `${ns}.${mk}`;
-    })
-);
+    }),
+  ...REMOVED_PARKED_DESTINATION_LIST
+]);
 
 function isGeneratedIdLabel(str) {
   if (typeof str !== "string") return true;
@@ -235,6 +288,14 @@ export async function executeLoadProductData({ admin, body }) {
   const legacyFields = {};
 
   CATALOG_METAFIELD_DESTINATIONS.forEach(destKey => {
+      if (
+        RETIRED_KEYS_SET.has(destKey) ||
+        REMOVED_PARKED_DESTINATIONS.has(destKey) ||
+        REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${destKey}`) ||
+        REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${destKey}`)
+      ) {
+          return;
+      }
       const val = currentMetafields[destKey] ?? "";
       canonicalFields[destKey] = val;
       if (!CATALOG_READ_ONLY_DESTINATIONS.has(destKey)) {
@@ -273,8 +334,7 @@ export async function executeLoadProductData({ admin, body }) {
     "custom.mineral-class": "shopify.mineral-class",
     "custom.rock-composition": "shopify.rock-composition",
     "custom.geological-era": "shopify.geological-era",
-    "custom.rock-formation": "shopify.rock-formation",
-    "custom.necklace-design": "shopify.necklace-design"
+    "custom.rock-formation": "shopify.rock-formation"
   };
 
   Object.entries(LEGACY_MAP_LOCAL).forEach(([leg, can]) => {
@@ -395,7 +455,12 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
       }
       const trimmedDest = rawDestItem.trim();
       const bareKey = trimmedDest.startsWith("shopify.") ? trimmedDest.slice(8) : trimmedDest;
-      if (!supportedBareKeySet.has(bareKey)) {
+      const fullStdDest = `shopify.${bareKey}`;
+      if (
+        REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${fullStdDest}`) ||
+        REMOVED_PARKED_DESTINATIONS.has(fullStdDest) ||
+        !supportedBareKeySet.has(bareKey)
+      ) {
         enumerateValidationErrors.push(`Unsupported standardized reference destination "${trimmedDest}" in enumerate_destinations.`);
         continue;
       }
@@ -480,7 +545,13 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
   const validatedCandidateEntries = {};
 
   for (const [key, val] of Object.entries(parsedCandidates)) {
-    if (!ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)) {
+    const bareCandidateKey = key.startsWith("shopify.") ? key.slice(8) : key;
+    const fullCandidateDest = `shopify.${bareCandidateKey}`;
+    if (
+      REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${fullCandidateDest}`) ||
+      REMOVED_PARKED_DESTINATIONS.has(fullCandidateDest) ||
+      !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(key)
+    ) {
       inputValidationErrors.push(`Disallowed candidate key "${key}". Allowed keys: ${ALLOWED_STANDARDIZED_CANDIDATE_KEYS.join(", ")}.`);
       continue;
     }
@@ -791,9 +862,16 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
 
   const keysForReferenceLists = hasExplicitEnumerateDestinations
     ? SUPPORTED_STANDARDIZED_REFERENCE_KEYS.filter(
-        (k) => seenEnumerateBareKeys.has(k) || ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(k)
+        (k) =>
+          (seenEnumerateBareKeys.has(k) || ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(k)) &&
+          !REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:shopify.${k}`) &&
+          !REMOVED_PARKED_DESTINATIONS.has(`shopify.${k}`)
       )
-    : ALLOWED_STANDARDIZED_CANDIDATE_KEYS;
+    : ALLOWED_STANDARDIZED_CANDIDATE_KEYS.filter(
+        (k) =>
+          !REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:shopify.${k}`) &&
+          !REMOVED_PARKED_DESTINATIONS.has(`shopify.${k}`)
+      );
 
   for (const attrKey of keysForReferenceLists) {
     const destination = `shopify.${attrKey}`;

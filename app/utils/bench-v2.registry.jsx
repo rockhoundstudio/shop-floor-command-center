@@ -5,11 +5,29 @@
 // zero GraphQL/network calls, zero server-only imports.
 // ==========================================================================
 
-import { DROPDOWN_OPTIONS, collectionLocationOptions } from "./meta-injector.constants.jsx";
+import {
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
+  DROPDOWN_OPTIONS,
+  collectionLocationOptions
+} from "./meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS,
   SUPPORTED_STANDARDIZED_REFERENCE_KEYS
 } from "./meta-injector.standardized.jsx";
+
+export {
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES
+};
 
 export const BENCH_V2_CONTRACT_VERSION = "2.0.0-batch-1";
 
@@ -71,7 +89,7 @@ export const CANCELLED_INERT_DESTINATIONS = Object.freeze(
 
 // Task-level operational restrictions (shipping weight writes, legacy price aliases, and deletions outside this task).
 export const TASK_RESTRICTED_READ_ONLY_DESTINATIONS = Object.freeze(
-  new Set(["price", "custom.price", "native_shipping_weight", "custom.shipping_weight_oz"])
+  new Set(["price", "native_shipping_weight", "custom.shipping_weight_oz"])
 );
 
 // Explicit replacement-bench-local allowlist of verified PRODUCTVARIANT metafield destinations.
@@ -203,7 +221,7 @@ export const REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS = Object.freeze({
 });
 
 // Exact bare provenance keys used by Bench V2 AI Scan (excluding cancelled
-// overall_solid_length_in and legacy geological_era).
+// overall_solid_length_in, legacy geological_era, and removed parked fields).
 export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "color_pattern",
   "primary_color",
@@ -214,7 +232,6 @@ export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "shipping_weight_oz",
   "price",
   "honest_flaws_and_character",
-  "character_marks",
   "surface_finish",
   "cut_type",
   "cut_and_shape",
@@ -225,10 +242,8 @@ export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "wire_material",
   "secondary_medium",
   "primary_medium",
-  "primary_use",
   "product_format",
   "jewelry_type",
-  "necklace_design",
   "chain_link_type",
   "setting_ready",
   "craftsmanship",
@@ -311,7 +326,6 @@ export const BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS = Object.freeze({
     Object.freeze({ owner: "PRODUCT", identity: "custom.geological_era", role: "RETIRED_LEGACY_ERA", canonicalTarget: null, status: "retired_from_active_bench_v2_controls" }),
     Object.freeze({ owner: "PRODUCT", identity: "shopify.geological-era", role: "RETIRED_STANDARDIZED_ERA", canonicalTarget: null, status: "retired_from_active_bench_v2_controls" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.mineral-class", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.mineral_class" }),
-    Object.freeze({ owner: "PRODUCT", identity: "custom.necklace-design", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.necklace_design" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.review_widget_data", role: "DUPLICATE_ALIAS" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.rock-composition", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.rock_composition" }),
     Object.freeze({ owner: "PRODUCT", identity: "custom.rock-formation", role: "DUPLICATE_ALIAS", canonicalTarget: "custom.rock_formation" }),
@@ -324,7 +338,6 @@ export const BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS = Object.freeze(
   new Set([
     "parked_excluded_protected",
     "parked_story_and_bench_notes",
-    "parked_legacy_product_exclusions",
     "parked_variant_and_protected_apps"
   ])
 );
@@ -455,29 +468,20 @@ export const BENCH_V2_DRAWERS = Object.freeze([
   Object.freeze({
     drawerId: "parked_story_and_bench_notes",
     drawerNumber: 14,
-    heading: "14. Parked Story, Character & Studio Notes (Read-Only)",
+    heading: "14. Parked Story & Character Context (Read-Only)",
     subHarness: "SUB_HARNESS_6",
     batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
     isImplementedInBatch1: true,
-    description: "Read-only inspection of parked story context, flaw/character notes, studio bench notes, and provenance notes (origin_story, honest_flaws_and_character, character_marks, rescued_by, official_name, stone_story, artist_notes, bench_notes, handcrafted_by, story_theme). Zero writes, zero deletions."
-  }),
-  Object.freeze({
-    drawerId: "parked_legacy_product_exclusions",
-    drawerNumber: 15,
-    heading: "15. Parked Legacy Product & Taxonomy Exclusions (Read-Only)",
-    subHarness: "SUB_HARNESS_6",
-    batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
-    isImplementedInBatch1: true,
-    description: "Read-only inspection of excluded product-level custom fields, excluded standardized attributes (shopify.authenticity, shopify.necklace-design, shopify.rarity), and parked app conversation starters. Zero writes, zero deletions."
+    description: "Read-only inspection of parked story context and honest flaws/character notes (custom.origin_story, custom.honest_flaws_and_character). Zero writes, zero deletions."
   }),
   Object.freeze({
     drawerId: "parked_variant_and_protected_apps",
-    drawerNumber: 16,
-    heading: "16. Parked Variant Customs/MPN & Protected App Fields (Read-Only)",
+    drawerNumber: 15,
+    heading: "15. Protected App Fields (Read-Only)",
     subHarness: "SUB_HARNESS_6",
-    batchStage: BENCH_V2_BATCH_STAGE.PARKED_EXCLUDED_READ_ONLY,
+    batchStage: BENCH_V2_BATCH_STAGE.PROTECTED_READ_ONLY,
     isImplementedInBatch1: true,
-    description: "Read-only inspection of parked/excluded PRODUCTVARIANT fields (harmonized_system_code, mpn, custom_label_0..4, size_system, size_type) and protected third-party app metafields (Shopify eligibility and Judge.me). Zero writes, zero deletions."
+    description: "Read-only inspection of protected third-party app metafields (Shopify eligibility and Judge.me). Zero writes, zero deletions."
   })
 ]);
 
@@ -604,6 +608,13 @@ function defineFieldContract(spec) {
   }
   if (CANCELLED_INERT_DESTINATIONS.has(spec.destinationKey) || CANCELLED_INERT_DESTINATIONS.has(spec.key)) {
     throw new Error(`BENCH_V2_CONTRACT_ERROR: Cancelled destination "${spec.destinationKey}" cannot be registered.`);
+  }
+  const canonicalIdentity = `${spec.owner}:${spec.destinationKey}`;
+  if (
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(canonicalIdentity) ||
+    REMOVED_PARKED_DESTINATIONS.has(spec.destinationKey)
+  ) {
+    throw new Error(`BENCH_V2_CONTRACT_ERROR: Removed parked destination "${canonicalIdentity}" cannot be registered.`);
   }
 
   const isEligibleOwnerAndDestination =
@@ -779,7 +790,7 @@ function defineProtectedAppField(drawerId, namespace, key, label) {
 }
 
 // ==========================================================================
-// AUTHORITATIVE FIELD CONTRACTS (ALL 16 FOCUSED DRAWERS)
+// AUTHORITATIVE FIELD CONTRACTS (ALL 15 FOCUSED DRAWERS — 92 CONTRACTS)
 // ==========================================================================
 
 export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
@@ -831,7 +842,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     isManualOnlyNoAi: true,
     expectedType: "money",
     allowedTypes: ["native", "money"],
-    purposeNote: "Single-variant native Shopify price in USD (PRODUCTVARIANT native_price, canonical non-negative two-decimal format e.g. 45.00; distinct from parked custom.price). Manual entry only (excluded from AI scan); requires verified single-variant ProductVariant GID, complete variant baseline read, and independent exact-value approval."
+    purposeNote: "Single-variant native Shopify price in USD (PRODUCTVARIANT native_price, canonical non-negative two-decimal format e.g. 45.00; distinct from retired custom.price). Manual entry only (excluded from AI scan); requires verified single-variant ProductVariant GID, complete variant baseline read, and independent exact-value approval."
   }),
   defineFieldContract({
     destinationKey: "native_shipping_weight",
@@ -1493,7 +1504,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "Inspectable product-level custom.target_gender compatibility value; never auto-migrated or copied."
   ),
 
-  // DRAWER 14: PARKED STORY, CHARACTER & STUDIO NOTES (READ-ONLY — 10 CONTRACTS)
+  // DRAWER 14: PARKED STORY & CHARACTER CONTEXT (READ-ONLY — 2 SURVIVING CONTRACTS)
   defineParkedField(
     "parked_story_and_bench_notes",
     "PRODUCT",
@@ -1518,39 +1529,8 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
       unresolvedPolicyQuestion: "Marked EXCLUDED_INPUT in constants.jsx but listed in ALLOWED_TAB3_KEYS in legacy API; kept read-only to preserve saved character notes until explicitly decided."
     }
   ),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "character_marks", "Character Marks (Parked — Read-Only)", "list.single_line_text_field", { control: "multiline" }),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "rescued_by", "Rescued By (Parked — Read-Only)"),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "official_name", "Official Name (Parked — Read-Only)"),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "stone_story", "Stone Story (Parked — Read-Only)", "list.single_line_text_field", { control: "multiline" }),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "artist_notes", "Artist Notes (Parked — Read-Only)", "multi_line_text_field", { control: "multiline" }),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "bench_notes", "Bench Notes (Parked — Read-Only)", "multi_line_text_field", { control: "multiline" }),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "handcrafted_by", "Handcrafted By (Parked — Read-Only)"),
-  defineParkedField("parked_story_and_bench_notes", "PRODUCT", "custom", "story_theme", "Story Theme (Parked — Read-Only)"),
 
-  // DRAWER 15: PARKED LEGACY PRODUCT & TAXONOMY EXCLUSIONS (READ-ONLY — 12 CONTRACTS)
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "primary_use", "Primary Use (Parked — Read-Only)", "single_line_text_field", { canonicalTarget: "shopify.product-use" }),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "necklace_design", "Necklace Design (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "authenticity", "Authenticity (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "rarity", "Rarity (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "custom_product", "Custom Product (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "age_group", "Age Group Custom (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "condition", "Condition Custom (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "custom", "price", "Custom Price Metafield (Parked — Read-Only)"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "shopify", "authenticity", "Shopify Authenticity (Parked — Read-Only)", "list.metaobject_reference"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "shopify", "necklace-design", "Shopify Necklace Design (Parked — Read-Only)", "list.metaobject_reference"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "shopify", "rarity", "Shopify Rarity (Parked — Read-Only)", "list.metaobject_reference"),
-  defineParkedField("parked_legacy_product_exclusions", "PRODUCT", "app--3026047", "conversation_starters", "App Conversation Starters (Parked — Read-Only)"),
-
-  // DRAWER 16: PARKED VARIANT CUSTOMS/MPN & PROTECTED APP FIELDS (READ-ONLY — 13 CONTRACTS)
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "global", "harmonized_system_code", "Harmonized System Code (Parked Variant Customs Code — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "mpn", "Google Shopping MPN (Excluded Variant Field — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_0", "Google Shopping Custom Label 0 (Parked Variant — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_1", "Google Shopping Custom Label 1 (Parked Variant — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_2", "Google Shopping Custom Label 2 (Parked Variant — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_3", "Google Shopping Custom Label 3 (Parked Variant — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "custom_label_4", "Google Shopping Custom Label 4 (Parked Variant — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "size_system", "Google Shopping Size System (Parked Variant — Read-Only)"),
-  defineParkedField("parked_variant_and_protected_apps", "PRODUCTVARIANT", "mm-google-shopping", "size_type", "Google Shopping Size Type (Parked Variant — Read-Only)"),
+  // DRAWER 15: PROTECTED APP FIELDS (READ-ONLY — 4 PROTECTED APP CONTRACTS)
   defineProtectedAppField("parked_variant_and_protected_apps", "app--3890849--eligibility", "eligibility_details", "Shopify Eligibility Details (Protected — Read-Only)"),
   defineProtectedAppField("parked_variant_and_protected_apps", "judgeme", "badge", "Judge.me Badge (Protected — Read-Only)"),
   defineProtectedAppField("parked_variant_and_protected_apps", "judgeme", "review_widget_data", "Judge.me Review Widget Data (Protected — Read-Only)"),
@@ -1636,5 +1616,6 @@ export const BENCH_V2_DRAWER_GROUPS = Object.freeze(
 export function getFieldContractByDestination(destinationKey) {
   if (typeof destinationKey !== "string" || destinationKey.trim() === "") return null;
   if (CANCELLED_INERT_DESTINATIONS.has(destinationKey)) return null;
+  if (REMOVED_PARKED_DESTINATIONS.has(destinationKey)) return null;
   return BENCH_V2_CONTRACTS_BY_DESTINATION[destinationKey] || null;
 }

@@ -5,6 +5,10 @@ import {
 } from "@shopify/polaris";
 
 import { authenticate } from "../shopify.server";
+import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS
+} from "../utils/meta-injector.constants.jsx";
 
 export async function loader({ request }) {
   await authenticate.admin(request);
@@ -18,7 +22,6 @@ export async function action({ request }) {
     // 🟢 Always Fill
     { namespace: "custom", key: "piece_name", name: "Piece Name", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "primary_medium", name: "Primary Medium", type: "single_line_text_field", ownerType: "PRODUCT" },
-    { namespace: "custom", key: "handcrafted_by", name: "Handcrafted By", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "is_one_of_a_kind", name: "Is One of a Kind", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "treated", name: "Treated", type: "single_line_text_field", ownerType: "PRODUCT" },
     // 🔵 Stone Fields
@@ -33,13 +36,11 @@ export async function action({ request }) {
     { namespace: "custom", key: "origin_story", name: "Origin Story", type: "multi_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "trip_or_series", name: "Trip or Series", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "honest_flaws_and_character", name: "Honest Flaws and Character", type: "multi_line_text_field", ownerType: "PRODUCT" },
-    { namespace: "custom", key: "artist_notes", name: "Artist Notes", type: "multi_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "collection_name", name: "Collection Name", type: "single_line_text_field", ownerType: "PRODUCT" },
     // 🟣 Mixed Media
     { namespace: "custom", key: "secondary_medium", name: "Secondary Medium", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "found_object", name: "Found Object", type: "single_line_text_field", ownerType: "PRODUCT" },
     // 🟡 Google / SEO
-    { namespace: "custom", key: "primary_use", name: "Primary Use", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "setting_ready", name: "Setting Ready", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "custom", key: "bail_included", name: "Bail Included", type: "single_line_text_field", ownerType: "PRODUCT" },
     // 🟤 Geo Fields
@@ -58,7 +59,14 @@ export async function action({ request }) {
     { namespace: "geo", key: "cleavage", name: "Cleavage", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "geo", key: "specific_gravity", name: "Specific Gravity", type: "single_line_text_field", ownerType: "PRODUCT" },
     { namespace: "geo", key: "diaphaneity", name: "Diaphaneity", type: "single_line_text_field", ownerType: "PRODUCT" }
-  ];
+  ].filter(
+    (def) =>
+      def &&
+      !REMOVED_PARKED_CANONICAL_IDENTITIES.has(
+        `${def.ownerType}:${def.namespace}.${def.key}`
+      ) &&
+      !REMOVED_PARKED_DESTINATIONS.has(`${def.namespace}.${def.key}`)
+  );
 
   const results = [];
   let createdCount = 0;
@@ -172,9 +180,9 @@ export default function SetupMetafieldsRoute() {
           <BlockStack gap="500">
             <Card padding="600">
               <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Initialize 37 Metafields</Text>
+                <Text variant="headingLg" as="h2">Initialize 34 Metafields</Text>
                 <Text as="p">
-                  This tool will create the 37 database receptacles required by the Command Center into your live Shopify Admin settings. 
+                  This tool will create the 34 database receptacles required by the Command Center into your live Shopify Admin settings. 
                   It is safe to run multiple times; if a field already exists, it will simply skip it without breaking.
                 </Text>
                 
@@ -187,9 +195,9 @@ export default function SetupMetafieldsRoute() {
                       fullWidth 
                       onClick={handleRunSetup} 
                       loading={isSubmitting}
-                      accessibilityLabel="Create All 37 Metafields"
+                      accessibilityLabel="Create All 34 Metafields"
                     >
-                      {isSubmitting ? "Running GraphQL Mutations..." : "Create All 37 Metafields"}
+                      {isSubmitting ? "Running GraphQL Mutations..." : "Create All 34 Metafields"}
                     </Button>
                   </div>
                 </Box>

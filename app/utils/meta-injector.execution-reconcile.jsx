@@ -7,6 +7,11 @@
 // ==========================================================================
 
 import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES
+} from "./meta-injector.constants.jsx";
+import {
   isVerifiedStandardizedDestination,
   validateProposedStandardizedGidList,
   isGenericBareStoneToken,
@@ -61,10 +66,8 @@ const OPERATOR_AUTHORITATIVE_DESTINATIONS = new Set([
 ]);
 
 const CLASSIFICATION_PRECEDENCE_KEYS = new Set([
-  "primary_use",
   "jewelry_type",
-  "product_format",
-  "necklace_design"
+  "product_format"
 ]);
 
 const PASSIVE_CONSTRUCTION_PRECEDENCE_KEYS = new Set([
@@ -102,8 +105,24 @@ const parseStrictCompletePositiveSolidLengthInClient = (rawVal) => {
 };
 
 const isEffectiveRetiredKey = (key) => {
-  if (key === "wire_material" || key === "custom.wire_material") return false;
-  return RETIRED_KEYS.includes(key);
+  if (typeof key !== "string" || !key.trim()) return false;
+  const trimmed = key.trim();
+  if (trimmed === "wire_material" || trimmed === "custom.wire_material") return false;
+  if (
+    RETIRED_KEYS.includes(trimmed) ||
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${trimmed}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${trimmed}`)
+  ) {
+    return true;
+  }
+  if (!trimmed.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+  if (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+  return false;
 };
 
 const normalizeOoakEquivalentValue = (rawVal, expectedType = "single_line_text_field") => {
@@ -274,11 +293,11 @@ export const buildProductBenchProvenancePacket = (manifest, productManualEdits =
   const inspectableKeys = [
     "material", "primary_medium", "stone_family",
     "bail_included", "secondary_medium", "jewelry_finding_type",
-    "primary_use", "jewelry_type", "setting_ready",
-    "chain_material", "chain_link_type", "wire_material", "character_marks",
+    "jewelry_type", "setting_ready",
+    "chain_material", "chain_link_type", "wire_material",
     "primary_color", "secondary_colors", "color_pattern", "cut_type", "surface_finish",
     "overall_solid_length_in",
-    "treatment_status", "treated", "necklace_design",
+    "treatment_status", "treated",
     "found_object", "origin_location", "origin_page_handle",
     "collection_name", "collection_location", "collection_date",
     "is_one_of_a_kind", "seo_title", "alt_text"
@@ -474,7 +493,6 @@ export const normalizeLoadedPlanAndAliases = (
   const getFieldExpectedType = (destKey) => {
     const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
     if (cfg?.type) return cfg.type;
-    if (destKey === "custom.character_marks" || destKey === "custom.stone_story") return "list.single_line_text_field";
     if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz" || destKey === "custom.overall_solid_length_in") return "number_decimal";
     if (destKey === "custom.honest_flaws_and_character" || destKey === "custom.origin_story" || destKey === "custom.generated_description") return "multi_line_text_field";
     return "single_line_text_field";
@@ -1040,7 +1058,6 @@ export const reconcileCompletedAiPipelineIntoManifest = ({
   const getExpectedFieldType = (destKey) => {
     const cfg = allConfigFields.find(f => resolveConfigFieldDestination(f) === destKey || f.key === destKey);
     if (cfg?.type) return cfg.type;
-    if (destKey === "custom.character_marks" || destKey === "custom.stone_story") return "list.single_line_text_field";
     if (destKey === "custom.weight_grams" || destKey === "custom.shipping_weight_oz" || destKey === "custom.overall_solid_length_in") return "number_decimal";
     if (destKey === "custom.honest_flaws_and_character" || destKey === "custom.origin_story" || destKey === "custom.generated_description") return "multi_line_text_field";
     return "single_line_text_field";

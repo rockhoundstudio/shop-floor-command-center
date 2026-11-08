@@ -5,6 +5,11 @@
 // ==========================================================================
 
 import {
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   FIELD_CATALOG,
   CANONICAL_CAPABILITY_FIELDS,
   COMPATIBILITY_ADAPTER_FIELDS,
@@ -146,6 +151,25 @@ function resolveGeoSourceLabelFromParsed(parsed) {
   return "Derived (titleParse)";
 }
 
+function isRetiredProductDraftDestination(rawKey) {
+  if (typeof rawKey !== "string" || !rawKey.trim()) return false;
+  const trimmed = rawKey.trim();
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${trimmed}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${trimmed}`)
+  ) {
+    return true;
+  }
+  if (!trimmed.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+  if (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
 const TAB3_WRITABLE_PRODUCT_DESTINATIONS = (() => {
   const writable = new Set([
     "shopify_title",
@@ -198,6 +222,8 @@ const TAB3_WRITABLE_PRODUCT_DESTINATIONS = (() => {
     "origin_handle",
     "custom.cut_type",
     "cut_type",
+    ...REMOVED_PARKED_DESTINATION_LIST,
+    ...REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
     ...UNVERIFIED_PROPOSED_MEASUREMENT_KEYS,
     ...PRODUCER_ALIGNMENT_PENDING_KEYS
   ]);
@@ -231,9 +257,18 @@ const TAB3_WRITABLE_PRODUCT_DESTINATIONS = (() => {
 
   (CANONICAL_CAPABILITY_FIELDS || []).forEach((field) => {
     if (!field) return;
+    const resolvedOwner = field.registryOwner || "PRODUCT";
     const identity =
       field.registryIdentity ||
       (field.namespace === "native" ? field.key : `${field.namespace || "custom"}.${field.metaKey || field.key}`);
+
+    if (
+      REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${resolvedOwner}:${identity}`) ||
+      isRetiredProductDraftDestination(identity) ||
+      isRetiredProductDraftDestination(field.key)
+    ) {
+      return;
+    }
 
     const isHeld =
       field.mappingStatus === "pending_read_only" ||
@@ -559,7 +594,6 @@ export function applyTitleParseToTab3Draft({
       : {
           rawSeedInput: "",
           explicitTitleOverride: "",
-          primary_use: "",
           origin_story: "",
           honest_flaws_and_character: ""
         };
@@ -635,7 +669,11 @@ export function applyTitleParseToTab3Draft({
   const invalidatedSet = new Set();
 
   const stageDraftField = (destKey, rawVal, sourceLabel, stageLabel = "titleParse") => {
-    if (!destKey || !TAB3_WRITABLE_PRODUCT_DESTINATIONS.has(destKey)) {
+    if (
+      !destKey ||
+      isRetiredProductDraftDestination(destKey) ||
+      !TAB3_WRITABLE_PRODUCT_DESTINATIONS.has(destKey)
+    ) {
       return;
     }
     if (!hasMeaningfulValue(rawVal)) {

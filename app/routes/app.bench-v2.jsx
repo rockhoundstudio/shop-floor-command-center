@@ -19,6 +19,9 @@ import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "reac
 import { authenticate } from "../shopify.server";
 import { loadSingleProductBaselineSnapshot } from "../utils/bench-v2.baseline.server.jsx";
 import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_DRAWER_GROUPS,
   BENCH_V2_FIELD_CONTRACTS,
@@ -112,6 +115,34 @@ const RETIRED_ERA_DESTINATIONS = Object.freeze(
   ])
 );
 
+function isRetiredParkedBenchDestination(rawDestKey, explicitOwner = null) {
+  if (typeof rawDestKey !== "string" || !rawDestKey.trim()) return false;
+  const trimmed = rawDestKey.trim();
+  const normalizedOwner =
+    typeof explicitOwner === "string" && explicitOwner.trim() !== ""
+      ? explicitOwner.trim()
+      : null;
+
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${trimmed}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${trimmed}`) ||
+    (normalizedOwner && REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${normalizedOwner}:${trimmed}`))
+  ) {
+    return true;
+  }
+
+  if (!trimmed.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+
+  if (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
 const ALLOWED_TOP_LEVEL_JSON_PACKET_KEYS = Object.freeze(
   new Set([
     "schema",
@@ -195,6 +226,14 @@ function resolveProducerBackedGeologyReferenceCandidate({
       status: "invalid_candidate",
       displayLabel: "",
       reason: `Empty standardized reference candidate label on ${destKey}.`
+    };
+  }
+
+  if (isRetiredParkedBenchDestination(destKey, "PRODUCT")) {
+    return {
+      status: "not_eligible_contract",
+      displayLabel,
+      reason: `Destination ${destKey} is retired and removed from the Bench V2 contract.`
     };
   }
 
@@ -1417,6 +1456,13 @@ export default function BenchV2Route() {
           continue;
         }
 
+        if (isRetiredParkedBenchDestination(destKey, entry.owner)) {
+          rejectionReasons.push(
+            `[${destKey}] Retired parked destination is removed from Bench V2 and cannot be imported or staged.`
+          );
+          continue;
+        }
+
         if (seenEntryDestinations.has(destKey)) {
           rejectionReasons.push(
             `[${destKey}] Duplicate destinationKey in packet entries.`
@@ -1720,6 +1766,13 @@ export default function BenchV2Route() {
         if (RETIRED_ERA_DESTINATIONS.has(blkDestKey)) {
           rejectionReasons.push(
             `[${blkDestKey}] Retired Geological Era destination is removed from Bench V2 and cannot be listed in expectedBlocks.`
+          );
+          continue;
+        }
+
+        if (isRetiredParkedBenchDestination(blkDestKey)) {
+          rejectionReasons.push(
+            `[${blkDestKey}] Retired parked destination is removed from Bench V2 and cannot be listed in expectedBlocks.`
           );
           continue;
         }
@@ -2142,6 +2195,10 @@ export default function BenchV2Route() {
       if (bareKey === "price") destKey = "native_price";
       else if (bareKey === "poetic_hook") destKey = "native_seo_description";
 
+      if (destKey.startsWith("custom.") && isRetiredParkedBenchDestination(destKey, "PRODUCT")) {
+        continue;
+      }
+
       const isSeoTitleDualKey = bareKey === "seo_title";
       const candidateDestKeys = isSeoTitleDualKey
         ? ["custom.seo_title", "native_seo_title"]
@@ -2420,6 +2477,9 @@ export default function BenchV2Route() {
     if (rawVisionStandardizedCandidates) {
       for (const visionAttrKey of ALLOWED_VISION_CANDIDATE_KEYS) {
         const destKey = `shopify.${visionAttrKey}`;
+        if (isRetiredParkedBenchDestination(destKey, "PRODUCT")) {
+          continue;
+        }
         if (Object.prototype.hasOwnProperty.call(combinedProducerAndVisionProposals, destKey)) {
           continue;
         }
@@ -2580,7 +2640,11 @@ export default function BenchV2Route() {
     };
 
     for (const [destKey, entry] of Object.entries(combinedProducerAndVisionProposals)) {
-      if (CANCELLED_INERT_DESTINATIONS.has(destKey) || RETIRED_ERA_DESTINATIONS.has(destKey)) {
+      if (
+        CANCELLED_INERT_DESTINATIONS.has(destKey) ||
+        RETIRED_ERA_DESTINATIONS.has(destKey) ||
+        isRetiredParkedBenchDestination(destKey)
+      ) {
         continue;
       }
 
@@ -2925,7 +2989,11 @@ export default function BenchV2Route() {
     const appendedDetails = [];
 
     for (const [destKey, candItem] of destEntries) {
-      if (!candItem || !AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS.has(destKey)) {
+      if (
+        !candItem ||
+        isRetiredParkedBenchDestination(destKey, "PRODUCT") ||
+        !AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS.has(destKey)
+      ) {
         continue;
       }
 

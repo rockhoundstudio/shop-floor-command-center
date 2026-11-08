@@ -10,14 +10,18 @@ import { ImageIcon } from "@shopify/polaris-icons";
 
 // --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS } from "../../utils/metaScan";
+import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES
+} from "../../utils/meta-injector.constants.jsx";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 import DictationButton from "../DictationButton"; // The new Voice Module
 
 // --- CONSTANTS ---
-const LIST_TEXT_FIELDS = ["character_marks"];
+const LIST_TEXT_FIELDS = [];
 
 const SEED_OPTIONS = {
-  story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],
   cut_type: ["Oval", "Teardrop", "Marquise", "Freeform", "Cabochon", "Round", "Cushion", "Trillion", "Heart", "Pear"],
   stone_shape: ["Oval", "Teardrop", "Marquise", "Freeform", "Round", "Rectangular", "Irregular", "Heart"],
   surface_finish: ["High Polish", "Matte", "Raw", "Satin", "Semi-Polish"],
@@ -29,7 +33,30 @@ const SEED_OPTIONS = {
 };
 
 // --- HELPER FUNCTIONS ---
+function isRetiredMetaCoreInputKey(rawKey) {
+  if (typeof rawKey !== "string" || !rawKey.trim()) return true;
+  const trimmed = rawKey.trim();
+  const canonicalDest = trimmed.includes(".") ? trimmed : `custom.${trimmed}`;
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_DESTINATIONS.has(canonicalDest) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${canonicalDest}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${canonicalDest}`)
+  ) {
+    return true;
+  }
+  if (
+    (!trimmed.includes(".") || trimmed.startsWith("custom.")) &&
+    (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(canonicalDest))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function formatMetafieldValue(key, value) {
+  if (isRetiredMetaCoreInputKey(key)) return null;
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
   if (TAXONOMY_GIDS[safeKey] && TAXONOMY_GIDS[safeKey][cleanValue]) {
@@ -70,6 +97,7 @@ export default function MetaCore({ mode, products = [] }) {
   const addCustomFetcher = useFetcher();
 
   // --- DERIVED DATA ---
+  const activeTargetKeys = TARGET_KEYS.filter(k => !isRetiredMetaCoreInputKey(k));
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
   const selectedProduct = selectedIds.length === 1 ? products.find(p => p.id === selectedIds[0]) : null;
 
@@ -93,6 +121,7 @@ export default function MetaCore({ mode, products = [] }) {
 
   // --- ACTION HANDLERS (BULK MODE) ---
   const handleFieldToggle = (key, checked) => {
+    if (isRetiredMetaCoreInputKey(key)) return;
     setSelectedFields(prev => ({ ...prev, [key]: checked }));
   };
 
@@ -102,8 +131,8 @@ export default function MetaCore({ mode, products = [] }) {
     const fd = new FormData(e.target);
     const updates = {};
     
-    TARGET_KEYS.forEach(k => {
-      if (selectedFields[k]) {
+    activeTargetKeys.forEach(k => {
+      if (selectedFields[k] && !isRetiredMetaCoreInputKey(k)) {
         // Fallback to FormData if not found in fieldValues
         const val = fieldValues[k] !== undefined ? fieldValues[k] : fd.get(`mf_${k}`);
         if (val && String(val).trim() !== "") updates[k] = String(val).trim();
@@ -127,8 +156,8 @@ export default function MetaCore({ mode, products = [] }) {
       return;
     }
 
-    const hasAnyValue = TARGET_KEYS.some(
-      key => fieldValues[key] && String(fieldValues[key]).trim() !== ""
+    const hasAnyValue = activeTargetKeys.some(
+      key => !isRetiredMetaCoreInputKey(key) && fieldValues[key] && String(fieldValues[key]).trim() !== ""
     );
     if (!hasAnyValue) {
       shopify.toast.show("Fill in at least one field before saving.");
@@ -136,7 +165,8 @@ export default function MetaCore({ mode, products = [] }) {
     }
 
     const updates = {};
-    TARGET_KEYS.forEach(key => {
+    activeTargetKeys.forEach(key => {
+      if (isRetiredMetaCoreInputKey(key)) return;
       const val = fieldValues[key];
       if (val && String(val).trim() !== "") {
         updates[key] = String(val).trim();
@@ -144,12 +174,6 @@ export default function MetaCore({ mode, products = [] }) {
     });
 
     const currentStories = {};
-    selectedIds.forEach(id => {
-      const p = products.find(pr => pr.id === id);
-      if (p?.metafields?.stone_story) {
-        currentStories[id] = p.metafields.stone_story;
-      }
-    });
 
     saveFetcher.submit(
       {
@@ -218,7 +242,7 @@ export default function MetaCore({ mode, products = [] }) {
                     <Text variant="headingSm">Metafield Overrides</Text>
                   </Box>
 
-                  {TARGET_KEYS.map(key => {
+                  {activeTargetKeys.map(key => {
                     const isChecked = selectedFields[key] || false;
                     
                     return (
@@ -232,35 +256,6 @@ export default function MetaCore({ mode, products = [] }) {
                           <Box paddingInlineStart="400" paddingBlockEnd="200">
                             {(() => {
                               const placeholderText = `Enter new ${key.replace(/_/g, " ")}...`;
-
-                              // --- THE CHROME: VOICE MODULE FOR BULK STONE STORY ---
-                              if (key === "stone_story") {
-                                return (
-                                  <BlockStack gap="200">
-                                    <TextField
-                                      labelHidden
-                                      label={key}
-                                      name={`mf_${key}`}
-                                      value={fieldValues[key] || ""}
-                                      onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                                      autoComplete="off"
-                                      placeholder={placeholderText}
-                                      multiline={4}
-                                    />
-                                    <InlineStack align="start">
-                                      <DictationButton 
-                                        placeholder="🎤 Dictate Bulk Story" 
-                                        onResult={(text) => {
-                                          setFieldValues(prev => ({
-                                            ...prev,
-                                            [key]: prev[key] ? prev[key] + " " + text : text
-                                          }));
-                                        }}
-                                      />
-                                    </InlineStack>
-                                  </BlockStack>
-                                );
-                              }
 
                               // --- DROPDOWN SELECTIONS ---
                               if (SEED_OPTIONS[key]) {
@@ -319,7 +314,7 @@ export default function MetaCore({ mode, products = [] }) {
                                           <InlineStack gap="300" blockAlign="center" wrap={false}>
                                             <Button variant="primary" onClick={() => {
                                               const v = customInputs[key]?.trim();
-                                              if (v) {
+                                              if (v && !isRetiredMetaCoreInputKey(key)) {
                                                 addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
                                                 setVocabulary(prev => {
                                                   const curr = prev[key] || [];
@@ -357,7 +352,7 @@ export default function MetaCore({ mode, products = [] }) {
                                     onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                                     autoComplete="off"
                                     placeholder={placeholderText}
-                                    multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 4 : undefined}
+                                    multiline={["rock_composition"].includes(key) ? 4 : undefined}
                                   />
                                 </BlockStack>
                               );
@@ -492,36 +487,9 @@ export default function MetaCore({ mode, products = [] }) {
                   </Banner>
 
                   <BlockStack gap="400">
-                    {TARGET_KEYS.map(key => {
+                    {activeTargetKeys.map(key => {
                       const savedValue = selectedProduct?.metafields?.[key.replace(/-/g, "_")];
                       const placeholderText = savedValue ? `Current: ${String(savedValue).replace(/[✅⚠️]/g, "").trim()}` : "";
-
-                      // --- THE CHROME: VOICE MODULE FOR BULK STONE STORY ---
-                      if (key === "stone_story") {
-                        return (
-                          <BlockStack gap="200" key={key}>
-                            <TextField
-                              label={FIELD_LABELS[key] || key}
-                              value={fieldValues[key] || ""}
-                              onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                              autoComplete="off"
-                              placeholder={placeholderText}
-                              multiline={4}
-                            />
-                            <InlineStack align="start">
-                              <DictationButton 
-                                placeholder="🎤 Dictate Bulk Story" 
-                                onResult={(text) => {
-                                  setFieldValues(prev => ({
-                                    ...prev,
-                                    [key]: prev[key] ? prev[key] + " " + text : text
-                                  }));
-                                }}
-                              />
-                            </InlineStack>
-                          </BlockStack>
-                        );
-                      }
 
                       // --- DROPDOWN SELECTIONS ---
                       if (SEED_OPTIONS[key]) {
@@ -579,7 +547,7 @@ export default function MetaCore({ mode, products = [] }) {
                                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                                     <Button variant="primary" onClick={() => {
                                       const v = customInputs[key]?.trim();
-                                      if (v) {
+                                      if (v && !isRetiredMetaCoreInputKey(key)) {
                                         addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
                                         setVocabulary(prev => {
                                           const curr = prev[key] || [];
@@ -614,7 +582,7 @@ export default function MetaCore({ mode, products = [] }) {
                               onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                               autoComplete="off"
                               placeholder={placeholderText}
-                              multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 4 : undefined}
+                              multiline={["rock_composition"].includes(key) ? 4 : undefined}
                             />
                           </BlockStack>
                         );
@@ -632,5 +600,3 @@ export default function MetaCore({ mode, products = [] }) {
     </Page>
   );
 }
-```</Select>
-

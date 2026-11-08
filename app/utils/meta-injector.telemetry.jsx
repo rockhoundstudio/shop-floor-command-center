@@ -863,7 +863,7 @@ export function buildAndCopyMatrixTelemetry({
 
   const isNarrativeBlock = (key) => {
     const normalized = key.replace(/^custom\./, "").replace(/-/g, "_").toLowerCase();
-    return ["generated_description", "stone_story", "origin_story", "native_description", "native_descriptionhtml"].includes(normalized);
+    return ["generated_description", "origin_story", "native_description", "native_descriptionhtml"].includes(normalized);
   };
 
   const isProtectedIntegration = (key) => {
@@ -894,12 +894,7 @@ export function buildAndCopyMatrixTelemetry({
         s === "loose/unmounted"
       );
     };
-    const primaryUseVal =
-      data.repairPlan?.["custom.primary_use"] ??
-      data.currentMetafields?.["custom.primary_use"] ??
-      data.currentMetafields?.["primary_use"] ??
-      product.productType ??
-      "";
+    const productTypeVal = product.productType ?? "";
     const productFormatVal =
       data.repairPlan?.["custom.product_format"] ??
       data.currentMetafields?.["custom.product_format"] ??
@@ -911,7 +906,7 @@ export function buildAndCopyMatrixTelemetry({
     ).trim().toLowerCase();
 
     return (
-      checkLoose(primaryUseVal) ||
+      checkLoose(productTypeVal) ||
       checkLoose(productFormatVal) ||
       settingReadyVal === "none" ||
       settingReadyVal === "no"

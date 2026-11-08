@@ -13,6 +13,9 @@ import {
   executeResolveStandardizedCandidates
 } from "../utils/meta-injector.read-actions.server.jsx";
 import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   BENCH_V2_WRITER_OPT_IN_FIELD,
   BENCH_V2_WRITER_OPT_IN_VALUE,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS as BENCH_V2_OPT_IN_VARIANT_DESTINATIONS,
@@ -51,17 +54,17 @@ const ALLOWED_TAB3_KEYS = [
   "mineral_class", "geological_era", "rock_formation", "origin_location",
   "origin_handle", "collection_name", "collection_location", "origin_story",
   "seo_title", "alt_text",
-  "google_product_category", "authenticity", "rarity", "generated_description",
+  "google_product_category", "generated_description",
 
   // EXACT CUSTOM DESTINATIONS
-  "is_one_of_a_kind", "origin_page_handle", "rescued_by", "character_marks",
-  "treatment_status", "treated", "necklace_design", "chain_link_type",
+  "is_one_of_a_kind", "origin_page_handle",
+  "treatment_status", "treated", "chain_link_type",
   "rock_composition", "geological_age", "target_gender",
-  "official_name", "stone_story", "cut_type", "secondary_colors",
-  "tenacity", "age_group", "condition", "custom_product",
+  "cut_type", "secondary_colors",
+  "tenacity",
   "found_object", "collection_date",
-  "custom.official_name", "custom.stone_story", "custom.cut_type", "custom.secondary_colors",
-  "custom.tenacity", "custom.age_group", "custom.condition", "custom.custom_product",
+  "custom.cut_type", "custom.secondary_colors",
+  "custom.tenacity",
   "custom.found_object", "custom.collection_date", "custom.wire_material", "custom.jewelry_type",
 
   // NATIVE CONTRACT TARGETS (ACCEPTED FOR ROUTING, EXCLUDED FROM CUSTOM NAMESPACE)
@@ -69,9 +72,9 @@ const ALLOWED_TAB3_KEYS = [
   "native_seo_title", "native_description",
 
   // STANDARDIZED TAXONOMY LIST
-  "age-group", "chain-link-type", "color-pattern", "condition", "construction", "crystal-system",
+  "age-group", "chain-link-type", "color-pattern", "shopify.condition", "construction", "crystal-system",
   "geological-era", "jewelry-finding-type", "jewelry-material", "jewelry-type",
-  "material", "material-origin", "mineral-class", "necklace-design",
+  "material", "material-origin", "mineral-class",
   "product-classification", "product-use", "rock-composition", "rock-formation",
   "target-gender"
 ];
@@ -90,6 +93,31 @@ const STRICT_CUSTOM_KEYS = [
 const BENCH_V2_OPT_IN_SUPPORTED_STANDARDIZED_KEY_SET = new Set(
   SUPPORTED_STANDARDIZED_REFERENCE_KEYS
 );
+
+function isRetiredProductMetafieldDestination(ns, key, fullKey, canonicalDestinationKey) {
+  if (
+    RETIRED_KEYS.includes(key) ||
+    RETIRED_KEYS.includes(fullKey) ||
+    RETIRED_KEYS.includes(canonicalDestinationKey) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${canonicalDestinationKey}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${canonicalDestinationKey}`) ||
+    REMOVED_PARKED_DESTINATIONS.has(canonicalDestinationKey) ||
+    REMOVED_PARKED_DESTINATIONS.has(fullKey)
+  ) {
+    return true;
+  }
+
+  if (
+    ns === "custom" &&
+    (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(key) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(fullKey) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(canonicalDestinationKey))
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX = /^(?:0|[1-9]\d*)\.\d{2}$/;
@@ -1172,7 +1200,7 @@ export const action = async ({ request }) => {
           ns === "custom" &&
           canonicalDestinationKey === "custom.whole_product_weight_grams";
 
-        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
+        if (isRetiredProductMetafieldDestination(ns, key, fullKey, canonicalDestinationKey)) {
             skippedKeys.push(fullKey);
             continue;
         }
@@ -1188,7 +1216,14 @@ export const action = async ({ request }) => {
             continue;
         }
 
-        if (STRICT_CUSTOM_KEYS.includes(key) && ns !== "custom") {
+        const isBenchV2OptInStandardizedDestination =
+          isBenchV2OptIn &&
+          ns === "shopify" &&
+          fullKey === canonicalDestinationKey &&
+          BENCH_V2_OPT_IN_SUPPORTED_STANDARDIZED_KEY_SET.has(key) &&
+          BENCH_V2_OPT_IN_STANDARDIZED_DESTINATIONS.has(canonicalDestinationKey);
+
+        if (STRICT_CUSTOM_KEYS.includes(key) && ns !== "custom" && !isBenchV2OptInStandardizedDestination) {
             unsupportedKeys.push(fullKey);
             continue;
         }
@@ -1595,7 +1630,7 @@ export const action = async ({ request }) => {
 
         const canonicalDestinationKey = `${ns}.${key}`;
 
-        if (RETIRED_KEYS.includes(key) || RETIRED_KEYS.includes(fullKey) || RETIRED_KEYS.includes(canonicalDestinationKey)) {
+        if (isRetiredProductMetafieldDestination(ns, key, fullKey, canonicalDestinationKey)) {
             skippedKeys.push(fullKey);
             return;
         }

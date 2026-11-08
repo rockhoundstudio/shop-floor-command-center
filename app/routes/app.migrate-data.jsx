@@ -5,6 +5,10 @@ import {
 } from "@shopify/polaris";
 
 import { authenticate } from "../shopify.server";
+import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS
+} from "../utils/meta-injector.constants.jsx";
 
 export async function loader({ request }) {
   await authenticate.admin(request);
@@ -109,6 +113,23 @@ export async function action({ request }) {
 
   // ── SET CUSTOM PRODUCT = TRUE ──────────────────────────────────────────────
   if (intent === "setCustomProductTrue") {
+    if (
+      REMOVED_PARKED_CANONICAL_IDENTITIES.has("PRODUCT:custom.custom_product") ||
+      REMOVED_PARKED_DESTINATIONS.has("custom.custom_product")
+    ) {
+      return {
+        intent,
+        results: [
+          {
+            status: "error",
+            message:
+              'Rejected: PRODUCT destination "custom.custom_product" is retired and removed from active writes.'
+          }
+        ],
+        fixed: 0
+      };
+    }
+
     const results = [];
     let fixed = 0;
 
@@ -215,7 +236,11 @@ export async function action({ request }) {
       const KEYS_TO_COPY = [
         "primary_medium", "stone_family", "collection_name", "treated",
         "found_object", "cut_and_shape", "origin_story", "honest_flaws_and_character"
-      ];
+      ].filter(
+        key =>
+          !REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:custom.${key}`) &&
+          !REMOVED_PARKED_DESTINATIONS.has(`custom.${key}`)
+      );
 
       const mutations = [];
       
@@ -406,18 +431,19 @@ export async function action({ request }) {
 
         const custDim = getCustom("dimensions_mm");
         const custTreat = getCustom("treatment_status");
-        const custStory = getCustom("stone_story");
-        const custChar = getCustom("character_marks");
-        const custBench = getCustom("bench_notes");
 
         const rhDim = getRockhound("dimensions_mm");
         const rhTreat = getRockhound("treated");
-        const rhStory = getRockhound("origin_story");
-        const rhFlaws = getRockhound("honest_flaws_and_character");
 
         let addedToThisProduct = false;
 
         const pushUpdate = (key, value, type) => {
+          if (
+            REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:custom.${key}`) ||
+            REMOVED_PARKED_DESTINATIONS.has(`custom.${key}`)
+          ) {
+            return;
+          }
           pendingUpdates.push({
             update: { ownerId: product.id, namespace: "custom", key, value, type },
             title: product.title
@@ -433,28 +459,6 @@ export async function action({ request }) {
         // custom.treatment_status → rockhound.treated
         if (custTreat && !rhTreat) {
           pushUpdate("treated", custTreat, "single_line_text_field");
-        }
-
-        // custom.stone_story → rockhound.origin_story
-        if (custStory && !rhStory) {
-          pushUpdate("origin_story", custStory, "multi_line_text_field");
-        }
-
-        // custom.character_marks & custom.bench_notes → rockhound.honest_flaws_and_character
-        if (!rhFlaws) {
-          let combinedFlaws = null;
-          
-          if (custChar && custBench) {
-            combinedFlaws = `${custChar}\n${custBench}`;
-          } else if (custChar) {
-            combinedFlaws = custChar;
-          } else if (custBench) {
-            combinedFlaws = custBench;
-          }
-
-          if (combinedFlaws) {
-            pushUpdate("honest_flaws_and_character", combinedFlaws, "multi_line_text_field");
-          }
         }
 
         if (addedToThisProduct) {
@@ -517,20 +521,17 @@ export default function MigrateDataRoute() {
   const navigate = useNavigate();
   const migrateFetcher = useFetcher();
   const standardizeFetcher = useFetcher();
-  const setCustomFetcher = useFetcher();
   const copyFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const shopify = typeof window !== "undefined" ? window.shopify : undefined;
 
   const isMigrating = migrateFetcher.state !== "idle";
   const isStandardizing = standardizeFetcher.state !== "idle";
-  const isSettingCustom = setCustomFetcher.state !== "idle";
   const isCopying = copyFetcher.state !== "idle";
   const isDeleting = deleteFetcher.state !== "idle";
 
   const migrateData = migrateFetcher.data;
   const standardizeData = standardizeFetcher.data;
-  const setCustomData = setCustomFetcher.data;
   const copyData = copyFetcher.data;
   const deleteData = deleteFetcher.data;
 
@@ -540,10 +541,6 @@ export default function MigrateDataRoute() {
 
   const handleStandardize = () => {
     standardizeFetcher.submit({ intent: "standardizeOneOfAKind" }, { method: "post" });
-  };
-
-  const handleSetCustomProduct = () => {
-    setCustomFetcher.submit({ intent: "setCustomProductTrue" }, { method: "post" });
   };
 
   useEffect(() => {
@@ -571,19 +568,6 @@ export default function MigrateDataRoute() {
       }
     }
   }, [standardizeFetcher.state, standardizeData, shopify]);
-
-  useEffect(() => {
-    if (setCustomFetcher.state === "idle" && setCustomData && setCustomData.results) {
-      if (shopify) {
-        const hasErrors = setCustomData.results.some(r => r.status === "error");
-        if (hasErrors) {
-          shopify.toast.show("Set Custom Product finished with some errors.", { isError: true });
-        } else {
-          shopify.toast.show(`Done. ${setCustomData.fixed} products updated.`);
-        }
-      }
-    }
-  }, [setCustomFetcher.state, setCustomData, shopify]);
 
   useEffect(() => {
     if (copyFetcher.state === "idle" && copyData && copyData.results) {
@@ -626,9 +610,9 @@ export default function MigrateDataRoute() {
         <Layout.Section>
           <BlockStack gap="500">
 
-            <Banner tone="info" title="The Data Bundling Strategy">
+            <Banner tone="info" title="Legacy Field Migration">
               <p>
-                This script safely grabs your old science fields (Mohs, cleavage, diaphaneity, etc.) and bundles them into a clean <b>Shop Specs</b> text string inside the new <b>Artist Notes</b> field. This keeps Google happy with keywords without forcing you to manage useless fields manually.
+                This utility safely migrates supported legacy stone dimensions and treatment status values when the destination fields are blank.
               </p>
             </Banner>
 
@@ -636,8 +620,7 @@ export default function MigrateDataRoute() {
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Run Legacy Migration</Text>
                 <Text as="p">
-                  Clicking this button will scan your products, map the old data over to the new Freeform Revolution schema, and build the Shop Specs bundles.
-                  (It is safe to run multiple times — it will just overwrite the new fields with the exact same legacy data).
+                  Clicking this button will scan your products and migrate supported legacy dimensions and treatment status values into blank destination fields.
                 </Text>
                 <Box paddingBlockStart="400">
                   <div style={{ minHeight: "60px", minWidth: "100%" }}>
@@ -663,48 +646,6 @@ export default function MigrateDataRoute() {
                   <Divider />
                   <BlockStack gap="300">
                     {migrateData.results.map((result, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
-                        <StatusIcon status={result.status} />
-                        <Text as="span" tone={result.status === "error" ? "critical" : "base"}>
-                          {result.message}
-                        </Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-            )}
-
-            <Card padding="600">
-              <BlockStack gap="400">
-                <Text variant="headingLg" as="h2">Set Custom Product = True</Text>
-                <Text as="p">
-                  Scans all products and sets the custom_product metafield to "true" in the custom namespace.
-                </Text>
-                <Box paddingBlockStart="400">
-                  <div style={{ minHeight: "60px", minWidth: "100%" }}>
-                    <Button
-                      size="large"
-                      variant="primary"
-                      fullWidth
-                      onClick={handleSetCustomProduct}
-                      loading={isSettingCustom}
-                      accessibilityLabel="Set Custom Product to True"
-                    >
-                      {isSettingCustom ? "Updating..." : "Set Custom Product = True"}
-                    </Button>
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
-
-            {setCustomData && setCustomData.results && (
-              <Card padding="600">
-                <BlockStack gap="500">
-                  <Text variant="headingLg" as="h3">Set Custom Product Report</Text>
-                  <Divider />
-                  <BlockStack gap="300">
-                    {setCustomData.results.map((result, idx) => (
                       <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", borderBottom: "1px solid #E1E3E5" }}>
                         <StatusIcon status={result.status} />
                         <Text as="span" tone={result.status === "error" ? "critical" : "base"}>

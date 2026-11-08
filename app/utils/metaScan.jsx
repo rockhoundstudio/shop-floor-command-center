@@ -4,16 +4,16 @@
 
 // --- 1. KEY DEFINITIONS ---
 
-// 🟢 Import the Master 62-Field Target Array as the single source of truth
+// 🟢 Import the Master Target Array as the single source of truth
 import { TARGET_KEYS } from "./meta-injector.constants.jsx";
 
 // Re-export to maintain compatibility with legacy routes that import TARGET_KEYS from metaScan
 export { TARGET_KEYS };
 
 export const MANUAL_KEYS = [
-  "official_name", "stone_story", "cut_type", "stone_shape", "surface_finish",
-  "treatment_status", "primary_color", "secondary_colors", "bench_notes",
-  "rock_composition", "character_marks", "dimensions_mm"
+  "cut_type", "stone_shape", "surface_finish",
+  "treatment_status", "primary_color", "secondary_colors",
+  "rock_composition", "dimensions_mm"
 ];
 
 export const DATABASE_KEYS = [
@@ -28,17 +28,13 @@ export const DATABASE_KEYS = [
 ];
 
 export const FIELD_LABELS = {
-  "official_name": "Official Name",
-  "stone_story": "Stone Story",
   "cut_type": "Cut Type",
   "stone_shape": "Stone Shape",
   "primary_color": "Primary Color",
   "secondary_colors": "Secondary Colors",
   "surface_finish": "Surface Finish",
   "treatment_status": "Treatment Status",
-  "bench_notes": "Bench Notes",
   "rock_composition": "Rock Composition",
-  "character_marks": "Character Marks",
   "dimensions_mm": "Dimensions (mm)",
   "mohs_hardness": "Mohs Hardness", // 🟢 ALIAS APPLIED: moh_hardness -> mohs_hardness
   "specific_gravity": "Specific Gravity",

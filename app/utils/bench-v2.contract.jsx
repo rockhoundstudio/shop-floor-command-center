@@ -1,4 +1,4 @@
-// == ========================================================================
+// ==========================================================================
 // ROCKHOUND STUDIO — BENCH V2 PURE FIELD & DRAWER CONTRACT
 // File: app/utils/bench-v2.contract.jsx
 // Pure browser-safe contract module: zero React hooks/effects, zero storage,
@@ -9,6 +9,12 @@ import {
   isExactMetaobjectGid
 } from "./meta-injector.standardized.jsx";
 import {
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_REFERENCE_PRODUCTS,
   BENCH_V2_BATCH_STAGE,
@@ -55,6 +61,12 @@ import {
 } from "./bench-v2.observation.jsx";
 
 export {
+  REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
+  REMOVED_PARKED_DESTINATION_LIST,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_REFERENCE_PRODUCTS,
   BENCH_V2_BATCH_STAGE,
@@ -368,6 +380,29 @@ export function evaluateBenchV2OptInCustomProductWrite({
       resolvedValue: null,
       currentVal: null,
       reason: `Destination "${canonicalDestinationKey}" is cancelled and permanently inert.`
+    };
+  }
+
+  // Explicitly reject removed parked custom product destinations and custom input aliases
+  // after resolving owner ("PRODUCT") and namespace ("custom").
+  const resolvedProductIdentity = `PRODUCT:${canonicalDestinationKey}`;
+  if (
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(resolvedProductIdentity) ||
+    REMOVED_PARKED_DESTINATIONS.has(canonicalDestinationKey) ||
+    REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(key) ||
+    REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(canonicalDestinationKey)
+  ) {
+    return {
+      handled: true,
+      outcome: "unsupported",
+      ns,
+      key,
+      canonicalDestinationKey,
+      contract: null,
+      resolvedType: null,
+      resolvedValue: null,
+      currentVal: null,
+      reason: `Destination "${canonicalDestinationKey}" is retired and removed from the Bench V2 contract.`
     };
   }
 
@@ -886,9 +921,35 @@ export function validateBatch1ProposedValue({
     return { valid: false, code: "cancelled_destination", reason: "custom.overall_solid_length_in is cancelled and permanently inert." };
   }
 
+  const safeDestKey = typeof destinationKey === "string" ? destinationKey.trim() : "";
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(safeDestKey) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${safeDestKey}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${safeDestKey}`) ||
+    (!safeDestKey.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(safeDestKey)) ||
+    REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(safeDestKey)
+  ) {
+    return {
+      valid: false,
+      code: "retired_destination",
+      reason: `Destination "${safeDestKey || String(destinationKey ?? "")}" is retired and removed from the Bench V2 contract.`
+    };
+  }
+
   const contract = getFieldContractByDestination(destinationKey);
   if (!contract) {
     return { valid: false, code: "unknown_destination", reason: `Destination "${destinationKey}" is not in the Bench V2 contract.` };
+  }
+
+  if (
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${contract.owner}:${contract.destinationKey}`) ||
+    REMOVED_PARKED_DESTINATIONS.has(contract.destinationKey)
+  ) {
+    return {
+      valid: false,
+      code: "retired_destination",
+      reason: `Destination "${contract.destinationKey}" is retired and removed from the Bench V2 contract.`
+    };
   }
 
   if (!contract.isWritableInBatch1 || !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(contract.destinationKey)) {

@@ -1,10 +1,14 @@
 import { useActionData, useNavigate, useSubmit } from "react-router";
 import { authenticate } from "../shopify.server";
+import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES
+} from "../utils/meta-injector.constants.jsx";
 
 const TARGETS = [
   { id: "gid://shopify/MetafieldDefinition/186700136699", key: "origin_story", name: "Origin Story" },
   { id: "gid://shopify/MetafieldDefinition/186700202235", key: "honest_flaws_and_character", name: "Honest Flaws and Character" },
-  { id: "gid://shopify/MetafieldDefinition/186700235003", key: "artist_notes", name: "Artist Notes" },
 ];
 
 export async function loader({ request }) {
@@ -39,7 +43,14 @@ export async function action({ request }) {
     ...TARGETS,
     { id: cutShapeNode?.id, key: "cut_and_shape", name: "Cut and Shape" },
     { id: colorNode?.id, key: "color", name: "Color" }
-  ];
+  ].filter(
+    field =>
+      field &&
+      typeof field.key === "string" &&
+      !REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:custom.${field.key}`) &&
+      !REMOVED_PARKED_DESTINATIONS.has(`custom.${field.key}`) &&
+      !REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(field.key)
+  );
 
   for (const field of ALL_TARGETS) {
     // Only attempt to delete if an existing ID was found
@@ -95,14 +106,14 @@ export default function FixMetafields() {
       >
         ← Back
       </button>
-      <h1 style={{ fontSize: "28px", marginBottom: "8px" }}>Fix 5 Broken Metafields</h1>
-      <p style={{ marginBottom: "24px", color: "#555" }}>Targets origin_story, honest_flaws_and_character, artist_notes, cut_and_shape, and color — deletes and recreates as single_line_text_field.</p>
+      <h1 style={{ fontSize: "28px", marginBottom: "8px" }}>Fix 4 Broken Metafields</h1>
+      <p style={{ marginBottom: "24px", color: "#555" }}>Targets origin_story, honest_flaws_and_character, cut_and_shape, and color — deletes and recreates as single_line_text_field.</p>
       <button
         onClick={() => submit({}, { method: "post" })}
-        aria-label="Fix the 5 broken metafields"
+        aria-label="Fix the 4 broken metafields"
         style={{ padding: "16px 32px", fontSize: "20px", background: "#2E7D32", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", marginBottom: "32px" }}
       >
-        Fix 5 Fields Now
+        Fix 4 Fields Now
       </button>
       {actionData?.results && actionData.results.map((r, i) => (
         <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid #eee", fontSize: "16px" }}>

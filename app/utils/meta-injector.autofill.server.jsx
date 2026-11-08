@@ -1,4 +1,9 @@
-import { DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
+import {
+  DROPDOWN_OPTIONS,
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES
+} from "../utils/meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS,
   isGenericBareStoneProposal,
@@ -40,6 +45,23 @@ import {
   buildMasterVisionPrompt,
   buildTab3VisionPrompt
 } from "./meta-injector.prompts.server.jsx";
+
+function stripRetiredParkedProducerEntries(obj, defaultOwner = "PRODUCT") {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  for (const key of Object.keys(obj)) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) continue;
+    if (
+      REMOVED_PARKED_CANONICAL_IDENTITIES.has(trimmed) ||
+      REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${defaultOwner}:${trimmed}`) ||
+      REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+      (defaultOwner === "PRODUCT" && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed))
+    ) {
+      delete obj[key];
+    }
+  }
+  return obj;
+}
 
 // 🟢 AI Engine — No Prisma Import Here
 
@@ -643,14 +665,15 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             : {}),
           ...dbGeoData,
           ...(explicitOoak.value ? { is_one_of_a_kind: explicitOoak.value } : {}),
-          age_group: "adult",
           target_gender: "Unisex",
-          condition: "new",
           google_product_category: "Apparel & Accessories > Jewelry"
         });
         delete finalParse.is_ooak;
         delete finalParse.rarity;
         delete finalParse.authenticity;
+        delete finalParse.age_group;
+        delete finalParse.condition;
+        stripRetiredParkedProducerEntries(finalParse, "PRODUCT");
 
         return Response.json({ success: true, intent: "titleParse", pieceId: body.get("pieceId"), titleParse: finalParse });
       }
@@ -685,6 +708,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "pieceName", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs", "operator_locked_fields", "passive_stored_fields"].includes(key))
           .map(([k, v]) => [k, v.trim()])
       );
+      stripRetiredParkedProducerEntries(rawInputFacts, "PRODUCT");
 
       const stoneIdentityContext = resolveVerifiedStoneIdentityContext(rawInputFacts, idOrigin.derivedFamily);
       const effectiveStoneFamilyForScan = stoneIdentityContext.effectiveFamily || idOrigin.derivedFamily || "";
@@ -801,9 +825,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete parsedVision.piece_name;
         delete parsedVision.rarity;
         delete parsedVision.authenticity;
+        delete parsedVision.character_marks;
+        delete parsedVision.primary_use;
+        delete parsedVision.necklace_design;
         delete parsedVision.weight_grams;
         delete parsedVision.shipping_weight_oz;
         delete parsedVision.price;
+        stripRetiredParkedProducerEntries(parsedVision, "PRODUCT");
 
         parsedVision.generated_description = formatDyslexiaText(parsedVision.generated_description);
 
@@ -813,12 +841,12 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         }
         const explicitOperatorKeys = [
           "dimensions_mm", "overall_solid_length_in", "weight_grams", "shipping_weight_oz", "price",
-          "honest_flaws_and_character", "character_marks", "wire_material",
+          "honest_flaws_and_character", "wire_material",
           "cut_and_shape", "stone_shape", "color",
-          "surface_finish", "primary_color", "secondary_colors", "color_pattern", "primary_use",
+          "surface_finish", "primary_color", "secondary_colors", "color_pattern",
           "primary_medium", "secondary_medium", "setting_ready", "bail_included",
           "jewelry_finding_type", "chain_material", "chain_link_type",
-          "necklace_design", "jewelry_type", "treated", "treatment_status", "alt_text",
+          "jewelry_type", "treated", "treatment_status", "alt_text",
           "found_object", "origin_location", "collection_name", "collection_location"
         ];
         for (const key of explicitOperatorKeys) {
@@ -889,15 +917,20 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           ...(ooakResult.conflict ? { ooak_conflict: "Conflicting OOAK values supplied; verify before saving." } : {}),
           ...(singleAltText ? { alt_text: singleAltText } : {}),
           ...(singleImageId && singleAltText ? { imageAlts: [{ imageId: singleImageId, altText: singleAltText }] } : {}),
-          age_group: currentInputFacts.age_group || "adult",
           target_gender: currentInputFacts.target_gender || "Unisex",
-          condition: currentInputFacts.condition || "new",
           google_product_category: currentInputFacts.google_product_category || parsedVision.google_product_category || "Apparel & Accessories > Jewelry"
         });
 
         delete payload.is_ooak;
         delete payload.rarity;
         delete payload.authenticity;
+        delete payload.character_marks;
+        delete payload.primary_use;
+        delete payload.necklace_design;
+        delete payload.age_group;
+        delete payload.condition;
+        stripRetiredParkedProducerEntries(payload, "PRODUCT");
+        stripRetiredParkedProducerEntries(reviewProposals, "PRODUCT");
 
         if (validatedCandidates) {
           payload.standardized_candidates = validatedCandidates;
@@ -965,6 +998,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           )
           .map(([k, v]) => [k, v.trim()])
       );
+      stripRetiredParkedProducerEntries(currentData, "PRODUCT");
 
       const isOriginPassive =
         provenance.hasValidProvenance &&
@@ -1124,6 +1158,11 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           );
         }
 
+        delete parsedVision.character_marks;
+        delete parsedVision.primary_use;
+        delete parsedVision.necklace_design;
+        stripRetiredParkedProducerEntries(parsedVision, "PRODUCT");
+
         const rawVisionSnapshot = {};
         if (parsedVision && typeof parsedVision === "object" && !Array.isArray(parsedVision)) {
           for (const [vk, vv] of Object.entries(parsedVision)) {
@@ -1132,6 +1171,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             }
           }
         }
+        stripRetiredParkedProducerEntries(rawVisionSnapshot, "PRODUCT");
 
         let validatedImageAlts = [];
         let altValidationErrors = [];
@@ -1210,8 +1250,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           "dimensions_mm", "overall_solid_length_in",
           "honest_flaws_and_character", "surface_finish", "jewelry_finding_type", "bail_included",
           "chain_material", "wire_material", "secondary_medium", "primary_medium", "material", "stone_family",
-          "primary_use", "product_format", "jewelry_type", "necklace_design", "chain_link_type",
-          "character_marks", "setting_ready", "craftsmanship", "poetic_hook",
+          "product_format", "jewelry_type", "chain_link_type",
+          "setting_ready", "craftsmanship", "poetic_hook",
           "seo_title", "alt_text", "google_product_category", "treated", "treatment_status",
           "found_object", "origin_location", "origin_handle", "origin_page_handle",
           "collection_name", "collection_location"
@@ -1358,6 +1398,9 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete parsedVision.generated_description;
         delete parsedVision.rarity;
         delete parsedVision.authenticity;
+        delete parsedVision.character_marks;
+        delete parsedVision.primary_use;
+        delete parsedVision.necklace_design;
 
         const ooakResult = resolveCanonicalOoakFromInputs(currentData, parsedVision);
         delete parsedVision.is_ooak;
@@ -1433,6 +1476,11 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete payload.is_ooak;
         delete payload.rarity;
         delete payload.authenticity;
+        delete payload.character_marks;
+        delete payload.primary_use;
+        delete payload.necklace_design;
+        stripRetiredParkedProducerEntries(payload, "PRODUCT");
+        stripRetiredParkedProducerEntries(reviewProposals, "PRODUCT");
 
         if (currentData.price) payload.price = currentData.price;
         if (currentData.weight_grams) payload.weight_grams = currentData.weight_grams;
@@ -1467,8 +1515,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             pagesList,
             collectionsList
           });
-          producerProposals = builtBenchV2.producerProposals;
-          producerDiagnostics = builtBenchV2.producerDiagnostics;
+          producerProposals = stripRetiredParkedProducerEntries(builtBenchV2.producerProposals, "PRODUCT");
+          producerDiagnostics = stripRetiredParkedProducerEntries(builtBenchV2.producerDiagnostics, "PRODUCT");
         }
 
         return Response.json({
@@ -1532,6 +1580,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             ...sharedFields,
             ...pieceData
           };
+          stripRetiredParkedProducerEntries(mergedPieceForPrompt, "PRODUCT");
 
           const stoneIdentityContext = resolveVerifiedStoneIdentityContext(
             mergedPieceForPrompt,

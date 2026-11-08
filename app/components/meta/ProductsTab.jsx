@@ -9,24 +9,18 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 
 // --- LOCAL IMPORTS ---
 import { TARGET_KEYS, FIELD_LABELS, MANUAL_KEYS } from "../../utils/metaScan";
+import {
+  REMOVED_PARKED_CANONICAL_IDENTITIES,
+  REMOVED_PARKED_DESTINATIONS,
+  REMOVED_PARKED_CUSTOM_INPUT_ALIASES
+} from "../../utils/meta-injector.constants.jsx";
 import { TAXONOMY_GIDS, wrapGid } from "../../utils/taxonomyMap";
 import DictationButton from "../DictationButton"; // The new Voice Module
 
 // --- CONSTANTS & CONFIG ---
-const LIST_TEXT_FIELDS = ["character_marks"];
-
-const availableStones = [
-  "Agate", "Amethyst", "Aventurine", "Azurite", "Bloodstone", "Carnelian",
-  "Chalcedony", "Chrysocolla", "Conglomerate", "Fluorite", "Garnet",
-  "Gneiss", "Hematite", "Howlite", "Jade", "Jasper", "Labradorite",
-  "Lapis Lazuli", "Malachite", "Moonstone", "Obsidian", "Onyx", "Opal",
-  "Pyrite", "Quartz", "Rhodochrosite", "Rhodonite", "Rose Quartz",
-  "Serpentine", "Siltstone", "Smoky Quartz", "Sodalite", "Sunstone",
-  "Tiger's Eye", "Tourmaline", "Turquoise", "Variscite"
-];
+const LIST_TEXT_FIELDS = [];
 
 const SEED_OPTIONS = {
-  story_theme: ["River Find", "Road Trip", "Rescue", "Canyon Run", "First Cut", "Commission", "Ranch Find", "Mine Pull"],
   cut_type: ["Oval", "Teardrop", "Marquise", "Freeform", "Cabochon", "Round", "Cushion", "Trillion", "Heart", "Pear"],
   stone_shape: ["Oval", "Teardrop", "Marquise", "Freeform", "Round", "Rectangular", "Irregular", "Heart"],
   surface_finish: ["High Polish", "Matte", "Raw", "Satin", "Semi-Polish"],
@@ -47,7 +41,39 @@ function toShopifyStatus(val) {
   return map[val] ?? "DRAFT";
 }
 
+function isRetiredProductsTabMetafieldKey(rawKey) {
+  if (typeof rawKey !== "string" || !rawKey.trim()) return true;
+  const trimmed = rawKey.trim();
+  const safeKey = trimmed.replace(/-/g, "_");
+  const resolvedNs = TAXONOMY_GIDS[safeKey] ? "shopify" : (trimmed.includes(".") ? trimmed.split(".")[0] : "custom");
+  const resolvedMetaKey = TAXONOMY_GIDS[safeKey]
+    ? trimmed.replace(/_/g, "-")
+    : (trimmed.includes(".") ? trimmed.split(".").slice(1).join(".") : trimmed);
+  const canonicalDest = `${resolvedNs}.${resolvedMetaKey}`;
+
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_DESTINATIONS.has(canonicalDest) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${canonicalDest}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${canonicalDest}`)
+  ) {
+    return true;
+  }
+
+  if (
+    resolvedNs === "custom" &&
+    (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(resolvedMetaKey) ||
+      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(canonicalDest))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function formatMetafieldValue(key, value) {
+  if (isRetiredProductsTabMetafieldKey(key)) return null;
   const cleanValue = String(value).replace(/[✅⚠️]/g, "").trim();
   const safeKey = key.replace(/-/g, "_");
   
@@ -76,7 +102,6 @@ export default function ProductsTab({ products = [] }) {
   
   // Editor State
   const [fieldValues, setFieldValues] = useState({});
-  const [customName, setCustomName] = useState("");
   const [baseFields, setBaseFields] = useState({ title: "", description: "", status: "DRAFT", price: "0.00", inventory: "1" });
   
   // Bulk & Custom Logic State
@@ -99,6 +124,7 @@ export default function ProductsTab({ products = [] }) {
   const addCustomFetcher = useFetcher();
 
   // --- DERIVED DATA ---
+  const activeTargetKeys = TARGET_KEYS.filter(k => !isRetiredProductsTabMetafieldKey(k));
   const filtered = products.filter(p => p.title.toLowerCase().includes(search.toLowerCase()));
 
   const isSaving     = saveFetcher.state !== "idle" || baseFetcher.state !== "idle";
@@ -126,12 +152,20 @@ export default function ProductsTab({ products = [] }) {
   }, [vocabFetcher.data]);
 
   if (autoFetcher.state === "idle" && !mergedApplied.current) {
-    const merged = autoFetcher.data?.merged || autoFetcher.data?.tab2Data || null;
-    if (merged && Object.keys(merged).length > 0) {
-      const hasNew = Object.keys(merged).some(k => merged[k] !== fieldValues[k]);
-      if (hasNew) {
-        mergedApplied.current = true;
-        setFieldValues(prev => ({ ...prev, ...merged }));
+    const rawMerged = autoFetcher.data?.merged || autoFetcher.data?.tab2Data || null;
+    if (rawMerged && typeof rawMerged === "object") {
+      const filteredMerged = {};
+      Object.entries(rawMerged).forEach(([k, v]) => {
+        if (!isRetiredProductsTabMetafieldKey(k)) {
+          filteredMerged[k] = v;
+        }
+      });
+      if (Object.keys(filteredMerged).length > 0) {
+        const hasNew = Object.keys(filteredMerged).some(k => filteredMerged[k] !== fieldValues[k]);
+        if (hasNew) {
+          mergedApplied.current = true;
+          setFieldValues(prev => ({ ...prev, ...filteredMerged }));
+        }
       }
     }
   }
@@ -139,17 +173,7 @@ export default function ProductsTab({ products = [] }) {
   // --- ACTION HANDLERS ---
   function openEditor(product) {
     const initial = {};
-    TARGET_KEYS.forEach(key => { initial[key] = product.metafields?.[key] || ""; });
-    
-    const existingName = initial.official_name || product.title || "";
-    if (existingName && !availableStones.includes(existingName)) {
-      initial.official_name = "__custom__";
-      setCustomName(existingName);
-    } else {
-      initial.official_name = existingName;
-    }
-    
-    if (!initial.stone_story) initial.stone_story = product.description || "";
+    activeTargetKeys.forEach(key => { initial[key] = product.metafields?.[key] || ""; });
     
     setBaseFields({
       title: product.title || "",
@@ -167,11 +191,11 @@ export default function ProductsTab({ products = [] }) {
   }
 
   function handleSave() {
-    const metafields = TARGET_KEYS
-      .filter(key => fieldValues[key] && String(fieldValues[key]).trim() !== "")
+    const metafields = activeTargetKeys
+      .filter(key => !isRetiredProductsTabMetafieldKey(key) && fieldValues[key] && String(fieldValues[key]).trim() !== "")
       .map(key => {
         const safeKey = key.replace(/-/g, "_");
-        const rawValue = key === "official_name" && fieldValues[key] === "__custom__" ? customName : fieldValues[key] || "";
+        const rawValue = fieldValues[key] || "";
         const formatted = formatMetafieldValue(safeKey, rawValue);
         if (!formatted) return null;
         return {
@@ -202,9 +226,14 @@ export default function ProductsTab({ products = [] }) {
 
   function handleAutoFill() {
     mergedApplied.current = false;
-    const finalName = fieldValues.official_name === "__custom__" ? customName : fieldValues.official_name;
+    const cleanExistingMeta = {};
+    Object.entries(fieldValues || {}).forEach(([k, v]) => {
+      if (!isRetiredProductsTabMetafieldKey(k)) {
+        cleanExistingMeta[k] = v;
+      }
+    });
     autoFetcher.submit(
-      { intent: "tab2AutoFill", title: baseFields.title, description: baseFields.description || "", existingMeta: JSON.stringify({ ...fieldValues, official_name: finalName }) },
+      { intent: "tab2AutoFill", title: baseFields.title, description: baseFields.description || "", existingMeta: JSON.stringify(cleanExistingMeta) },
       { method: "post", action: "/app/meta-injector-autofill" }
     );
   }
@@ -227,7 +256,8 @@ export default function ProductsTab({ products = [] }) {
     const allMetafields = [];
     results.forEach(({ id, merged }) => {
       if (!merged) return;
-      TARGET_KEYS.forEach(key => {
+      activeTargetKeys.forEach(key => {
+        if (isRetiredProductsTabMetafieldKey(key)) return;
         const val = merged[key];
         if (!val || String(val).trim() === "") return;
         const safeKey = key.replace(/-/g, "_");
@@ -266,7 +296,7 @@ export default function ProductsTab({ products = [] }) {
 
             {saveSuccess && <Banner tone="success">Saved successfully to Shopify.</Banner>}
             {saveError   && <Banner tone="critical">Save failed: {saveFetcher.data?.error || baseFetcher.data?.error}</Banner>}
-            {mindatError === "missing_name" && <Banner tone="warning">Mindat skipped: Please select an Official Name first.</Banner>}
+            {mindatError === "missing_name" && <Banner tone="warning">Mindat skipped: Stone name could not be resolved for lookup.</Banner>}
             {mindatError && mindatError !== "missing_name" && <Banner tone="critical">Mindat API Error: {mindatError}. Filled from local geo library only.</Banner>}
             {conflicts.length > 0 && (
               <Banner tone="warning">
@@ -324,23 +354,6 @@ export default function ProductsTab({ products = [] }) {
                 <Text as="h2" variant="headingSm">Lapidary Data (Meta Injector)</Text>
 
                 <BlockStack gap="200">
-                  <Text variant="bodyMd" fontWeight="bold">Official Name (Required for Mindat)</Text>
-                  <select
-                    style={{ width: "100%", padding: "10px", borderRadius: "4px", border: "1px solid #c9cccf", fontSize: "16px" }}
-                    value={fieldValues["official_name"] || ""}
-                    onChange={(e) => setFieldValues({ ...fieldValues, official_name: e.target.value })}
-                  >
-                    <option value="">-- Select Valid Mindat Stone --</option>
-                    {availableStones.map(stone => <option key={stone} value={stone}>{stone}</option>)}
-                    <option value="__custom__">➕ Add New Stone...</option>
-                  </select>
-                </BlockStack>
-
-                {fieldValues["official_name"] === "__custom__" && (
-                  <TextField label="Type new stone name" value={customName} onChange={setCustomName} autoComplete="off" placeholder="e.g. Rhodochrosite" />
-                )}
-
-                <BlockStack gap="200">
                   <TextField
                     label="Dimensions (mm)" value={fieldValues.dimensions_mm || ""}
                     onChange={val => setFieldValues(prev => ({ ...prev, dimensions_mm: val }))}
@@ -349,34 +362,8 @@ export default function ProductsTab({ products = [] }) {
                 </BlockStack>
 
                 <BlockStack gap="400">
-                  {MANUAL_KEYS.filter(key => key !== "official_name" && key !== "dimensions_mm").map(key => {
+                  {MANUAL_KEYS.filter(key => key !== "dimensions_mm" && !isRetiredProductsTabMetafieldKey(key)).map(key => {
                     
-                    // --- THE CHROME: VOICE MODULE FOR STONE STORY ---
-                    if (key === "stone_story") {
-                      return (
-                        <BlockStack gap="200" key={key}>
-                          <TextField
-                            label={FIELD_LABELS[key] || key}
-                            value={fieldValues[key] || ""}
-                            onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
-                            autoComplete="off"
-                            multiline={4}
-                          />
-                          <InlineStack align="start">
-                            <DictationButton 
-                              placeholder="🎤 Dictate Story" 
-                              onResult={(text) => {
-                                setFieldValues(prev => ({
-                                  ...prev,
-                                  [key]: prev[key] ? prev[key] + " " + text : text
-                                }));
-                              }}
-                            />
-                          </InlineStack>
-                        </BlockStack>
-                      );
-                    }
-
                     // --- DROPDOWN/MULTI-SELECT FIELDS ---
                     if (SEED_OPTIONS[key]) {
                       const opts = [...new Set([...(SEED_OPTIONS[key] || []), ...(vocabulary[key] || [])])];
@@ -433,7 +420,7 @@ export default function ProductsTab({ products = [] }) {
                                 <InlineStack gap="300" blockAlign="center" wrap={false}>
                                   <Button variant="primary" onClick={() => {
                                     const v = customInputs[key]?.trim();
-                                    if (v) {
+                                    if (v && !isRetiredProductsTabMetafieldKey(key)) {
                                       addCustomFetcher.submit({ intent: "saveVocabularyEntry", field_key: key, new_value: v }, { method: "post", action: "/app/meta-injector" });
                                       setVocabulary(prev => {
                                         const curr = prev[key] || [];
@@ -468,7 +455,7 @@ export default function ProductsTab({ products = [] }) {
                             value={fieldValues[key] || ""}
                             onChange={val => setFieldValues(prev => ({ ...prev, [key]: val }))}
                             autoComplete="off"
-                            multiline={["bench_notes", "character_marks", "rock_composition"].includes(key) ? 3 : undefined}
+                            multiline={["rock_composition"].includes(key) ? 3 : undefined}
                           />
                         </BlockStack>
                       );
@@ -513,7 +500,7 @@ export default function ProductsTab({ products = [] }) {
         <BlockStack gap="400">
           <BlockStack gap="100">
             <Text variant="headingSm" fontWeight="bold">⚡ 1. Auto-Fill All Products</Text>
-            <Text variant="bodySm" tone="subdued">Uses Official Names to pull geological data from Mindat.</Text>
+            <Text variant="bodySm" tone="subdued">Uses product stone titles and geology profiles to pull geological data.</Text>
           </BlockStack>
           <Button variant="primary" onClick={handleBulkFill} loading={isBulk} disabled={isBulk} fullWidth>
             {isBulk ? "Filling all products…" : "Auto-Fill All"}
@@ -581,7 +568,7 @@ export default function ProductsTab({ products = [] }) {
                     </div>
                     <Text variant="bodySm" fontWeight="bold" truncate>{p.title}</Text>
                     <Badge tone={p.status === "✅ Complete" ? "success" : p.status === "🔴 Empty" ? "critical" : "warning"}>{p.status}</Badge>
-                    <Text variant="bodyXs" tone="subdued">{p.filledCount} / {TARGET_KEYS.length} fields filled</Text>
+                    <Text variant="bodyXs" tone="subdued">{p.filledCount} / {activeTargetKeys.length} fields filled</Text>
                   </BlockStack>
                 </Card>
               </div>
