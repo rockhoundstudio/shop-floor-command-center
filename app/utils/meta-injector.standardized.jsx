@@ -1,5 +1,6 @@
 export const ALLOWED_VISION_CANDIDATE_KEYS = [
   "chain-link-type",
+  "color-pattern",
   "construction",
   "jewelry-finding-type",
   "material-origin",

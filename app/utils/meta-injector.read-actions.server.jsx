@@ -18,6 +18,7 @@ import {
 } from "./bench-v2.contract.jsx";
 import {
   evaluateStandardizedCategoryEligibility,
+  continueProductDefinitionCategoryConstraintMatch,
   readProductMetafieldDefinitionsWithConstraints as fetchProductMetafieldDefinitionsWithConstraints
 } from "./bench-v2.baseline.server.jsx";
 
@@ -713,13 +714,32 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
   for (const stdMetaKey of ALL_STANDARDIZED_META_KEYS) {
     const dest = `shopify.${stdMetaKey}`;
     const liveDef = liveDefs[dest] || null;
-    const elig = evaluateStandardizedCategoryEligibility({
+    let elig = evaluateStandardizedCategoryEligibility({
       destination: dest,
       liveDef,
       defsReadComplete,
       productCategory,
       productCategoryReadComplete
     });
+    const isTargetForResolution =
+      Boolean(validatedCandidateEntries[stdMetaKey]) ||
+      (hasExplicitEnumerateDestinations && seenEnumerateBareKeys.has(stdMetaKey)) ||
+      ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(stdMetaKey);
+    if (
+      isTargetForResolution &&
+      elig.status === "incomplete_constraints" &&
+      !liveDef?.constraints?.error &&
+      liveDef?.constraints?.continuation?.stopReason === "max_pages_reached"
+    ) {
+      elig = await continueProductDefinitionCategoryConstraintMatch({
+        admin,
+        destination: dest,
+        liveDef,
+        defsReadComplete,
+        productCategory,
+        productCategoryReadComplete
+      });
+    }
     categoryEligibility[dest] = elig;
     if (!elig.isComplete && !ALLOWED_STANDARDIZED_CANDIDATE_KEYS.includes(stdMetaKey) && !seenEnumerateBareKeys.has(stdMetaKey)) {
       nonCandidateConstraintDiagnostics[dest] = elig.reason;
@@ -878,13 +898,32 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
     const storedMf = productShopifyMetafields[destination] || null;
     const parsedStored = parseStoredReferenceList(storedMf?.value);
     const liveDef = liveDefs[destination] || null;
-    const catElig = categoryEligibility[destination] || evaluateStandardizedCategoryEligibility({
+    let catElig = categoryEligibility[destination] || evaluateStandardizedCategoryEligibility({
       destination,
       liveDef,
       defsReadComplete,
       productCategory,
       productCategoryReadComplete
     });
+
+    const candidateInput = validatedCandidateEntries[attrKey] || null;
+    const isRequestedForEnumeration = hasExplicitEnumerateDestinations && seenEnumerateBareKeys.has(attrKey);
+    if (
+      (candidateInput || isRequestedForEnumeration) &&
+      catElig.status === "incomplete_constraints" &&
+      !liveDef?.constraints?.error &&
+      liveDef?.constraints?.continuation?.stopReason === "max_pages_reached"
+    ) {
+      catElig = await continueProductDefinitionCategoryConstraintMatch({
+        admin,
+        destination,
+        liveDef,
+        defsReadComplete,
+        productCategory,
+        productCategoryReadComplete
+      });
+      categoryEligibility[destination] = catElig;
+    }
 
     currentReferenceLists[destination] = {
       destination,
@@ -897,8 +936,6 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
       parseError: parsedStored.error || null
     };
 
-    const candidateInput = validatedCandidateEntries[attrKey] || null;
-    const isRequestedForEnumeration = hasExplicitEnumerateDestinations && seenEnumerateBareKeys.has(attrKey);
     if (!candidateInput && !isRequestedForEnumeration) {
       continue;
     }

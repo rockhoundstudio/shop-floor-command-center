@@ -29,6 +29,7 @@ import {
 } from "../utils/bench-v2.contract.jsx";
 import {
   evaluateStandardizedCategoryEligibility,
+  continueProductDefinitionCategoryConstraintMatch,
   readProductMetafieldDefinitionsWithConstraints as fetchProductMetafieldDefinitionsWithConstraints,
   readVariantMetafieldDefinitionsWithConstraints as fetchVariantMetafieldDefinitionsWithConstraints,
   paginateOwnerMetafieldsConnection,
@@ -1354,13 +1355,28 @@ export const action = async ({ request }) => {
         }
 
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
-            const catElig = evaluateStandardizedCategoryEligibility({
-                destination: fullKey,
+            let catElig = evaluateStandardizedCategoryEligibility({
+                destination: canonicalDestinationKey,
                 liveDef: def,
                 defsReadComplete,
                 productCategory,
                 productCategoryReadComplete: productLookupComplete
             });
+            if (
+                ns === "shopify" &&
+                catElig.status === "incomplete_constraints" &&
+                !def?.constraints?.error &&
+                def?.constraints?.continuation?.stopReason === "max_pages_reached"
+            ) {
+                catElig = await continueProductDefinitionCategoryConstraintMatch({
+                    admin,
+                    destination: canonicalDestinationKey,
+                    liveDef: def,
+                    defsReadComplete,
+                    productCategory,
+                    productCategoryReadComplete: productLookupComplete
+                });
+            }
             if (!catElig.isComplete || !catElig.isEligible) {
                 blockedFields[fullKey] = catElig.reason;
                 continue;

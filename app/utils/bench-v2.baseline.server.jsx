@@ -15,6 +15,14 @@ const MAX_VARIANT_PAGES = 10;
 const MAX_MEDIA_PAGES = 10;
 const MAX_DEF_PAGES = 10;
 const MAX_CONSTRAINT_PAGES = 20;
+const MAX_ADDITIONAL_CONSTRAINT_PAGES = 20;
+const MAX_CONSTRAINT_CONTINUATION_BUDGET_MS = 8000;
+
+const EXACT_METAFIELD_DEFINITION_GID_REGEX = /^gid:\/\/shopify\/MetafieldDefinition\/\d+$/;
+
+function isExactMetafieldDefinitionGid(value) {
+  return typeof value === "string" && EXACT_METAFIELD_DEFINITION_GID_REGEX.test(value.trim());
+}
 
 export function normalizeTaxonomyCategoryCode(rawVal) {
   if (typeof rawVal !== "string") return "";
@@ -109,6 +117,7 @@ export function evaluateStandardizedCategoryEligibility({
     !Array.isArray(constraintInfo.continuation)
       ? constraintInfo.continuation
       : null;
+
   const isCleanBoundedPageCapStop =
     constraintInfo.isComplete === false &&
     !constraintInfo.error &&
@@ -120,7 +129,32 @@ export function evaluateStandardizedCategoryEligibility({
     typeof continuation.endCursor === "string" &&
     continuation.endCursor.trim() !== "";
 
-  if (constraintInfo.error || (constraintInfo.isComplete !== true && !isCleanBoundedPageCapStop)) {
+  const isCleanTimeBudgetStop =
+    constraintInfo.isComplete === false &&
+    !constraintInfo.error &&
+    isSupportedCategoryConstraintKey &&
+    continuation?.hasNextPage === true &&
+    continuation?.stopReason === "time_budget_reached" &&
+    typeof continuation.pagesFetched === "number" &&
+    continuation.pagesFetched >= MAX_CONSTRAINT_PAGES &&
+    typeof continuation.endCursor === "string" &&
+    continuation.endCursor.trim() !== "";
+
+  const isCleanPartialMatchStop =
+    constraintInfo.isComplete === false &&
+    !constraintInfo.error &&
+    isSupportedCategoryConstraintKey &&
+    continuation?.hasNextPage === true &&
+    continuation?.stopReason === "matched_product_category_early" &&
+    typeof continuation.pagesFetched === "number" &&
+    continuation.pagesFetched >= 1 &&
+    typeof continuation.endCursor === "string" &&
+    continuation.endCursor.trim() !== "";
+
+  const isCleanPartialConstraintStop =
+    isCleanBoundedPageCapStop || isCleanTimeBudgetStop || isCleanPartialMatchStop;
+
+  if (constraintInfo.error || (constraintInfo.isComplete !== true && !isCleanPartialConstraintStop)) {
     return {
       destination,
       isComplete: false,
@@ -135,8 +169,15 @@ export function evaluateStandardizedCategoryEligibility({
     };
   }
 
-  if (isCleanBoundedPageCapStop) {
-    const boundedLimitReason = `Constraint values pagination for ${destination} reached bounded limit (${MAX_CONSTRAINT_PAGES} pages; endCursor: ${continuation.endCursor || "none"}).`;
+  if (isCleanPartialConstraintStop) {
+    const pagesFetchedNum =
+      typeof continuation.pagesFetched === "number"
+        ? continuation.pagesFetched
+        : MAX_CONSTRAINT_PAGES;
+    const boundedLimitReason =
+      continuation.stopReason === "time_budget_reached"
+        ? `Constraint values pagination for ${destination} reached bounded time budget after ${pagesFetchedNum} pages (endCursor: ${continuation.endCursor || "none"}).`
+        : `Constraint values pagination for ${destination} reached bounded limit (${pagesFetchedNum} pages; endCursor: ${continuation.endCursor || "none"}).`;
 
     if (!catId || !normalizedProductCategoryCode) {
       return {
@@ -279,6 +320,401 @@ export function evaluateStandardizedCategoryEligibility({
     continuation: null,
     reason: `Product category ${catFullName ? `"${catFullName}" (${catId})` : catId} satisfies ${destination} constraint (${matchedConstraintVal}).`
   };
+}
+
+/**
+ * Continues category-constraint pagination from a valid, authoritative clean page-cap
+ * cursor for a single PRODUCT MetafieldDefinition and product category context.
+ *
+ * - Executes ONLY when `defsReadComplete === true`, `productCategoryReadComplete === true`,
+ *   `productCategory?.id` is a valid non-empty category ID, `liveDef?.id` is an exact
+ *   MetafieldDefinition GID, `liveDef.constraints` stopped cleanly at `stopReason === "max_pages_reached"`
+ *   with a non-empty `endCursor` and zero errors, and initial `evaluateStandardizedCategoryEligibility`
+ *   returned `status === "incomplete_constraints"`.
+ * - Bounded to `maxAdditionalPages` (default 20) and `maxBudgetMs` (default 8000ms) with
+ *   per-request timeout enforcement against remaining time budget.
+ * - Preserves the distinction between:
+ *   1. Positive exact/ancestor category match found early while `hasNextPage === true`
+ *      (`liveDef.constraints.isComplete = false`, `stopReason: "matched_product_category_early"`),
+ *      which proves category eligibility for `productCategory.id` without claiming full
+ *      constraint-list exhaustion or Metaobject entry completeness.
+ *   2. Full constraint-list exhaustion (`hasNextPage === false`), which sets
+ *      `liveDef.constraints.isComplete = true` and `liveDef.constraints.continuation = null`
+ *      (whether a category match was found on the final page or not).
+ *   3. Still unresolved after bounded pages or time budget (`hasNextPage === true`), which
+ *      retains `liveDef.constraints.isComplete = false` with truthful `stopReason`
+ *      (`"max_pages_reached"` or `"time_budget_reached"`) and updated `endCursor`/`pagesFetched`.
+ *   4. Transport, timeout, GraphQL, or cursor-integrity errors, which record `liveDef.constraints.error`
+ *      and fail closed.
+ */
+export async function continueProductDefinitionCategoryConstraintMatch({
+  admin,
+  destination,
+  liveDef,
+  defsReadComplete,
+  productCategory,
+  productCategoryReadComplete,
+  maxAdditionalPages = MAX_ADDITIONAL_CONSTRAINT_PAGES,
+  maxBudgetMs = MAX_CONSTRAINT_CONTINUATION_BUDGET_MS
+}) {
+  const initialElig = evaluateStandardizedCategoryEligibility({
+    destination,
+    liveDef,
+    defsReadComplete,
+    productCategory,
+    productCategoryReadComplete
+  });
+
+  if (
+    !admin ||
+    typeof admin.graphql !== "function" ||
+    defsReadComplete !== true ||
+    productCategoryReadComplete !== true ||
+    initialElig.isComplete === true ||
+    initialElig.status !== "incomplete_constraints"
+  ) {
+    return initialElig;
+  }
+
+  const catId =
+    typeof productCategory?.id === "string" && productCategory.id.trim() !== ""
+      ? productCategory.id.trim()
+      : "";
+  const normalizedCatCode = normalizeTaxonomyCategoryCode(catId);
+  if (!catId || !normalizedCatCode) {
+    return initialElig;
+  }
+
+  const defId =
+    typeof liveDef?.id === "string" && isExactMetafieldDefinitionGid(liveDef.id)
+      ? liveDef.id.trim()
+      : "";
+  if (!defId || liveDef.ownerType !== "PRODUCT") {
+    return initialElig;
+  }
+
+  const constraintInfo = liveDef.constraints;
+  if (
+    !constraintInfo ||
+    typeof constraintInfo !== "object" ||
+    Array.isArray(constraintInfo) ||
+    constraintInfo.isComplete !== false ||
+    Boolean(constraintInfo.error)
+  ) {
+    return initialElig;
+  }
+
+  const rawConstraintKey =
+    typeof constraintInfo.key === "string" && constraintInfo.key.trim() !== ""
+      ? constraintInfo.key.trim()
+      : null;
+  const existingValues = Array.isArray(constraintInfo.values) ? constraintInfo.values : [];
+  const isSupportedCategoryConstraintKey =
+    rawConstraintKey === "category" ||
+    (rawConstraintKey === null && existingValues.length > 0);
+  if (!isSupportedCategoryConstraintKey) {
+    return initialElig;
+  }
+
+  const continuation = constraintInfo.continuation;
+  if (
+    !continuation ||
+    typeof continuation !== "object" ||
+    Array.isArray(continuation) ||
+    continuation.hasNextPage !== true ||
+    continuation.stopReason !== "max_pages_reached" ||
+    typeof continuation.pagesFetched !== "number" ||
+    continuation.pagesFetched < MAX_CONSTRAINT_PAGES ||
+    typeof continuation.endCursor !== "string" ||
+    continuation.endCursor.trim() === ""
+  ) {
+    return initialElig;
+  }
+
+  if (existingValues.some((val) => doesCategoryMatchConstraintValue(catId, val))) {
+    return initialElig;
+  }
+
+  const boundedExtraPages =
+    typeof maxAdditionalPages === "number" &&
+    Number.isFinite(maxAdditionalPages) &&
+    maxAdditionalPages > 0
+      ? Math.min(Math.floor(maxAdditionalPages), MAX_ADDITIONAL_CONSTRAINT_PAGES)
+      : MAX_ADDITIONAL_CONSTRAINT_PAGES;
+
+  const boundedBudgetMs =
+    typeof maxBudgetMs === "number" &&
+    Number.isFinite(maxBudgetMs) &&
+    maxBudgetMs > 0
+      ? Math.min(Math.floor(maxBudgetMs), MAX_CONSTRAINT_CONTINUATION_BUDGET_MS)
+      : MAX_CONSTRAINT_CONTINUATION_BUDGET_MS;
+
+  const seenConstraintValues = new Set(existingValues);
+  const constraintValues = [...existingValues];
+  const seenRequestedCursors = new Set();
+  const seenReturnedCursors = new Set();
+  const initialCursor = continuation.endCursor.trim();
+  seenReturnedCursors.add(initialCursor);
+
+  let cPageInfo = {
+    hasNextPage: true,
+    endCursor: initialCursor
+  };
+  let cPagesFetched = continuation.pagesFetched;
+  let additionalPagesFetched = 0;
+  let constraintsComplete = false;
+  let constraintError = null;
+  let constraintContinuation = { ...continuation };
+
+  const startTimeMs = Date.now();
+
+  while (cPageInfo.hasNextPage && additionalPagesFetched < boundedExtraPages) {
+    const elapsedMs = Date.now() - startTimeMs;
+    const remainingBudgetMs = boundedBudgetMs - elapsedMs;
+
+    if (remainingBudgetMs <= 0) {
+      constraintsComplete = false;
+      constraintContinuation = {
+        hasNextPage: true,
+        endCursor: cPageInfo.endCursor ?? null,
+        pagesFetched: cPagesFetched,
+        stopReason: "time_budget_reached"
+      };
+      break;
+    }
+
+    const requestedCursor =
+      typeof cPageInfo.endCursor === "string" ? cPageInfo.endCursor.trim() : "";
+    if (!requestedCursor) {
+      constraintsComplete = false;
+      constraintContinuation = {
+        hasNextPage: true,
+        endCursor: cPageInfo.endCursor ?? null,
+        pagesFetched: cPagesFetched,
+        stopReason: "missing_end_cursor"
+      };
+      constraintError = `Constraint value pagination stopped on ${destination}: hasNextPage is true after page ${cPagesFetched}, but endCursor is missing or blank.`;
+      break;
+    }
+
+    if (seenRequestedCursors.has(requestedCursor)) {
+      constraintsComplete = false;
+      constraintContinuation = {
+        hasNextPage: true,
+        endCursor: requestedCursor,
+        pagesFetched: cPagesFetched,
+        stopReason: "repeated_requested_cursor"
+      };
+      constraintError = `Constraint value pagination stopped on ${destination}: cursor "${requestedCursor}" was already requested (page ${cPagesFetched}).`;
+      break;
+    }
+
+    seenRequestedCursors.add(requestedCursor);
+    cPagesFetched++;
+    additionalPagesFetched++;
+
+    let timeoutHandle = null;
+    try {
+      const graphqlPromise = admin.graphql(
+        `
+                      query getMetafieldDefConstraintValues($id: ID!, $cursor: String!) {
+                        metafieldDefinition(id: $id) {
+                          id
+                          constraints {
+                            key
+                            values(first: 250, after: $cursor) {
+                              nodes { value }
+                              pageInfo { hasNextPage endCursor }
+                            }
+                          }
+                        }
+                      }
+                    `,
+        { variables: { id: defId, cursor: requestedCursor } }
+      );
+
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          const timeoutErr = new Error(
+            `Constraint continuation query timed out after ${remainingBudgetMs}ms on ${destination} (page ${cPagesFetched}).`
+          );
+          timeoutErr.isContinuationTimeout = true;
+          reject(timeoutErr);
+        }, remainingBudgetMs);
+      });
+
+      const moreRes = await Promise.race([graphqlPromise, timeoutPromise]);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+
+      const moreJson = await moreRes.json();
+      if (moreJson.errors?.length) {
+        throw new Error(moreJson.errors.map((e) => e.message).join("; "));
+      }
+
+      const moreDefNode = moreJson?.data?.metafieldDefinition;
+      const moreConstraints = moreDefNode?.constraints;
+      const moreConn = moreConstraints?.values;
+      if (
+        !moreDefNode ||
+        moreDefNode.id !== defId ||
+        !moreConstraints ||
+        typeof moreConstraints !== "object" ||
+        Array.isArray(moreConstraints) ||
+        !moreConn ||
+        !Array.isArray(moreConn.nodes) ||
+        typeof moreConn.pageInfo?.hasNextPage !== "boolean"
+      ) {
+        throw new Error(`Malformed paginated constraint values response for ${destination}.`);
+      }
+
+      const pagedConstraintKey =
+        typeof moreConstraints.key === "string" ? moreConstraints.key : null;
+      if (pagedConstraintKey !== constraintInfo.key) {
+        throw new Error(
+          `Constraint key mismatch during pagination on ${destination} (expected "${String(constraintInfo.key)}", got "${String(pagedConstraintKey)}").`
+        );
+      }
+
+      let newUniqueValuesOnPage = 0;
+      let matchedCategoryOnPage = null;
+
+      for (const vNode of moreConn.nodes) {
+        if (!vNode || typeof vNode.value !== "string" || vNode.value.trim() === "") {
+          throw new Error(`Malformed constraint value node on ${destination} (page ${cPagesFetched}).`);
+        }
+        const trimmedVal = vNode.value.trim();
+        if (!seenConstraintValues.has(trimmedVal)) {
+          seenConstraintValues.add(trimmedVal);
+          constraintValues.push(trimmedVal);
+          newUniqueValuesOnPage++;
+        }
+        if (!matchedCategoryOnPage && doesCategoryMatchConstraintValue(catId, trimmedVal)) {
+          matchedCategoryOnPage = trimmedVal;
+        }
+      }
+
+      const nextPageInfo = moreConn.pageInfo;
+      const returnedCursor =
+        typeof nextPageInfo.endCursor === "string" ? nextPageInfo.endCursor.trim() : "";
+
+      if (nextPageInfo.hasNextPage) {
+        if (!returnedCursor) {
+          constraintsComplete = false;
+          constraintContinuation = {
+            hasNextPage: true,
+            requestedCursor,
+            endCursor: nextPageInfo.endCursor ?? null,
+            pagesFetched: cPagesFetched,
+            stopReason: "missing_returned_cursor"
+          };
+          constraintError = `Constraint value pagination stopped on ${destination}: page ${cPagesFetched} reported hasNextPage:true with a missing endCursor.`;
+          break;
+        }
+
+        if (
+          returnedCursor === requestedCursor ||
+          seenReturnedCursors.has(returnedCursor) ||
+          seenRequestedCursors.has(returnedCursor)
+        ) {
+          constraintsComplete = false;
+          constraintContinuation = {
+            hasNextPage: true,
+            requestedCursor,
+            endCursor: returnedCursor,
+            pagesFetched: cPagesFetched,
+            stopReason: "repeated_returned_cursor"
+          };
+          constraintError = `Constraint value pagination stopped on ${destination}: page ${cPagesFetched} returned repeated cursor "${returnedCursor}" while hasNextPage:true.`;
+          break;
+        }
+
+        if (newUniqueValuesOnPage === 0) {
+          constraintsComplete = false;
+          constraintContinuation = {
+            hasNextPage: true,
+            requestedCursor,
+            endCursor: returnedCursor,
+            pagesFetched: cPagesFetched,
+            stopReason: "no_new_values_with_has_next_page"
+          };
+          constraintError = `Constraint value pagination stopped on ${destination}: page ${cPagesFetched} returned hasNextPage:true (cursor "${returnedCursor}") but yielded zero new constraint values.`;
+          break;
+        }
+
+        seenReturnedCursors.add(returnedCursor);
+
+        if (matchedCategoryOnPage) {
+          cPageInfo = nextPageInfo;
+          constraintsComplete = false;
+          constraintContinuation = {
+            hasNextPage: true,
+            endCursor: returnedCursor,
+            pagesFetched: cPagesFetched,
+            stopReason: "matched_product_category_early"
+          };
+          break;
+        }
+      } else {
+        cPageInfo = nextPageInfo;
+        constraintsComplete = true;
+        constraintContinuation = null;
+        break;
+      }
+
+      cPageInfo = nextPageInfo;
+    } catch (cErr) {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      constraintsComplete = false;
+      const isTimeout = Boolean(cErr && cErr.isContinuationTimeout === true);
+      constraintContinuation = {
+        hasNextPage: true,
+        requestedCursor,
+        endCursor: cPageInfo.endCursor ?? null,
+        pagesFetched: cPagesFetched,
+        stopReason: isTimeout ? "query_timeout" : "query_error"
+      };
+      constraintError = `Constraint value pagination failed for ${destination} on page ${cPagesFetched}: ${cErr.message}`;
+      break;
+    }
+  }
+
+  if (
+    cPageInfo.hasNextPage &&
+    !constraintError &&
+    constraintContinuation?.stopReason !== "matched_product_category_early" &&
+    constraintContinuation?.stopReason !== "time_budget_reached"
+  ) {
+    constraintsComplete = false;
+    constraintContinuation = {
+      hasNextPage: true,
+      endCursor: cPageInfo.endCursor ?? null,
+      pagesFetched: cPagesFetched,
+      stopReason: "max_pages_reached"
+    };
+  }
+
+  liveDef.constraints = {
+    hasConstraints: Boolean(constraintInfo.key !== null || constraintValues.length > 0),
+    key: constraintInfo.key,
+    values: constraintValues,
+    isComplete: constraintsComplete,
+    continuation: constraintContinuation,
+    error: constraintError
+  };
+
+  return evaluateStandardizedCategoryEligibility({
+    destination,
+    liveDef,
+    defsReadComplete,
+    productCategory,
+    productCategoryReadComplete
+  });
 }
 
 /**
@@ -1396,15 +1832,31 @@ export async function loadSingleProductBaselineSnapshot(admin, productId) {
           liveDef.constraints.error)
     );
     if (destKey.startsWith("shopify.") || hasConstraints) {
-      const elig = evaluateStandardizedCategoryEligibility({
+      let elig = evaluateStandardizedCategoryEligibility({
         destination: destKey,
         liveDef,
         defsReadComplete: defReadResult.defsReadComplete,
         productCategory,
         productCategoryReadComplete
       });
+      if (
+        elig.status === "incomplete_constraints" &&
+        !liveDef?.constraints?.error &&
+        liveDef?.constraints?.continuation?.stopReason === "max_pages_reached"
+      ) {
+        elig = await continueProductDefinitionCategoryConstraintMatch({
+          admin,
+          destination: destKey,
+          liveDef,
+          defsReadComplete: defReadResult.defsReadComplete,
+          productCategory,
+          productCategoryReadComplete
+        });
+      }
       categoryEligibilityByDestination[destKey] = elig;
-      if ((!elig.isComplete || !elig.isEligible) && !constraintErrorsByDestination[destKey]) {
+      if (liveDef?.constraints?.error) {
+        constraintErrorsByDestination[destKey] = liveDef.constraints.error;
+      } else if ((!elig.isComplete || !elig.isEligible) && !constraintErrorsByDestination[destKey]) {
         constraintErrorsByDestination[destKey] = elig.reason;
       }
     }
