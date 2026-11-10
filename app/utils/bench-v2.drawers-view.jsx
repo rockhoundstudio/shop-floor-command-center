@@ -6,7 +6,8 @@
 import React, { useState, useCallback } from "react";
 import {
   isParkedOrProtectedDrawerId,
-  isManualOnlyNoAiDestination
+  isManualOnlyNoAiDestination,
+  inspectStoredReferenceListRawValue
 } from "./bench-v2.contract.jsx";
 import {
   PLAIN_DRAWER_TITLES,
@@ -64,6 +65,149 @@ export const DETAILS_PANEL_STYLE = Object.freeze({
 
 const DRAWER_COPY_TARGET_CHARS = 5800;
 const DRAWER_COPY_HARD_MAX_CHARS = 6000;
+
+function inspectActiveReferenceSelectionForCard({
+  row,
+  isShopifyReference,
+  isRefEvidenceCompleteForRow
+}) {
+  if (!isShopifyReference || !row?.contract?.isWritableInBatch1) {
+    return null;
+  }
+
+  const obs = row.baselineObservation;
+  const referenceEvidence = row.referenceEvidence;
+  const entriesByGid =
+    isRefEvidenceCompleteForRow && referenceEvidence?.entriesByGid instanceof Map
+      ? referenceEvidence.entriesByGid
+      : null;
+
+  const storedCheck = inspectStoredReferenceListRawValue(obs?.rawValue);
+  const storedGids = storedCheck.valid ? storedCheck.gids : [];
+  const storedSet = new Set(storedGids);
+
+  const mapGidToItem = (gid) => {
+    const verifiedEntry = entriesByGid ? entriesByGid.get(gid) : null;
+    return {
+      gid,
+      label:
+        verifiedEntry && typeof verifiedEntry.label === "string" && verifiedEntry.label.trim() !== ""
+          ? verifiedEntry.label.trim()
+          : null,
+      isVerifiedMember: Boolean(verifiedEntry),
+      isSavedInBaseline: storedSet.has(gid)
+    };
+  };
+
+  if (row.hasProposalKey) {
+    const rawDraft = typeof row.proposedValue === "string" ? row.proposedValue : "";
+    const trimmedDraft = rawDraft.trim();
+
+    if (trimmedDraft === "") {
+      return {
+        mode: "draft_empty",
+        valid: false,
+        items: [],
+        removedSavedItems: [],
+        error: "Active draft is empty. Enter a valid reference list or click Reset to Saved."
+      };
+    }
+
+    let parsedDraft;
+    try {
+      parsedDraft = JSON.parse(rawDraft);
+    } catch {
+      return {
+        mode: "draft_invalid",
+        valid: false,
+        items: [],
+        removedSavedItems: [],
+        error:
+          row.validation?.reason ||
+          "Active draft is not a canonical JSON array of Metaobject GIDs. Fix the draft or click Reset to Saved."
+      };
+    }
+
+    if (!Array.isArray(parsedDraft)) {
+      return {
+        mode: "draft_invalid",
+        valid: false,
+        items: [],
+        removedSavedItems: [],
+        error:
+          row.validation?.reason ||
+          "Active draft is not a JSON array of Metaobject GIDs. Fix the draft or click Reset to Saved."
+      };
+    }
+
+    if (parsedDraft.length === 0) {
+      return {
+        mode: "draft_empty_array",
+        valid: false,
+        items: [],
+        removedSavedItems: storedGids.map(mapGidToItem),
+        error:
+          row.validation?.reason ||
+          "Clearing the last reference entry to an empty list is not supported by the current app validation and writer. Click Reset to Saved to restore the saved selection."
+      };
+    }
+
+    const draftCheck = inspectStoredReferenceListRawValue(rawDraft);
+    const hasDuplicateOrNonCanonical =
+      !draftCheck.valid ||
+      draftCheck.gids.length !== parsedDraft.length ||
+      JSON.stringify(parsedDraft) !== rawDraft;
+
+    if (hasDuplicateOrNonCanonical) {
+      return {
+        mode: "draft_invalid",
+        valid: false,
+        items: [],
+        removedSavedItems: [],
+        error:
+          row.validation?.reason ||
+          draftCheck.error ||
+          "Active draft contains duplicate, untrimmed, or invalid Metaobject GIDs. Fix the draft or click Reset to Saved."
+      };
+    }
+
+    const activeSet = new Set(draftCheck.gids);
+    const items = draftCheck.gids.map(mapGidToItem);
+    const removedSavedItems = storedGids
+      .filter((g) => !activeSet.has(g))
+      .map(mapGidToItem);
+
+    const isDraftValidForRemoval = Boolean(
+      !row.validation || row.validation.valid === true
+    );
+
+    return {
+      mode: "draft",
+      valid: isDraftValidForRemoval,
+      items,
+      removedSavedItems,
+      error: !isDraftValidForRemoval ? row.validation?.reason || null : null
+    };
+  }
+
+  if (!storedCheck.valid) {
+    return {
+      mode: "baseline_invalid",
+      valid: false,
+      items: [],
+      removedSavedItems: [],
+      error: storedCheck.error || "Saved reference list could not be parsed safely."
+    };
+  }
+
+  return {
+    mode: "baseline",
+    valid: true,
+    items: storedGids.map(mapGidToItem),
+    removedSavedItems: [],
+    error: null
+  };
+}
 
 function formatExactLoadedBaselineForDrawerCopy(row) {
   const obs = row?.baselineObservation;
@@ -456,6 +600,7 @@ export function BenchV2DrawersView({
   handleFieldEditorFocus,
   handleFieldEditorBlur,
   handleSelectPresetOption,
+  handleRemoveReferenceChoiceGid = null,
   handleManualProposalChange,
   handleClearDraftProposal,
   handleAcceptAiAlternative,
@@ -1042,6 +1187,9 @@ export function BenchV2DrawersView({
                         } = row;
 
                         const isShopifyReference = contract.namespace === "shopify";
+                        const isListReferenceContract =
+                          isShopifyReference &&
+                          contract.expectedType === "list.metaobject_reference";
                         const isNativeVariantPrice =
                           contract.owner === "PRODUCTVARIANT" &&
                           contract.namespace === "native" &&
@@ -1108,6 +1256,27 @@ export function BenchV2DrawersView({
 
                         const shortNotice = getShortPlainNotice(row, isRefChoicesBusy);
 
+                        const activeReferenceSelection = isListReferenceContract
+                          ? inspectActiveReferenceSelectionForCard({
+                              row,
+                              isShopifyReference,
+                              isRefEvidenceCompleteForRow
+                            })
+                          : null;
+
+                        const hasRemoveHandlerAvailable =
+                          typeof handleRemoveReferenceChoiceGid === "function";
+
+                        const canTriggerIndividualReferenceRemove = Boolean(
+                          isListReferenceContract &&
+                            canEditManualInputInBatch1 &&
+                            !isAnyOperationBusy &&
+                            !isRefChoicesBusy &&
+                            hasRemoveHandlerAvailable &&
+                            activeReferenceSelection?.valid === true &&
+                            activeReferenceSelection.items.length > 1
+                        );
+
                         let selectPlaceholderLabel = "Choose an option...";
                         if (isShopifyReference) {
                           if (!obs.evidenceAvailable) {
@@ -1130,6 +1299,13 @@ export function BenchV2DrawersView({
                               "Reference choice verification incomplete — click Retry Reference Choices";
                           } else if (isRefEvidenceVerifiedEmpty) {
                             selectPlaceholderLabel = `0 verified Metaobject entries exist in Shopify (${obs.restrictedMetaobjectDefinitionId || "definition"})`;
+                          } else if (
+                            hasProposalKey &&
+                            activeReferenceSelection &&
+                            !activeReferenceSelection.valid
+                          ) {
+                            selectPlaceholderLabel =
+                              "Active draft list is invalid or empty — fix or click Reset to Saved";
                           } else if (!hasAvailableOptions) {
                             selectPlaceholderLabel =
                               "Stored reference list invalid — inspect details before editing";
@@ -1449,6 +1625,234 @@ export function BenchV2DrawersView({
                                       </select>
                                     )}
 
+                                    {/* REUSABLE LIST-REFERENCE SELECTION & INDIVIDUAL REMOVE TOOLS */}
+                                    {isListReferenceContract && activeReferenceSelection && (
+                                      <div
+                                        style={{
+                                          marginBottom: "10px",
+                                          padding: "10px 12px",
+                                          backgroundColor: activeReferenceSelection.valid
+                                            ? "#f8fafc"
+                                            : "#fff7ed",
+                                          border: activeReferenceSelection.valid
+                                            ? "1px solid #cbd5e1"
+                                            : "1px solid #fdba74",
+                                          borderRadius: "6px"
+                                        }}
+                                      >
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            flexWrap: "wrap",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            gap: "8px",
+                                            marginBottom: "6px"
+                                          }}
+                                        >
+                                          <div
+                                            style={{
+                                              fontSize: "14px",
+                                              fontWeight: 700,
+                                              color: "#0f172a"
+                                            }}
+                                          >
+                                            {hasProposalKey
+                                              ? `Active Staged Selection (${activeReferenceSelection.items.length})`
+                                              : `Current Saved Selection (${activeReferenceSelection.items.length})`}
+                                          </div>
+                                          {hasProposalKey && (
+                                            <span
+                                              style={{
+                                                fontSize: "13px",
+                                                fontWeight: 600,
+                                                color: "#1e3a8a"
+                                              }}
+                                            >
+                                              Unsaved draft — use Reset to Saved or Keep Original to abandon
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {!activeReferenceSelection.valid ? (
+                                          <div
+                                            style={{
+                                              fontSize: "14px",
+                                              fontWeight: 600,
+                                              color: "#9a3412"
+                                            }}
+                                          >
+                                            {activeReferenceSelection.error ||
+                                              "Active draft list is invalid or empty; individual entry removal is disabled until fixed or Reset to Saved."}
+                                          </div>
+                                        ) : activeReferenceSelection.items.length === 0 ? (
+                                          <div style={{ fontSize: "14px", color: "#475569" }}>
+                                            No reference entries currently assigned. Select a verified choice above to stage an addition.
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <div
+                                              style={{
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                gap: "6px"
+                                              }}
+                                            >
+                                              {activeReferenceSelection.items.map((item) => {
+                                                const isLastEntry =
+                                                  activeReferenceSelection.items.length <= 1;
+                                                const removeDisabled =
+                                                  !canTriggerIndividualReferenceRemove ||
+                                                  isLastEntry;
+
+                                                return (
+                                                  <div
+                                                    key={item.gid}
+                                                    style={{
+                                                      display: "flex",
+                                                      flexWrap: "wrap",
+                                                      justifyContent: "space-between",
+                                                      alignItems: "center",
+                                                      gap: "8px",
+                                                      padding: "6px 10px",
+                                                      backgroundColor: "#ffffff",
+                                                      border: "1px solid #94a3b8",
+                                                      borderRadius: "6px"
+                                                    }}
+                                                  >
+                                                    <div
+                                                      style={{
+                                                        display: "flex",
+                                                        flexWrap: "wrap",
+                                                        alignItems: "baseline",
+                                                        gap: "6px",
+                                                        wordBreak: "break-word"
+                                                      }}
+                                                    >
+                                                      <span
+                                                        style={{
+                                                          fontSize: "15px",
+                                                          fontWeight: 700,
+                                                          color: "#0f172a"
+                                                        }}
+                                                      >
+                                                        {item.label ||
+                                                          (isRefEvidenceCompleteForRow
+                                                            ? `Unverified stored entry (${item.gid})`
+                                                            : item.gid)}
+                                                      </span>
+                                                      {item.label && (
+                                                        <code
+                                                          style={{
+                                                            fontSize: "12px",
+                                                            color: "#475569"
+                                                          }}
+                                                        >
+                                                          ({item.gid})
+                                                        </code>
+                                                      )}
+                                                      <span
+                                                        style={{
+                                                          fontSize: "12px",
+                                                          fontWeight: 600,
+                                                          color: item.isSavedInBaseline
+                                                            ? "#334155"
+                                                            : "#1d4ed8"
+                                                        }}
+                                                      >
+                                                        {item.isSavedInBaseline
+                                                          ? "[Saved on product]"
+                                                          : "[Added in draft]"}
+                                                      </span>
+                                                    </div>
+
+                                                    <button
+                                                      type="button"
+                                                      aria-label={`Remove ${item.label || item.gid} from ${contract.destinationKey}`}
+                                                      disabled={removeDisabled}
+                                                      onFocus={() =>
+                                                        handleFieldEditorFocus(
+                                                          contract.destinationKey
+                                                        )
+                                                      }
+                                                      onBlur={() =>
+                                                        handleFieldEditorBlur(
+                                                          contract.destinationKey
+                                                        )
+                                                      }
+                                                      onClick={() => {
+                                                        if (
+                                                          typeof handleRemoveReferenceChoiceGid ===
+                                                          "function"
+                                                        ) {
+                                                          handleRemoveReferenceChoiceGid(
+                                                            row,
+                                                            item.gid
+                                                          );
+                                                        }
+                                                      }}
+                                                      style={{
+                                                        padding: "4px 10px",
+                                                        fontSize: "13px",
+                                                        fontWeight: 700,
+                                                        backgroundColor: removeDisabled
+                                                          ? "#e2e8f0"
+                                                          : "#fef2f2",
+                                                        color: removeDisabled
+                                                          ? "#64748b"
+                                                          : "#991b1b",
+                                                        border: removeDisabled
+                                                          ? "1px solid #cbd5e1"
+                                                          : "1px solid #dc2626",
+                                                        borderRadius: "5px",
+                                                        cursor: removeDisabled
+                                                          ? "not-allowed"
+                                                          : "pointer"
+                                                      }}
+                                                    >
+                                                      Remove
+                                                    </button>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+
+                                            {activeReferenceSelection.items.length === 1 && (
+                                              <div
+                                                style={{
+                                                  marginTop: "6px",
+                                                  fontSize: "13px",
+                                                  color: "#475569"
+                                                }}
+                                              >
+                                                Removing the last remaining reference entry is disabled because this app's current validation and writer do not support clearing a reference list to empty.{hasProposalKey ? " To abandon unsaved draft changes, click Reset to Saved below." : " Add another verified choice first if you want to replace this entry."}
+                                              </div>
+                                            )}
+                                          </>
+                                        )}
+
+                                        {activeReferenceSelection.removedSavedItems.length > 0 && (
+                                          <div
+                                            style={{
+                                              marginTop: "8px",
+                                              paddingTop: "6px",
+                                              borderTop: "1px dashed #cbd5e1",
+                                              fontSize: "13px",
+                                              color: "#9a3412",
+                                              fontWeight: 600
+                                            }}
+                                          >
+                                            Staged for removal from saved list (will not be written until you check Approve and click Save):{" "}
+                                            {activeReferenceSelection.removedSavedItems
+                                              .map((rm) =>
+                                                rm.label ? `${rm.label} (${rm.gid})` : rm.gid
+                                              )
+                                              .join(", ")}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
                                     <div
                                       style={{
                                         display: "flex",
@@ -1524,6 +1928,11 @@ export function BenchV2DrawersView({
                                       {hasProposalKey && (
                                         <button
                                           type="button"
+                                          title={
+                                            isListReferenceContract
+                                              ? "Abandon unsaved draft and restore saved baseline selection"
+                                              : "Clear unsaved draft proposal"
+                                          }
                                           onClick={() =>
                                             handleClearDraftProposal(contract.destinationKey)
                                           }
@@ -1536,10 +1945,11 @@ export function BenchV2DrawersView({
                                             color: "#0f172a",
                                             border: "1px solid #475569",
                                             borderRadius: "6px",
-                                            cursor: "pointer"
+                                            cursor: "pointer",
+                                            whiteSpace: "nowrap"
                                           }}
                                         >
-                                          Clear
+                                          {isListReferenceContract ? "Reset to Saved" : "Clear"}
                                         </button>
                                       )}
                                     </div>
@@ -1587,7 +1997,7 @@ export function BenchV2DrawersView({
                                           color: "#334155"
                                         }}
                                       >
-                                        Select a verified choice above to stage a draft before{" "}
+                                        Select a verified choice above{activeReferenceSelection && activeReferenceSelection.items.length > 1 ? " or click Remove on a saved entry" : ""} to stage a draft before{" "}
                                         <strong>Approve</strong> or <strong>Keep Original</strong>{" "}
                                         becomes available.
                                       </div>

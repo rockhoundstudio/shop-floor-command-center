@@ -907,11 +907,21 @@ export function evaluateBenchV2OptInCustomProductWrite({
   };
 }
 
+function areStringArraysExactEqual(arrA, arrB) {
+  if (!Array.isArray(arrA) || !Array.isArray(arrB)) return false;
+  if (arrA.length !== arrB.length) return false;
+  for (let i = 0; i < arrA.length; i++) {
+    if (arrA[i] !== arrB[i]) return false;
+  }
+  return true;
+}
+
 export function validateBatch1ProposedValue({
   productId,
   destinationKey,
   proposedValue,
-  baselineSnapshot
+  baselineSnapshot,
+  allowExplicitReferenceListReplacement = false
 }) {
   if (!isExactProductGid(productId)) {
     return { valid: false, code: "invalid_product_gid", reason: "Exact Shopify Product GID is required." };
@@ -1010,7 +1020,9 @@ export function validateBatch1ProposedValue({
       return {
         valid: false,
         code: "empty_or_non_array_reference_list",
-        reason: `Destination "${contract.destinationKey}" requires a non-empty JSON array of Metaobject GIDs.`
+        reason: Array.isArray(parsedArray) && parsedArray.length === 0
+          ? `Clearing the last reference entry to an empty list is not supported by the current app validation and writer for "${contract.destinationKey}"; at least one verified Metaobject GID must remain.`
+          : `Destination "${contract.destinationKey}" requires a non-empty JSON array of Metaobject GIDs.`
       };
     }
 
@@ -1051,14 +1063,22 @@ export function validateBatch1ProposedValue({
       };
     }
 
+    const removedStoredReferenceGids = [];
     for (const existingGid of storedCheck.gids) {
       if (!seenGids.has(existingGid)) {
-        return {
-          valid: false,
-          code: "existing_reference_assignment_dropped",
-          reason: `Proposal for "${contract.destinationKey}" is missing existing assigned Metaobject ${existingGid}. Existing reference assignments are preserved and never silently removed.`
-        };
+        removedStoredReferenceGids.push(existingGid);
       }
+    }
+
+    const isExplicitReplacementAllowed = Boolean(allowExplicitReferenceListReplacement === true);
+
+    if (removedStoredReferenceGids.length > 0 && !isExplicitReplacementAllowed) {
+      const firstDroppedGid = removedStoredReferenceGids[0];
+      return {
+        valid: false,
+        code: "existing_reference_assignment_dropped",
+        reason: `Proposal for "${contract.destinationKey}" is missing existing assigned Metaobject ${firstDroppedGid}. Existing reference assignments are preserved and never silently removed.`
+      };
     }
 
     const isUnchangedRefList =
@@ -1074,6 +1094,8 @@ export function validateBatch1ProposedValue({
         code: "unchanged_from_baseline",
         normalizedValue: exactValue,
         isUnchangedFromStored: true,
+        allowExplicitReferenceListReplacement: false,
+        removedStoredReferenceGids: Object.freeze([]),
         verifiedActualType,
         observedShopifyType: typeAndCompleteness.observedShopifyType,
         typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
@@ -1116,16 +1138,24 @@ export function validateBatch1ProposedValue({
       }
     }
 
+    const hasRemovedSavedMembers = removedStoredReferenceGids.length > 0;
+
     return {
       valid: true,
       code: "valid_change",
       normalizedValue: exactValue,
       isUnchangedFromStored: false,
+      allowExplicitReferenceListReplacement: Boolean(
+        isExplicitReplacementAllowed && hasRemovedSavedMembers
+      ),
+      removedStoredReferenceGids: Object.freeze([...removedStoredReferenceGids]),
       verifiedActualType,
       observedShopifyType: typeAndCompleteness.observedShopifyType,
       typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
       baselineObservation: baselineObs,
-      reason: "Valid Batch 1 standardized reference proposed change."
+      reason: hasRemovedSavedMembers
+        ? `Valid Batch 1 explicit standardized reference list replacement (${removedStoredReferenceGids.length} saved entry removed).`
+        : "Valid Batch 1 standardized reference proposed change."
     };
   } else if (verifiedActualType === "boolean") {
     if (exactValue !== "true" && exactValue !== "false") {
@@ -1332,14 +1362,16 @@ export function createExactValueApprovalRecord({
   productId,
   destinationKey,
   proposedValue,
-  baselineSnapshot
+  baselineSnapshot,
+  allowExplicitReferenceListReplacement = false
 }) {
   const contract = getFieldContractByDestination(destinationKey);
   const validation = validateBatch1ProposedValue({
     productId,
     destinationKey,
     proposedValue,
-    baselineSnapshot
+    baselineSnapshot,
+    allowExplicitReferenceListReplacement
   });
 
   if (!validation.valid || !contract) {
@@ -1384,6 +1416,16 @@ export function createExactValueApprovalRecord({
     };
   }
 
+  const removedStoredGids = isShopifyReference && Array.isArray(validation.removedStoredReferenceGids)
+    ? Object.freeze([...validation.removedStoredReferenceGids])
+    : Object.freeze([]);
+  const effectiveAllowExplicitReplacement = Boolean(
+    isShopifyReference &&
+      allowExplicitReferenceListReplacement === true &&
+      validation.allowExplicitReferenceListReplacement === true &&
+      removedStoredGids.length > 0
+  );
+
   const record = Object.freeze({
     kind: "exact_value_approval",
     productId,
@@ -1396,6 +1438,8 @@ export function createExactValueApprovalRecord({
     categoryEligibilityStatus: isShopifyReference
       ? (obs.categoryEligibility?.status || null)
       : null,
+    allowExplicitReferenceListReplacement: effectiveAllowExplicitReplacement,
+    removedStoredReferenceGids: removedStoredGids,
     destinationKey: obs.destinationKey,
     approvedValue: validation.normalizedValue,
     verifiedType: validation.verifiedActualType,
@@ -1412,7 +1456,8 @@ export function isExactValueApprovalValid({
   productId,
   destinationKey,
   currentProposedValue,
-  baselineSnapshot
+  baselineSnapshot,
+  allowExplicitReferenceListReplacement = undefined
 }) {
   if (!approvalRecord || typeof approvalRecord !== "object") return false;
   if (approvalRecord.kind !== "exact_value_approval") return false;
@@ -1427,11 +1472,25 @@ export function isExactValueApprovalValid({
   const contract = getFieldContractByDestination(destinationKey);
   if (!contract) return false;
 
+  const isShopifyReference = contract.namespace === "shopify";
+  const recordAllowsReplacement = Boolean(
+    isShopifyReference && approvalRecord.allowExplicitReferenceListReplacement === true
+  );
+  const effectiveReplacementIntent =
+    allowExplicitReferenceListReplacement !== undefined
+      ? Boolean(isShopifyReference && allowExplicitReferenceListReplacement === true)
+      : recordAllowsReplacement;
+
+  if (isShopifyReference && recordAllowsReplacement !== effectiveReplacementIntent) {
+    return false;
+  }
+
   const validation = validateBatch1ProposedValue({
     productId,
     destinationKey,
     proposedValue: currentProposedValue,
-    baselineSnapshot
+    baselineSnapshot,
+    allowExplicitReferenceListReplacement: effectiveReplacementIntent
   });
   if (!validation.valid || validation.isUnchangedFromStored) return false;
   if (approvalRecord.verifiedType !== validation.verifiedActualType) return false;
@@ -1454,7 +1513,7 @@ export function isExactValueApprovalValid({
     }
   }
 
-  if (contract.namespace === "shopify") {
+  if (isShopifyReference) {
     const obs = validation.baselineObservation;
     if (
       !isExactMetaobjectDefinitionGid(approvalRecord.restrictedMetaobjectDefinitionId) ||
@@ -1469,6 +1528,24 @@ export function isExactValueApprovalValid({
       (approvalRecord.categoryEligibilityStatus || null) !==
       (obs.categoryEligibility?.status || null)
     ) {
+      return false;
+    }
+
+    const expectedRemovedGids = Array.isArray(validation.removedStoredReferenceGids)
+      ? validation.removedStoredReferenceGids
+      : [];
+    const recordedRemovedGids = Array.isArray(approvalRecord.removedStoredReferenceGids)
+      ? approvalRecord.removedStoredReferenceGids
+      : [];
+    const expectedReplacementFlag = Boolean(
+      validation.allowExplicitReferenceListReplacement === true &&
+        expectedRemovedGids.length > 0
+    );
+
+    if (recordAllowsReplacement !== expectedReplacementFlag) {
+      return false;
+    }
+    if (!areStringArraysExactEqual(recordedRemovedGids, expectedRemovedGids)) {
       return false;
     }
   }
@@ -1661,6 +1738,17 @@ export function evaluateBenchV2FieldRow({
         ? "Manual"
         : "None";
 
+  const allowExplicitReferenceListReplacement = Boolean(
+    isShopifyReference &&
+      hasProposalKey &&
+      rawPropEntry &&
+      typeof rawPropEntry === "object" &&
+      rawPropEntry.origin === "Manual" &&
+      rawPropEntry.allowExplicitReferenceListReplacement === true &&
+      typeof rawPropEntry.explicitReplacementValue === "string" &&
+      rawPropEntry.explicitReplacementValue === proposedValue
+  );
+
   const hasNonEmptyProposal = hasProposalKey && !isBlankOrWhitespaceOnly(proposedValue);
 
   const approvalRec = approvalsMapForProduct?.[contract.destinationKey] || null;
@@ -1681,7 +1769,8 @@ export function evaluateBenchV2FieldRow({
         productId,
         destinationKey: contract.destinationKey,
         proposedValue,
-        baselineSnapshot
+        baselineSnapshot,
+        allowExplicitReferenceListReplacement
       })
     : null;
 
@@ -1694,7 +1783,8 @@ export function evaluateBenchV2FieldRow({
       productId,
       destinationKey: contract.destinationKey,
       currentProposedValue: proposedValue,
-      baselineSnapshot
+      baselineSnapshot,
+      allowExplicitReferenceListReplacement
     });
 
   let connectionStatus = "Read-Only";
@@ -1819,7 +1909,9 @@ export function evaluateBenchV2FieldRow({
       contract.owner === "PRODUCTVARIANT" && baselineObs.variantId
         ? `Approved exact value (${isNativeVariantPrice ? "USD money" : validation.verifiedActualType}) bound to variant ${baselineObs.variantId}.`
         : isShopifyReference
-          ? `Approved exact Metaobject GID list (${validation.verifiedActualType}) bound to definition ${baselineObs.restrictedMetaobjectDefinitionId}.`
+          ? validation.allowExplicitReferenceListReplacement
+            ? `Approved exact Metaobject GID list replacement (${validation.verifiedActualType}; ${validation.removedStoredReferenceGids.length} saved entry removed) bound to definition ${baselineObs.restrictedMetaobjectDefinitionId}.`
+            : `Approved exact Metaobject GID list (${validation.verifiedActualType}) bound to definition ${baselineObs.restrictedMetaobjectDefinitionId}.`
           : validation.typeEvidenceSource === "reviewed_exact_contract"
             ? `Approved exact value (${validation.verifiedActualType} via reviewed exact contract).`
             : `Approved exact value (${validation.verifiedActualType}).`;
@@ -1863,17 +1955,26 @@ export function evaluateBenchV2FieldRow({
       )
     : proposedValue;
 
+  const activeDraftRawValueForOptions =
+    isShopifyReference && hasProposalKey ? proposedValue : undefined;
+
   return Object.freeze({
     contract,
     baselineObservation: baselineObs,
     typeAndCompleteness,
     referenceEvidence: refEvidence,
     baselineDisplayValue,
-    options: getContractOptionsForObservation(contract, baselineObs, baselineSnapshot),
+    options: getContractOptionsForObservation(
+      contract,
+      baselineObs,
+      baselineSnapshot,
+      activeDraftRawValueForOptions
+    ),
     hasProposalKey,
     proposedValue,
     proposedDisplayValue,
     proposalSource,
+    allowExplicitReferenceListReplacement,
     validation,
     isApproved,
     isKeepOriginal,

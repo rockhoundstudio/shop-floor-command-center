@@ -206,6 +206,19 @@ function getProposalValueString(rawEntry) {
       : "";
 }
 
+function hasExplicitReferenceReplacementFlag(rawEntry, destinationKey, exactProposedValue) {
+  const contract = getFieldContractByDestination(destinationKey);
+  if (!contract || contract.namespace !== "shopify") return false;
+  return Boolean(
+    rawEntry &&
+      typeof rawEntry === "object" &&
+      rawEntry.origin === "Manual" &&
+      rawEntry.allowExplicitReferenceListReplacement === true &&
+      typeof rawEntry.explicitReplacementValue === "string" &&
+      rawEntry.explicitReplacementValue === exactProposedValue
+  );
+}
+
 function resolveProducerBackedGeologyReferenceCandidate({
   productId,
   destKey,
@@ -1581,6 +1594,11 @@ export default function BenchV2Route() {
         const hasExistingDraft = Boolean(
           existingDraftEntry !== undefined && existingDraftVal.trim() !== ""
         );
+        const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
+          existingDraftEntry,
+          destKey,
+          existingDraftVal
+        );
         const existingApprovalRec = liveApprovalsMap[destKey] || null;
         const hasValidExistingApproval =
           hasExistingDraft &&
@@ -1589,7 +1607,8 @@ export default function BenchV2Route() {
             productId: liveProductId,
             destinationKey: destKey,
             currentProposedValue: existingDraftVal,
-            baselineSnapshot: liveMergedBaseline
+            baselineSnapshot: liveMergedBaseline,
+            allowExplicitReferenceListReplacement: existingAllowReplacement
           });
         const existingKeepOrigRec = liveKeepOriginalMap[destKey] || null;
         const hasValidExistingKeepOriginal =
@@ -2209,14 +2228,19 @@ export default function BenchV2Route() {
 
       for (const checkDest of candidateDestKeys) {
         const propEntry = currentProposedMap[checkDest];
+        const propValStr = getProposalValueString(propEntry);
         const hasHumanDraft = Boolean(
           propEntry &&
             typeof propEntry === "object" &&
             propEntry.origin === "Manual" &&
-            typeof propEntry.value === "string" &&
-            propEntry.value.trim() !== ""
+            propValStr.trim() !== ""
         );
 
+        const allowRepForCheck = hasExplicitReferenceReplacementFlag(
+          propEntry,
+          checkDest,
+          propValStr
+        );
         const approvalRec = currentApprovalsMap[checkDest];
         const hasValidApproval = Boolean(
           approvalRec &&
@@ -2225,9 +2249,9 @@ export default function BenchV2Route() {
               approvalRecord: approvalRec,
               productId: activeProductId,
               destinationKey: checkDest,
-              currentProposedValue:
-                typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
-              baselineSnapshot: currentBaseline
+              currentProposedValue: propValStr,
+              baselineSnapshot: currentBaseline,
+              allowExplicitReferenceListReplacement: allowRepForCheck
             })
         );
 
@@ -2239,15 +2263,13 @@ export default function BenchV2Route() {
               keepOriginalRecord: keepOrigRec,
               productId: activeProductId,
               destinationKey: checkDest,
-              currentProposedValue:
-                typeof propEntry === "object" ? propEntry.value : String(propEntry || ""),
+              currentProposedValue: propValStr,
               baselineSnapshot: currentBaseline
             })
         );
 
         if (hasHumanDraft || hasValidApproval) {
-          const humanVal =
-            typeof propEntry === "object" ? propEntry.value.trim() : String(propEntry || "").trim();
+          const humanVal = propValStr.trim();
           if (humanVal !== "") {
             lockedHumanVal = humanVal;
             hasLockedHumanOrKeepOriginal = true;
@@ -2553,16 +2575,16 @@ export default function BenchV2Route() {
       displayNote = ""
     }) => {
       const existingDraft = existingProdProposals[destKey];
-      const existingDraftVal =
-        existingDraft && typeof existingDraft === "object"
-          ? existingDraft.value
-          : typeof existingDraft === "string"
-            ? existingDraft
-            : "";
+      const existingDraftVal = getProposalValueString(existingDraft);
       const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
       const isManualDraft = Boolean(
         hasExistingDraft &&
           (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+      );
+      const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
+        existingDraft,
+        destKey,
+        existingDraftVal
       );
 
       const approvalRec = existingProdApprovals[destKey] || null;
@@ -2573,7 +2595,8 @@ export default function BenchV2Route() {
           productId: scannedProductId,
           destinationKey: destKey,
           currentProposedValue: existingDraftVal,
-          baselineSnapshot: targetBaseline
+          baselineSnapshot: targetBaseline,
+          allowExplicitReferenceListReplacement: existingAllowReplacement
         });
 
       const keepOrigRec = existingProdKeepOriginal[destKey] || null;
@@ -3035,16 +3058,16 @@ export default function BenchV2Route() {
         updatedDiagnostics[destKey] = null;
 
         const existingDraft = existingProdProposals[destKey];
-        const existingDraftVal =
-          existingDraft && typeof existingDraft === "object"
-            ? existingDraft.value
-            : typeof existingDraft === "string"
-              ? existingDraft
-              : "";
+        const existingDraftVal = getProposalValueString(existingDraft);
         const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
         const isManualDraft = Boolean(
           hasExistingDraft &&
             (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+        );
+        const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
+          existingDraft,
+          destKey,
+          existingDraftVal
         );
 
         const approvalRec = existingProdApprovals[destKey] || null;
@@ -3055,7 +3078,8 @@ export default function BenchV2Route() {
             productId: activeProductId,
             destinationKey: destKey,
             currentProposedValue: existingDraftVal,
-            baselineSnapshot: currentBaseline
+            baselineSnapshot: currentBaseline,
+            allowExplicitReferenceListReplacement: existingAllowReplacement
           });
 
         const keepOrigRec = existingProdKeepOriginal[destKey] || null;
@@ -3706,9 +3730,20 @@ export default function BenchV2Route() {
     revalidator.revalidate();
   }, [writerFetcher.state, writerFetcher.data, revalidator]);
 
-  const handleManualProposalChange = (destinationKey, rawNewValue) => {
+  const stageManualProposalForDestination = (
+    destinationKey,
+    rawNewValue,
+    allowExplicitReplacement = false
+  ) => {
     setClientPrevalidationBanner(null);
     const exactString = typeof rawNewValue === "string" ? rawNewValue : String(rawNewValue ?? "");
+    const contract = getFieldContractByDestination(destinationKey);
+    const shouldBindExplicitReplacement = Boolean(
+      allowExplicitReplacement === true &&
+        contract?.namespace === "shopify" &&
+        contract?.expectedType === "list.metaobject_reference" &&
+        exactString.trim() !== ""
+    );
 
     setProposedByProduct((prev) => {
       const prodMap = { ...(prev[activeProductId] || {}) };
@@ -3716,6 +3751,12 @@ export default function BenchV2Route() {
         value: exactString,
         source: "Manual",
         origin: "Manual",
+        ...(shouldBindExplicitReplacement
+          ? {
+              allowExplicitReferenceListReplacement: true,
+              explicitReplacementValue: exactString
+            }
+          : {}),
         updatedAt: new Date().toISOString()
       };
       return { ...prev, [activeProductId]: prodMap };
@@ -3725,15 +3766,135 @@ export default function BenchV2Route() {
     clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
   };
 
+  const handleManualProposalChange = (destinationKey, rawNewValue) => {
+    stageManualProposalForDestination(destinationKey, rawNewValue, false);
+  };
+
   /**
-   * Preserves both existing saved Metaobject GIDs on the product AND any valid
-   * Metaobject GIDs already staged in the current proposal when selecting a preset
-   * reference option, so selecting a second choice appends rather than
-   * silently replacing a prior staged addition.
+   * Stages an unapproved Manual draft that removes a single Metaobject GID
+   * from a writable `shopify.*` (`list.metaobject_reference`) field's active
+   * selection (current draft when present, otherwise saved baseline).
+   * Requires a valid non-empty active list with > 1 entries.
+   */
+  const handleRemoveReferenceChoiceGid = (row, gidToRemove) => {
+    if (!row || !row.contract) return;
+    const { contract, baselineObservation: obs } = row;
+    const destKey = contract.destinationKey;
+
+    if (
+      !contract.isWritableInBatch1 ||
+      contract.namespace !== "shopify" ||
+      contract.expectedType !== "list.metaobject_reference"
+    ) {
+      return;
+    }
+
+    if (isAnyOperationBusy || isJsonImportBusy) {
+      setClientPrevalidationBanner({
+        tone: "warning",
+        title: "Cannot edit reference list while an operation is busy",
+        reasons: ["Wait for the current operation to finish before removing a reference choice."]
+      });
+      return;
+    }
+
+    if (!isExactMetaobjectGid(gidToRemove)) {
+      return;
+    }
+    const cleanGidToRemove = gidToRemove.trim();
+
+    const storedCheck = inspectStoredReferenceListRawValue(obs?.rawValue);
+    if (!storedCheck.valid) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: `Cannot remove reference choice on ${destKey}`,
+        reasons: [
+          storedCheck.error || "Stored baseline reference list could not be parsed safely."
+        ]
+      });
+      return;
+    }
+
+    let activeGids = [];
+    if (row.hasProposalKey) {
+      const rawDraft = typeof row.proposedValue === "string" ? row.proposedValue : "";
+      let parsedDraft = null;
+      try {
+        parsedDraft = JSON.parse(rawDraft);
+      } catch {
+        parsedDraft = null;
+      }
+      const draftCheck = inspectStoredReferenceListRawValue(rawDraft);
+      const isDraftCanonicalValid = Boolean(
+        Array.isArray(parsedDraft) &&
+          parsedDraft.length > 0 &&
+          draftCheck.valid &&
+          draftCheck.gids.length === parsedDraft.length &&
+          JSON.stringify(parsedDraft) === rawDraft &&
+          (!row.validation || row.validation.valid === true)
+      );
+
+      if (!isDraftCanonicalValid) {
+        setClientPrevalidationBanner({
+          tone: "error",
+          title: `Cannot remove reference choice on ${destKey}: active draft is invalid`,
+          reasons: [
+            row.validation?.reason ||
+              draftCheck.error ||
+              "Fix the active draft or click Reset to Saved before removing an entry."
+          ]
+        });
+        return;
+      }
+      activeGids = draftCheck.gids;
+    } else {
+      activeGids = storedCheck.gids;
+    }
+
+    if (!activeGids.includes(cleanGidToRemove)) {
+      return;
+    }
+
+    if (activeGids.length <= 1) {
+      setClientPrevalidationBanner({
+        tone: "warning",
+        title: `Cannot remove the last remaining reference entry on ${destKey}`,
+        reasons: [
+          "Removing the last remaining reference entry is disabled because this app's current validation and writer do not support clearing a reference list to empty. Use Reset to Saved or Keep Original to abandon unsaved draft changes."
+        ]
+      });
+      return;
+    }
+
+    const nextGids = activeGids.filter((g) => g !== cleanGidToRemove);
+    if (nextGids.length === 0) {
+      return;
+    }
+
+    const nextSerialized = JSON.stringify(nextGids);
+    const nextSet = new Set(nextGids);
+    const omitsAnyStoredGid = storedCheck.gids.some((g) => !nextSet.has(g));
+
+    stageManualProposalForDestination(destKey, nextSerialized, omitsAnyStoredGid);
+  };
+
+  /**
+   * Handles selecting a preset option from the dropdown.
+   * For `shopify.*` (`list.metaobject_reference`):
+   * - When a draft is active (`row.hasProposalKey`), requires the active draft
+   *   to be a valid non-empty canonical GID list (never silently falling back to
+   *   `storedCheck.gids` on invalid/empty drafts) and appends `selectedGids` to
+   *   the active draft list without re-seeding removed saved GIDs.
+   * - When no draft is active, seeds from `storedCheck.gids` and appends `selectedGids`.
+   * - Preserves `allowExplicitReferenceListReplacement` when the resulting list
+   *   still omits a saved baseline GID from an explicit operator removal.
    */
   const handleSelectPresetOption = (row, selectedOptionValue) => {
     const destKey = row.contract.destinationKey;
-    if (row.contract.namespace !== "shopify") {
+    if (
+      row.contract.namespace !== "shopify" ||
+      row.contract.expectedType !== "list.metaobject_reference"
+    ) {
       handleManualProposalChange(destKey, selectedOptionValue);
       return;
     }
@@ -3742,7 +3903,13 @@ export default function BenchV2Route() {
       row.baselineObservation?.rawValue
     );
     if (!storedCheck.valid) {
-      handleManualProposalChange(destKey, selectedOptionValue);
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: `Cannot select reference choice on ${destKey}`,
+        reasons: [
+          storedCheck.error || "Stored baseline reference list could not be parsed safely."
+        ]
+      });
       return;
     }
 
@@ -3759,26 +3926,61 @@ export default function BenchV2Route() {
     }
 
     if (selectedGids.length === 0) {
-      handleManualProposalChange(destKey, selectedOptionValue);
       return;
     }
 
-    let currentStagedGids = [];
-    if (row.hasProposalKey && typeof row.proposedValue === "string" && row.proposedValue.trim().startsWith("[")) {
+    let baseGids = [];
+    const rawPropEntry = currentProposedMap[destKey];
+    const priorWasExplicitReplacement = Boolean(
+      row.allowExplicitReferenceListReplacement === true ||
+        hasExplicitReferenceReplacementFlag(rawPropEntry, destKey, row.proposedValue)
+    );
+
+    if (row.hasProposalKey) {
+      const rawDraft = typeof row.proposedValue === "string" ? row.proposedValue : "";
+      let parsedCurrent = null;
       try {
-        const parsedCurrent = JSON.parse(row.proposedValue.trim());
-        if (Array.isArray(parsedCurrent)) {
-          const verifiedMap = row.referenceEvidence?.entriesByGid || null;
-          currentStagedGids = parsedCurrent.filter(
-            (g) =>
-              typeof g === "string" &&
-              isExactMetaobjectGid(g) &&
-              (storedCheck.gids.includes(g) || !verifiedMap || verifiedMap.has(g))
-          );
-        }
+        parsedCurrent = JSON.parse(rawDraft);
       } catch {
-        currentStagedGids = [];
+        parsedCurrent = null;
       }
+      const draftCheck = inspectStoredReferenceListRawValue(rawDraft);
+      const verifiedMap =
+        row.referenceEvidence?.isComplete &&
+        row.referenceEvidence.entriesByGid instanceof Map
+          ? row.referenceEvidence.entriesByGid
+          : null;
+      const allDraftMembersVerified = Boolean(
+        draftCheck.valid &&
+          draftCheck.gids.length > 0 &&
+          (!verifiedMap || draftCheck.gids.every((g) => verifiedMap.has(g)))
+      );
+      const isDraftValidForAppend = Boolean(
+        Array.isArray(parsedCurrent) &&
+          parsedCurrent.length > 0 &&
+          draftCheck.valid &&
+          draftCheck.gids.length === parsedCurrent.length &&
+          JSON.stringify(parsedCurrent) === rawDraft &&
+          allDraftMembersVerified &&
+          (!row.validation || row.validation.valid === true)
+      );
+
+      if (!isDraftValidForAppend) {
+        setClientPrevalidationBanner({
+          tone: "error",
+          title: `Cannot append reference choice on ${destKey}: active draft is invalid or empty`,
+          reasons: [
+            row.validation?.reason ||
+              draftCheck.error ||
+              "Fix the active draft or click Reset to Saved before selecting another option."
+          ]
+        });
+        return;
+      }
+
+      baseGids = draftCheck.gids;
+    } else {
+      baseGids = storedCheck.gids;
     }
 
     const mergedGids = [];
@@ -3788,11 +3990,18 @@ export default function BenchV2Route() {
       }
     };
 
-    storedCheck.gids.forEach(pushUnique);
-    currentStagedGids.forEach(pushUnique);
+    baseGids.forEach(pushUnique);
     selectedGids.forEach(pushUnique);
 
-    handleManualProposalChange(destKey, JSON.stringify(mergedGids));
+    const nextSerialized = JSON.stringify(mergedGids);
+    const mergedSet = new Set(mergedGids);
+    const stillOmitsStoredGid = storedCheck.gids.some((g) => !mergedSet.has(g));
+
+    stageManualProposalForDestination(
+      destKey,
+      nextSerialized,
+      Boolean(priorWasExplicitReplacement && stillOmitsStoredGid)
+    );
   };
 
   const handleClearDraftProposal = (destinationKey) => {
@@ -3813,7 +4022,13 @@ export default function BenchV2Route() {
       return;
     }
 
-    const exactProposedValue = getProposalValueString(currentProposedMap[destinationKey]);
+    const rawPropEntry = currentProposedMap[destinationKey];
+    const exactProposedValue = getProposalValueString(rawPropEntry);
+    const allowExplicitReplacement = hasExplicitReferenceReplacementFlag(
+      rawPropEntry,
+      destinationKey,
+      exactProposedValue
+    );
 
     const fidelity = checkExistingWriterStringFidelity(exactProposedValue);
     if (!fidelity.faithful) {
@@ -3829,7 +4044,8 @@ export default function BenchV2Route() {
       productId: activeProductId,
       destinationKey,
       proposedValue: exactProposedValue,
-      baselineSnapshot: currentBaseline
+      baselineSnapshot: currentBaseline,
+      allowExplicitReferenceListReplacement: allowExplicitReplacement
     });
 
     if (!created.ok || !created.record) {
@@ -4014,6 +4230,7 @@ export default function BenchV2Route() {
     const prevalidationErrors = [];
     const safePlanToSubmit = {};
     const safeNativeChangesToSubmit = {};
+    const safeExplicitReferenceReplacementsToSubmit = {};
     let requiredVariantTargetId = null;
 
     for (const [destKey, approvalRec] of approvalEntries) {
@@ -4029,7 +4246,13 @@ export default function BenchV2Route() {
         continue;
       }
 
-      const currentProposedValue = getProposalValueString(currentProposedMap[destKey]);
+      const rawPropEntry = currentProposedMap[destKey];
+      const currentProposedValue = getProposalValueString(rawPropEntry);
+      const allowExplicitReplacement = hasExplicitReferenceReplacementFlag(
+        rawPropEntry,
+        destKey,
+        currentProposedValue
+      );
 
       const keepOrigRec = currentKeepOriginalMap[destKey] || null;
       if (
@@ -4058,7 +4281,8 @@ export default function BenchV2Route() {
         productId: activeProductId,
         destinationKey: destKey,
         proposedValue: currentProposedValue,
-        baselineSnapshot: currentBaseline
+        baselineSnapshot: currentBaseline,
+        allowExplicitReferenceListReplacement: allowExplicitReplacement
       });
 
       if (!validation.valid) {
@@ -4078,7 +4302,8 @@ export default function BenchV2Route() {
         productId: activeProductId,
         destinationKey: destKey,
         currentProposedValue,
-        baselineSnapshot: currentBaseline
+        baselineSnapshot: currentBaseline,
+        allowExplicitReferenceListReplacement: allowExplicitReplacement
       });
 
       if (!stillValidApproval) {
@@ -4086,6 +4311,39 @@ export default function BenchV2Route() {
           `[${destKey}] Approval record is out of date. Please review the value and check Approve again.`
         );
         continue;
+      }
+
+      if (
+        contract.namespace === "shopify" &&
+        validation.allowExplicitReferenceListReplacement === true &&
+        Array.isArray(validation.removedStoredReferenceGids) &&
+        validation.removedStoredReferenceGids.length > 0
+      ) {
+        if (
+          approvalRec?.allowExplicitReferenceListReplacement !== true ||
+          approvalRec?.approvedValue !== validation.normalizedValue ||
+          approvalRec?.baselineSignature !== validation.baselineObservation?.signature ||
+          approvalRec?.restrictedMetaobjectDefinitionId !==
+            validation.baselineObservation?.restrictedMetaobjectDefinitionId
+        ) {
+          prevalidationErrors.push(
+            `[${destKey}] Explicit reference list replacement approval does not match current baseline evidence. Please re-approve before saving.`
+          );
+          continue;
+        }
+        safeExplicitReferenceReplacementsToSubmit[destKey] = {
+          allowExplicitReferenceListReplacement: true,
+          productId: approvalRec.productId,
+          destinationKey: approvalRec.destinationKey,
+          approvedValue: approvalRec.approvedValue,
+          baselineSignature: approvalRec.baselineSignature,
+          restrictedMetaobjectDefinitionId: approvalRec.restrictedMetaobjectDefinitionId,
+          productCategoryId: approvalRec.productCategoryId || null,
+          categoryEligibilityStatus: approvalRec.categoryEligibilityStatus || null,
+          removedStoredReferenceGids: Array.isArray(approvalRec.removedStoredReferenceGids)
+            ? [...approvalRec.removedStoredReferenceGids]
+            : [...validation.removedStoredReferenceGids]
+        };
       }
 
       if (contract.owner === "PRODUCTVARIANT") {
@@ -4171,6 +4429,7 @@ export default function BenchV2Route() {
       submittedDestinations,
       submittedValuesByDestination: { ...safePlanToSubmit },
       submittedNativeChanges: { ...safeNativeChangesToSubmit },
+      submittedExplicitReferenceReplacements: { ...safeExplicitReferenceReplacementsToSubmit },
       startedAt: new Date().toISOString()
     };
 
@@ -4185,6 +4444,12 @@ export default function BenchV2Route() {
     }
     formData.append("repairPlan", JSON.stringify(safePlanToSubmit));
     formData.append("nativeChanges", JSON.stringify(safeNativeChangesToSubmit));
+    if (Object.keys(safeExplicitReferenceReplacementsToSubmit).length > 0) {
+      formData.append(
+        "explicitReferenceReplacements",
+        JSON.stringify(safeExplicitReferenceReplacementsToSubmit)
+      );
+    }
     formData.append("legacyKeysToRemove", JSON.stringify([]));
 
     writerFetcher.submit(formData, {
@@ -4313,6 +4578,7 @@ export default function BenchV2Route() {
           handleFieldEditorFocus={handleFieldEditorFocus}
           handleFieldEditorBlur={handleFieldEditorBlur}
           handleSelectPresetOption={handleSelectPresetOption}
+          handleRemoveReferenceChoiceGid={handleRemoveReferenceChoiceGid}
           handleManualProposalChange={handleManualProposalChange}
           handleClearDraftProposal={handleClearDraftProposal}
           handleAcceptAiAlternative={handleAcceptAiAlternative}

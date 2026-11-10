@@ -531,10 +531,69 @@ export function formatOoakDisplayConvention(rawVal, observedType = null) {
   return formatBenchV2ValueDisplay("custom.is_ooak", rawVal, observedType);
 }
 
+function inspectActiveDraftReferenceGidsForOptions(
+  activeDraftRawValue,
+  verifiedEntriesByGid,
+  expectedDefId
+) {
+  if (activeDraftRawValue === null) {
+    return { valid: false, gids: [] };
+  }
+
+  let parsedArray = null;
+  if (Array.isArray(activeDraftRawValue)) {
+    parsedArray = activeDraftRawValue;
+  } else if (typeof activeDraftRawValue === "string") {
+    const trimmed = activeDraftRawValue.trim();
+    if (!trimmed.startsWith("[")) {
+      return { valid: false, gids: [] };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        return { valid: false, gids: [] };
+      }
+      parsedArray = parsed;
+    } catch {
+      return { valid: false, gids: [] };
+    }
+  } else {
+    return { valid: false, gids: [] };
+  }
+
+  if (parsedArray.length === 0) {
+    return { valid: false, gids: [] };
+  }
+
+  const dedupedGids = [];
+  for (const item of parsedArray) {
+    if (typeof item !== "string" || item.trim() !== item || !isExactMetaobjectGid(item)) {
+      return { valid: false, gids: [] };
+    }
+    const verifiedEntry = verifiedEntriesByGid.get(item);
+    if (
+      !verifiedEntry ||
+      (expectedDefId && verifiedEntry.definitionId !== expectedDefId)
+    ) {
+      return { valid: false, gids: [] };
+    }
+    if (!dedupedGids.includes(item)) {
+      dedupedGids.push(item);
+    }
+  }
+
+  if (dedupedGids.length === 0) {
+    return { valid: false, gids: [] };
+  }
+
+  return { valid: true, gids: dedupedGids };
+}
+
 export function getContractOptionsForObservation(
   contract,
   baselineObs = null,
-  baselineSnapshot = null
+  baselineSnapshot = null,
+  activeDraftRawValue = undefined
 ) {
   if (!contract) return [];
 
@@ -551,17 +610,35 @@ export function getContractOptionsForObservation(
     if (!storedCheck.valid) {
       return [];
     }
-    const existingGids = storedCheck.gids;
+
+    let seedGids = storedCheck.gids;
+    let isUsingActiveDraft = false;
+    if (activeDraftRawValue !== undefined) {
+      const activeDraftCheck = inspectActiveDraftReferenceGidsForOptions(
+        activeDraftRawValue,
+        refEvidence.entriesByGid,
+        refEvidence.restrictedMetaobjectDefinitionId ||
+          baselineObs?.restrictedMetaobjectDefinitionId ||
+          null
+      );
+      if (!activeDraftCheck.valid) {
+        return [];
+      }
+      seedGids = activeDraftCheck.gids;
+      isUsingActiveDraft = true;
+    }
+
     const options = [];
     refEvidence.entriesByGid.forEach((entry) => {
-      const mergedGids = [...existingGids];
+      const mergedGids = [...seedGids];
       if (!mergedGids.includes(entry.id)) {
         mergedGids.push(entry.id);
       }
       const serializedValue = JSON.stringify(mergedGids);
+      const countLabel = isUsingActiveDraft ? "selected" : "existing";
       const displayLabel =
-        existingGids.length > 0 && !existingGids.includes(entry.id)
-          ? `${entry.label} (${entry.id}) — append to [${existingGids.length} existing]`
+        seedGids.length > 0 && !seedGids.includes(entry.id)
+          ? `${entry.label} (${entry.id}) — append to [${seedGids.length} ${countLabel}]`
           : `${entry.label} (${entry.id})`;
       options.push(
         Object.freeze({

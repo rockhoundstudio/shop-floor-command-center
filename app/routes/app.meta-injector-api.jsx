@@ -23,6 +23,7 @@ import {
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   isExactProductVariantGid,
   inspectStoredReferenceListRawValue,
+  buildBaselineObservation,
   isPlainTextProposalRejectedForContract,
   validateAgainstLiveTextDefinitionValidations,
   evaluateBenchV2OptInCustomProductWrite
@@ -388,6 +389,7 @@ export const action = async ({ request }) => {
       const rawPlan = body.get("repairPlan");
       const rawLegacy = body.get("legacyKeysToRemove");
       const rawNativeChanges = body.get("nativeChanges");
+      const rawExplicitReferenceReplacements = body.get("explicitReferenceReplacements");
       const isBenchV2OptIn = body.get(BENCH_V2_WRITER_OPT_IN_FIELD) === BENCH_V2_WRITER_OPT_IN_VALUE;
       const rawCallerVariantTargetId = body.get("variantTargetId");
       const callerVariantTargetId =
@@ -402,6 +404,30 @@ export const action = async ({ request }) => {
       const repairPlan = JSON.parse(rawPlan);
       const legacyKeysToRemove = rawLegacy ? JSON.parse(rawLegacy) : [];
       const nativeChanges = rawNativeChanges ? JSON.parse(rawNativeChanges) : {};
+
+      let explicitReferenceReplacements = {};
+      let explicitReferenceReplacementsParseError = null;
+      if (
+        typeof rawExplicitReferenceReplacements === "string" &&
+        rawExplicitReferenceReplacements.trim() !== ""
+      ) {
+        try {
+          const parsedExplicitReplacements = JSON.parse(rawExplicitReferenceReplacements);
+          if (
+            parsedExplicitReplacements &&
+            typeof parsedExplicitReplacements === "object" &&
+            !Array.isArray(parsedExplicitReplacements)
+          ) {
+            explicitReferenceReplacements = parsedExplicitReplacements;
+          } else {
+            explicitReferenceReplacementsParseError =
+              "explicitReferenceReplacements payload must be a plain JSON object.";
+          }
+        } catch (repParseErr) {
+          explicitReferenceReplacementsParseError =
+            `Malformed explicitReferenceReplacements JSON: ${repParseErr.message}`;
+        }
+      }
 
       const productGid = pieceId.startsWith("gid://") ? pieceId : `gid://shopify/Product/${pieceId.split("/").pop()}`;
 
@@ -1354,6 +1380,7 @@ export const action = async ({ request }) => {
             continue;
         }
 
+        let evaluatedCatEligForDest = null;
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
             let catElig = evaluateStandardizedCategoryEligibility({
                 destination: canonicalDestinationKey,
@@ -1377,6 +1404,7 @@ export const action = async ({ request }) => {
                     productCategoryReadComplete: productLookupComplete
                 });
             }
+            evaluatedCatEligForDest = catElig;
             if (!catElig.isComplete || !catElig.isEligible) {
                 blockedFields[fullKey] = catElig.reason;
                 continue;
@@ -1477,7 +1505,9 @@ export const action = async ({ request }) => {
              }
 
              if (!Array.isArray(parsedArray) || parsedArray.length === 0) {
-                blockedFields[fullKey] = `Destination "${canonicalDestinationKey}" requires a non-empty JSON array of Metaobject GIDs.`;
+                blockedFields[fullKey] = Array.isArray(parsedArray) && parsedArray.length === 0
+                  ? `Clearing the last reference entry to an empty list is not supported by the current app validation and writer for "${canonicalDestinationKey}"; at least one verified Metaobject GID must remain.`
+                  : `Destination "${canonicalDestinationKey}" requires a non-empty JSON array of Metaobject GIDs.`;
                 continue;
              }
 
@@ -1513,17 +1543,78 @@ export const action = async ({ request }) => {
                 continue;
              }
 
-             let missingAssignedGid = null;
+             const missingAssignedGids = [];
              for (const existingGid of storedCheck.gids) {
                 if (!seenGids.has(existingGid)) {
-                   missingAssignedGid = existingGid;
-                   break;
+                   missingAssignedGids.push(existingGid);
                 }
              }
 
-             if (missingAssignedGid) {
-                blockedFields[fullKey] = `Proposal for "${canonicalDestinationKey}" is missing existing assigned Metaobject ${missingAssignedGid}. Existing reference assignments are preserved and never silently removed.`;
-                continue;
+             if (missingAssignedGids.length > 0) {
+                const firstMissingGid = missingAssignedGids[0];
+                if (explicitReferenceReplacementsParseError) {
+                   blockedFields[fullKey] = `Explicit reference replacement rejected for "${canonicalDestinationKey}": ${explicitReferenceReplacementsParseError}`;
+                   continue;
+                }
+
+                const repRecord = explicitReferenceReplacements?.[canonicalDestinationKey];
+                const requiredDefIdForCheck =
+                  def?.restrictedMetaobjectDefinitionId ||
+                  def?.requiredDefinitionId ||
+                  null;
+
+                const serverSnapshotForDest = {
+                  productId: productGid,
+                  metafieldsReadComplete: hasMetafieldsBaseline,
+                  defsReadComplete,
+                  productCategoryReadComplete: productLookupComplete,
+                  productCategory,
+                  currentMetafields,
+                  currentMetafieldTypes: currentMetafieldsTypes,
+                  liveDefinitions: defs,
+                  constraintErrorsByDestination: defConstraintErrorsByDestination,
+                  categoryEligibilityByDestination: evaluatedCatEligForDest
+                    ? { [canonicalDestinationKey]: evaluatedCatEligForDest }
+                    : {}
+                };
+                const serverObs = buildBaselineObservation(
+                  serverSnapshotForDest,
+                  canonicalDestinationKey
+                );
+
+                const isValidExplicitReplacement = Boolean(
+                  repRecord &&
+                  typeof repRecord === "object" &&
+                  !Array.isArray(repRecord) &&
+                  repRecord.allowExplicitReferenceListReplacement === true &&
+                  repRecord.productId === productGid &&
+                  repRecord.destinationKey === canonicalDestinationKey &&
+                  repRecord.approvedValue === canonicalSerialized &&
+                  typeof requiredDefIdForCheck === "string" &&
+                  requiredDefIdForCheck.trim() !== "" &&
+                  repRecord.restrictedMetaobjectDefinitionId === requiredDefIdForCheck &&
+                  (repRecord.productCategoryId || null) === (productCategory?.id || null) &&
+                  (repRecord.categoryEligibilityStatus || null) ===
+                    (evaluatedCatEligForDest?.status || null) &&
+                  serverObs.evidenceAvailable === true &&
+                  typeof repRecord.baselineSignature === "string" &&
+                  repRecord.baselineSignature === serverObs.signature
+                );
+
+                if (!isValidExplicitReplacement) {
+                   let rejectDetail = `Proposal for "${canonicalDestinationKey}" is missing existing assigned Metaobject ${firstMissingGid}. Existing reference assignments are preserved and never silently removed.`;
+                   if (repRecord && typeof repRecord === "object") {
+                     if (repRecord.baselineSignature !== serverObs.signature) {
+                       rejectDetail = `Explicit reference replacement rejected for "${canonicalDestinationKey}": live server baseline signature drifted since approval. Reload product data and re-approve.`;
+                     } else if (repRecord.approvedValue !== canonicalSerialized) {
+                       rejectDetail = `Explicit reference replacement rejected for "${canonicalDestinationKey}": approved replacement value does not match submitted value.`;
+                     } else {
+                       rejectDetail = `Explicit reference replacement rejected for "${canonicalDestinationKey}": replacement approval metadata did not match live product/definition/category state.`;
+                     }
+                   }
+                   blockedFields[fullKey] = rejectDetail;
+                   continue;
+                }
              }
 
              resolvedValue = canonicalSerialized;
