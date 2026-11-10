@@ -16,7 +16,8 @@ import {
   PASSIVE_GEOLOGY_REVIEW_KEYS,
   STONE_IDENTITY_KEYS,
   resolveCanonicalOoakFromInputs,
-  resolveVerifiedStoneIdentityContext
+  resolveVerifiedStoneIdentityContext,
+  parseVerifiedColorPatternChoiceLabels
 } from "./meta-injector.autofill-inputs.server.jsx";
 
 // ==========================================
@@ -25,7 +26,7 @@ import {
 export const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator-locked corrections > established verified product facts > resolved origin/collection source context > supported visible observations.
-2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
 3. NO VISUAL INFERENCE OF FASTENING OR METAL COMPOSITION: Do not infer treatment, provenance, fastening method (bezel vs. glue-on/adhesive), metal alloy/fineness, plating, or mineral rarity from appearance or front photographs alone.
 4. SEPARATE CONSTRUCTION DIMENSIONS: Keep these five dimensions strictly distinct:
    (a) Fastening method (e.g., glue-on/glue-in adhesive setting, pinch bail with pins passing through a drilled hole, wire wrap, or explicit verified bezel setting),
@@ -47,11 +48,33 @@ export const getSharedFactualContract = () => `
 -------------------------------
 `;
 
-export const getStandardizedCandidatesInstructions = () => `
+export const getStandardizedCandidatesInstructions = (options = {}) => {
+  const {
+    verifiedColorPatternChoices = null,
+    requireVerifiedColorPatternChoices = false
+  } = options && typeof options === "object" ? options : {};
+
+  const parsedColorChoices = parseVerifiedColorPatternChoiceLabels(verifiedColorPatternChoices);
+  const hasValidLiveColorVocabulary =
+    parsedColorChoices.supplied &&
+    parsedColorChoices.valid &&
+    parsedColorChoices.labels.length > 0;
+
+  let colorPatternCandidateBullet = "";
+  if (hasValidLiveColorVocabulary) {
+    const formattedChoices = parsedColorPatternChoicesToPromptList(parsedColorChoices.labels);
+    colorPatternCandidateBullet = `- "color-pattern": Plain-text review candidate label(s) for standardized color or pattern. Verified choices currently available in Shopify for this product: ${formattedChoices}. Propose ONLY exact label(s) from this verified list that are clearly supported by visible stone/piece color or patterning and/or authoritative supplied facts. Do NOT combine labels, invent compound descriptors, or propose any label not in this exact verified list; if none of the verified choices fit the evidence, omit "color-pattern" from "standardized_candidates". Keep "color-pattern" inside "standardized_candidates" strictly separate from custom descriptive fields (color, primary_color, secondary_colors, color_pattern), which remain free to use accurate lapidary/geological descriptions. Never guess or output Metaobject GIDs.`;
+  } else if (requireVerifiedColorPatternChoices) {
+    colorPatternCandidateBullet = `- "color-pattern": OMIT "color-pattern" from "standardized_candidates" on this request because a complete verified Shopify Color reference choice list was not supplied. Continue to evaluate and propose custom descriptive color/pattern fields (color, primary_color, secondary_colors, color_pattern) and the other standardized_candidates keys normally when supported by evidence.`;
+  } else {
+    colorPatternCandidateBullet = `- "color-pattern": Plain-text review candidate label(s) for standardized color or pattern ONLY when clearly supported by visible stone/piece color or patterning and/or authoritative supplied facts. Keep "color-pattern" inside "standardized_candidates" strictly separate from custom descriptive fields (color, primary_color, secondary_colors, color_pattern). Do NOT treat custom color_pattern options as guaranteed verified Shopify reference choices. These labels remain review candidates that must pass downstream verified Metaobject entry resolution. Omit when uncertain, and never guess or output Metaobject GIDs.`;
+  }
+
+  return `
 STANDARDIZED ATTRIBUTE REVIEW CANDIDATES (standardized_candidates):
 Also return a separate top-level JSON object key named "standardized_candidates" evaluating ONLY these seven hyphenated keys when supported by evidence:
 - "chain-link-type": Preserve "Cord" as an evidence-supported REVIEW candidate where explicitly supplied, but do not claim it is a verified allowed reference choice. Do not turn "Cord" into "Snake Chain".
-- "color-pattern": Plain-text review candidate label(s) for standardized color or pattern ONLY when clearly supported by visible stone/piece color or patterning and/or authoritative supplied facts. Keep "color-pattern" inside "standardized_candidates" strictly separate from custom descriptive fields (color, primary_color, secondary_colors, color_pattern). Do NOT treat custom color_pattern options as guaranteed verified Shopify reference choices. These labels remain review candidates that must pass downstream verified Metaobject entry resolution. Omit when uncertain, and never guess or output Metaobject GIDs.
+${colorPatternCandidateBullet}
 - "construction": Metalwork construction, NOT craftsmanship or pendant assembly. Verified choices: "Clad", "Filled", "Other", "Plated", "Solid", "Toned", "Vermeil", "Whole". Propose only an evidence-supported choice. Explicit silver-plated or gold-plated hardware supports "Plated". Do not infer the construction of every component from one bail or infer plating/alloy from a front photo alone. Evidence must identify the component supporting the choice. Never default to "Solid" or "Other". Do NOT place "Handcrafted" in standardized "construction" candidates.
 - "jewelry-finding-type": Preserve explicitly supplied component facts such as "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting", or verified bezel findings when supplied in facts. These remain review candidates until exact reference matching. Do not claim the detailed label is accepted reference vocabulary. Do not infer hidden hardware or propose bezel or glue-on findings from a decorative rim or top loop alone.
 - "material-origin": Physical product form/mounting state, NOT geography, natural/synthetic status, or intended use. Relevant verified choices: "Finished product (jewelry/watch)", "Loose/unmounted". Propose "Finished product (jewelry/watch)" ONLY when actual mounted or wear-ready evidence (such as an installed pinch bail, glue-on/mounted setting with top loop, wire wrap, verified bezel setting, finished drilled wear-ready form, or explicit operator finished-jewelry facts) establishes a finished wearable piece. Intended pendant/jewelry use, a bare "Pendant" label in jewelry_type, or an unattached chain/cord alone does NOT establish "Finished product (jewelry/watch)". Propose "Loose/unmounted" when explicit facts or clear multi-angle/hero evidence establish an unmounted, undrilled loose stone or cabochon. Missing hardware in a single photo alone is not conclusive; if physical mounting/drilling state is uncertain, omit "material-origin". "Natural/Untreated" does not establish either choice. Do NOT use geographic collecting location.
@@ -78,6 +101,11 @@ STRICT RULES FOR standardized_candidates:
 - Do not infer hidden hardware or undisclosed treatment.
 - Preserve existing legacy keys (chain_link_type, color_pattern, jewelry_finding_type, craftsmanship, seo_title, etc.) alongside standardized_candidates.
 `;
+};
+
+function parsedColorPatternChoicesToPromptList(labels) {
+  return labels.map((lbl) => JSON.stringify(lbl)).join(", ");
+}
 
 // ==========================================
 // PROMPT 1: DESCRIPTION GENERATION
@@ -198,7 +226,22 @@ ORIGIN PAGE DATE RULE:
 If the provided origin-page story contains an explicit collection date, trip date, month, year, or date range, use it only when it is factually present and relevant to the story. Never invent or infer a date. If no explicit date is present, do not mention one.`;
 }
 
-export function buildMasterVisionPrompt({ pagesMenu, collectionsMenu, stoneFamily, derivedShape, originStory, originSegment, targetUrlPath, fullCollectionTitle, collectionUrlPath, pagesList = [], collectionStory = "", operatorFacts = {} }) {
+export function buildMasterVisionPrompt({
+  pagesMenu,
+  collectionsMenu,
+  stoneFamily,
+  derivedShape,
+  originStory,
+  originSegment,
+  targetUrlPath,
+  fullCollectionTitle,
+  collectionUrlPath,
+  pagesList = [],
+  collectionStory = "",
+  operatorFacts = {},
+  verifiedColorPatternChoices = null,
+  requireVerifiedColorPatternChoices = false
+}) {
   let dwellButtonsHTML = `<br><br>`;
 
   let displayOriginName = fullCollectionTitle || originSegment;
@@ -298,7 +341,10 @@ REQUIRED JSON KEYS:
   7. Dwell Buttons:
 ${dwellButtonsHTML}
 
-${getStandardizedCandidatesInstructions()}
+${getStandardizedCandidatesInstructions({
+  verifiedColorPatternChoices,
+  requireVerifiedColorPatternChoices
+})}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ carefully):
 ${originStory}
@@ -325,7 +371,9 @@ export function buildTab3VisionPrompt({
   hasMultipleImages,
   hasExistingGeneralAlt = false,
   collectionStory = "",
-  provenance = null
+  provenance = null,
+  verifiedColorPatternChoices = null,
+  requireVerifiedColorPatternChoices = false
 }) {
   const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
   const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
@@ -392,7 +440,7 @@ ${passiveClassificationsStr || "- None."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored hardware/classifications, image inference, product titles, and collection names.
-2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS, re-evaluate against the photos and authoritative human facts so stale carried "Pendant" labels do not force a loose stone into finished jewelry and stale AI river-origin/SEO drafts do not contradict human-confirmed purchase provenance.
+​2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS, re-evaluate against the photos and authoritative human facts so stale carried "Pendant" labels do not force a loose stone into finished jewelry and stale AI river-origin/SEO drafts do not contradict human-confirmed purchase provenance.
 3. Never infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a decorative rim, backing frame, front photo, or top chain loop alone. Do not infer metal alloy fineness or plating from photos.
 4. STONE IDENTITY VS. SETTING MATERIAL: primary_medium, material, and stone_family must NEVER contain metal, plating, alloy, wire, or setting hardware (such as "Silver Plated", "Sterling Silver", "Silver Alloy", "Copper Wire", or "Pinch Bail"). Keep mineral family (stone_family, e.g., "Agate") and stone variety (material / primary_medium, e.g., "Botswana Agate") distinct when evidenced; do not force them to be identical. If stone identity is uncertain, omit primary_medium rather than guessing.
 5. Preserve pinch-bail construction ("Silver Plated Pinch Bail", whose pins pass through a drilled hole) when visibly present or stated in facts.
@@ -454,7 +502,10 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - standardized_candidates: Object containing supported review candidates among ["chain-link-type", "color-pattern", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.
 ${imageAltInstructions}
 
-${getStandardizedCandidatesInstructions()}
+${getStandardizedCandidatesInstructions({
+  verifiedColorPatternChoices,
+  requireVerifiedColorPatternChoices
+})}
 
 FULL ORIGIN STORY (CRITICAL LORE FIREWALL - READ CAREFULLY):
 ${originStory}

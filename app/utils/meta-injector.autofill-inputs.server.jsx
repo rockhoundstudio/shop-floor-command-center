@@ -37,7 +37,10 @@ export const ALLOWED_PROVENANCE_FIELD_KEYS = new Set([
 export const CLASSIFICATION_OVERRIDE_KEYS = new Set([
   "jewelry_type",
   "product_format",
-  "google_product_category"
+  "google_product_category",
+  "color_pattern",
+  "primary_color",
+  "secondary_colors"
 ]);
 
 export const PASSIVE_CONSTRUCTION_REVIEW_KEYS = new Set([
@@ -602,6 +605,157 @@ export function isCleanCandidateLabel(label) {
   if (/^gid:\/\/shopify\//i.test(cleaned)) return false;
   if (/metaobject/i.test(cleaned) && /\d/.test(cleaned)) return false;
   return true;
+}
+
+const MAX_VERIFIED_COLOR_PATTERN_RAW_CHARS = 32768;
+const MAX_VERIFIED_COLOR_PATTERN_LABEL_LENGTH = 120;
+
+export function parseVerifiedColorPatternChoiceLabels(rawInput, maxLabels = 200) {
+  if (rawInput === null || rawInput === undefined) {
+    return { supplied: false, valid: true, labels: [], error: null };
+  }
+
+  const boundedMaxLabels =
+    typeof maxLabels === "number" && Number.isFinite(maxLabels) && maxLabels > 0
+      ? Math.floor(maxLabels)
+      : 200;
+
+  let rawArray = null;
+
+  if (typeof rawInput === "string") {
+    const trimmed = rawInput.trim();
+    if (trimmed === "") {
+      return { supplied: false, valid: true, labels: [], error: null };
+    }
+    if (rawInput.length > MAX_VERIFIED_COLOR_PATTERN_RAW_CHARS) {
+      return {
+        supplied: true,
+        valid: false,
+        labels: [],
+        error: `verified_color_pattern_choices payload exceeds maximum character bound (${MAX_VERIFIED_COLOR_PATTERN_RAW_CHARS} chars).`
+      };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        return {
+          supplied: true,
+          valid: false,
+          labels: [],
+          error: "verified_color_pattern_choices must be a JSON string array."
+        };
+      }
+      rawArray = parsed;
+    } catch (e) {
+      return {
+        supplied: true,
+        valid: false,
+        labels: [],
+        error: `Malformed verified_color_pattern_choices JSON: ${e.message}`
+      };
+    }
+  } else if (Array.isArray(rawInput)) {
+    rawArray = rawInput;
+  } else {
+    return {
+      supplied: true,
+      valid: false,
+      labels: [],
+      error: "verified_color_pattern_choices must be a JSON string array or array of strings."
+    };
+  }
+
+  if (rawArray.length === 0) {
+    return {
+      supplied: true,
+      valid: false,
+      labels: [],
+      error: "verified_color_pattern_choices array is empty; at least one verified choice label is required."
+    };
+  }
+
+  if (rawArray.length > boundedMaxLabels) {
+    return {
+      supplied: true,
+      valid: false,
+      labels: [],
+      error: `verified_color_pattern_choices array length (${rawArray.length}) exceeds maximum bound (${boundedMaxLabels}); refusing to truncate.`
+    };
+  }
+
+  const dedupedLabels = [];
+  const seenLower = new Set();
+
+  for (let i = 0; i < rawArray.length; i++) {
+    const item = rawArray[i];
+    if (typeof item !== "string") {
+      return {
+        supplied: true,
+        valid: false,
+        labels: [],
+        error: `verified_color_pattern_choices[${i}] is not a string.`
+      };
+    }
+
+    const cleaned = sanitizeCandidateString(item);
+    if (!cleaned || !isCleanCandidateLabel(cleaned)) {
+      return {
+        supplied: true,
+        valid: false,
+        labels: [],
+        error: `verified_color_pattern_choices[${i}] ("${String(item).slice(0, 60)}") is not a clean candidate label.`
+      };
+    }
+
+    if (cleaned.length > MAX_VERIFIED_COLOR_PATTERN_LABEL_LENGTH) {
+      return {
+        supplied: true,
+        valid: false,
+        labels: [],
+        error: `verified_color_pattern_choices[${i}] exceeds maximum label length (${MAX_VERIFIED_COLOR_PATTERN_LABEL_LENGTH} chars).`
+      };
+    }
+
+    if (/^gid:\/\//i.test(cleaned)) {
+      return {
+        supplied: true,
+        valid: false,
+        labels: [],
+        error: `verified_color_pattern_choices[${i}] contains a GID rather than a plaintext label.`
+      };
+    }
+
+    const lowerKey = cleaned.replace(/\s+/g, " ").toLowerCase();
+    if (!seenLower.has(lowerKey)) {
+      seenLower.add(lowerKey);
+      dedupedLabels.push(cleaned);
+    }
+  }
+
+  if (dedupedLabels.length === 0) {
+    return {
+      supplied: true,
+      valid: false,
+      labels: [],
+      error: "No valid verified color-pattern labels remained after validation."
+    };
+  }
+
+  if (dedupedLabels.length > boundedMaxLabels) {
+    return {
+      supplied: true,
+      valid: false,
+      labels: [],
+      error: `Deduplicated verified_color_pattern_choices count (${dedupedLabels.length}) exceeds maximum bound (${boundedMaxLabels}).`
+    };
+  }
+
+  return {
+    supplied: true,
+    valid: true,
+    labels: dedupedLabels,
+    error: null
+  };
 }
 
 export function validateStandardizedCandidates(rawCandidates, currentData = {}) {

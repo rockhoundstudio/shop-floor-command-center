@@ -2352,6 +2352,84 @@ export default function BenchV2Route() {
         : "");
     const ooak2ObservedType = observedDestinationTypes["custom.is_ooak"] || "";
 
+    // Extract live verified Color choices for shopify.color-pattern when bound, fresh,
+    // eligible, and complete on the active product (transport prompt vocabulary only).
+    let verifiedColorPatternChoicesJson = null;
+    if (
+      isCurrentRefChoicesBoundAndFresh &&
+      currentRefChoicesRecord &&
+      currentRefChoicesRecord.productId === activeProductId &&
+      currentBaseline.productId === activeProductId
+    ) {
+      const colorPatternContract = getFieldContractByDestination("shopify.color-pattern");
+      const colorPatternObs = buildBaselineObservation(
+        currentBaseline,
+        "shopify.color-pattern"
+      );
+      const colorPatternTypeCheck = evaluateDestinationTypeAndCompleteness({
+        contract: colorPatternContract,
+        baselineObs: colorPatternObs
+      });
+
+      if (
+        colorPatternContract &&
+        colorPatternContract.isWritableInBatch1 &&
+        colorPatternTypeCheck.ready &&
+        isExactMetaobjectDefinitionGid(colorPatternObs.restrictedMetaobjectDefinitionId)
+      ) {
+        const colorRefEvidence = inspectVerifiedReferenceEvidenceForDestination(
+          currentBaseline,
+          "shopify.color-pattern",
+          colorPatternObs.restrictedMetaobjectDefinitionId
+        );
+
+        if (
+          colorRefEvidence.evidenceLoaded &&
+          colorRefEvidence.isComplete &&
+          colorRefEvidence.restrictedMetaobjectDefinitionId ===
+            colorPatternObs.restrictedMetaobjectDefinitionId &&
+          colorRefEvidence.entriesByGid instanceof Map &&
+          colorRefEvidence.entriesByGid.size > 0
+        ) {
+          const verifiedColorLabels = [];
+          const seenLowerColorLabels = new Set();
+          let hasInvalidChoiceEntry = false;
+
+          colorRefEvidence.entriesByGid.forEach((entryObj, gid) => {
+            if (hasInvalidChoiceEntry) return;
+            if (
+              !isExactMetaobjectGid(gid) ||
+              !entryObj ||
+              entryObj.definitionId !== colorPatternObs.restrictedMetaobjectDefinitionId ||
+              typeof entryObj.label !== "string"
+            ) {
+              hasInvalidChoiceEntry = true;
+              return;
+            }
+            const trimmedLabel = entryObj.label.trim();
+            if (
+              !trimmedLabel ||
+              trimmedLabel === gid ||
+              /^gid:\/\//i.test(trimmedLabel) ||
+              (/metaobject/i.test(trimmedLabel) && /\d/.test(trimmedLabel))
+            ) {
+              hasInvalidChoiceEntry = true;
+              return;
+            }
+            const lowerKey = trimmedLabel.replace(/\s+/g, " ").toLowerCase();
+            if (!seenLowerColorLabels.has(lowerKey)) {
+              seenLowerColorLabels.add(lowerKey);
+              verifiedColorLabels.push(trimmedLabel);
+            }
+          });
+
+          if (!hasInvalidChoiceEntry && verifiedColorLabels.length > 0) {
+            verifiedColorPatternChoicesJson = JSON.stringify(verifiedColorLabels);
+          }
+        }
+      }
+    }
+
     const requestId = `bench_v2_aiscan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     setActiveAiScanRequest({
       requestId,
@@ -2392,6 +2470,9 @@ export default function BenchV2Route() {
     }
     if (ooak2ObservedType) {
       formData.append("is_ooak_observed_type", ooak2ObservedType);
+    }
+    if (verifiedColorPatternChoicesJson) {
+      formData.append("verified_color_pattern_choices", verifiedColorPatternChoicesJson);
     }
 
     for (const [k, v] of Object.entries(contextKeyValues)) {

@@ -30,6 +30,7 @@ import {
   buildGeoLookupCandidates,
   resolveVerifiedStoneIdentityContext,
   resolveTab3FieldProvenance,
+  parseVerifiedColorPatternChoiceLabels,
   validateStandardizedCandidates,
   sanitizeObject,
   formatDyslexiaText,
@@ -673,6 +674,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete finalParse.authenticity;
         delete finalParse.age_group;
         delete finalParse.condition;
+        delete finalParse.verified_color_pattern_choices;
         stripRetiredParkedProducerEntries(finalParse, "PRODUCT");
 
         return Response.json({ success: true, intent: "titleParse", pieceId: body.get("pieceId"), titleParse: finalParse });
@@ -684,6 +686,15 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       const pieceId = body.get("pieceId") || body.get("productId") || "NEW";
       const provenance = resolveTab3FieldProvenance(body);
       const idOrigin = parseIdentityAndOriginInputs(body, provenance);
+      const parsedVerifiedColorChoices = parseVerifiedColorPatternChoiceLabels(
+        body.get("verified_color_pattern_choices")
+      );
+      const validVerifiedColorPatternChoices =
+        parsedVerifiedColorChoices.supplied &&
+        parsedVerifiedColorChoices.valid &&
+        parsedVerifiedColorChoices.labels.length > 0
+          ? parsedVerifiedColorChoices.labels
+          : null;
 
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const defaultOriginSlug = resolveOriginHandle(idOrigin.originSegment, pagesList, idOrigin.explicitOriginHandle);
@@ -705,7 +716,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
 
       const rawInputFacts = Object.fromEntries(
         Array.from(body.entries())
-          .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "pieceName", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs", "operator_locked_fields", "passive_stored_fields"].includes(key))
+          .filter(([key, value]) => value && typeof value === "string" && value.trim() !== "" && !["intent", "pieceId", "productId", "productTitle", "pieceName", "imageBase64", "imageMimeType", "imageUrl", "mediaInputs", "operator_locked_fields", "passive_stored_fields", "verified_color_pattern_choices"].includes(key))
           .map(([k, v]) => [k, v.trim()])
       );
       stripRetiredParkedProducerEntries(rawInputFacts, "PRODUCT");
@@ -771,7 +782,9 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         fullCollectionTitle: defaultCollection.name,
         collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
         pagesList,
-        operatorFacts: currentInputFacts
+        operatorFacts: currentInputFacts,
+        verifiedColorPatternChoices: validVerifiedColorPatternChoices,
+        requireVerifiedColorPatternChoices: false
       });
 
       const geminiRes = await fetchWithRetry("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + process.env.GEMINI_API_KEY, {
@@ -788,6 +801,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         } catch (parseErr) {
           return Response.json({ success: false, intent, pieceId, error: "Vision response failed JSON parsing." }, { status: 500 });
         }
+
+        delete parsedVision.verified_color_pattern_choices;
 
         for (const sKey of ["primary_medium", "material", "stone_family"]) {
           if (
@@ -929,6 +944,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete payload.necklace_design;
         delete payload.age_group;
         delete payload.condition;
+        delete payload.verified_color_pattern_choices;
+        delete reviewProposals.verified_color_pattern_choices;
         stripRetiredParkedProducerEntries(payload, "PRODUCT");
         stripRetiredParkedProducerEntries(reviewProposals, "PRODUCT");
 
@@ -962,6 +979,18 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         String(body.get("benchV2OptIn") || "").trim().toLowerCase() === "true" ||
         String(body.get("bench_v2_opt_in") || "").trim().toLowerCase() === "true";
 
+      const parsedVerifiedColorChoices = parseVerifiedColorPatternChoiceLabels(
+        body.get("verified_color_pattern_choices")
+      );
+      const hasValidVerifiedColorPatternChoices = Boolean(
+        parsedVerifiedColorChoices.supplied &&
+        parsedVerifiedColorChoices.valid &&
+        parsedVerifiedColorChoices.labels.length > 0
+      );
+      const validVerifiedColorPatternChoices = hasValidVerifiedColorPatternChoices
+        ? parsedVerifiedColorChoices.labels
+        : null;
+
       const EXCLUDED_CURRENT_DATA_META_KEYS = new Set([
         "intent",
         "pieceId",
@@ -981,7 +1010,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         "bench_v2_opt_in",
         "is_ooak_observed_type",
         "is_one_of_a_kind_observed_type",
-        "observed_destination_types"
+        "observed_destination_types",
+        "verified_color_pattern_choices"
       ]);
 
       const provenance = resolveTab3FieldProvenance(body);
@@ -1076,7 +1106,9 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         currentData,
         hasMultipleImages,
         hasExistingGeneralAlt,
-        provenance
+        provenance,
+        verifiedColorPatternChoices: validVerifiedColorPatternChoices,
+        requireVerifiedColorPatternChoices: isBenchV2OptIn
       });
       contents.push({ text: promptText });
 
@@ -1161,11 +1193,13 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete parsedVision.character_marks;
         delete parsedVision.primary_use;
         delete parsedVision.necklace_design;
+        delete parsedVision.verified_color_pattern_choices;
         stripRetiredParkedProducerEntries(parsedVision, "PRODUCT");
 
         const rawVisionSnapshot = {};
         if (parsedVision && typeof parsedVision === "object" && !Array.isArray(parsedVision)) {
           for (const [vk, vv] of Object.entries(parsedVision)) {
+            if (vk === "verified_color_pattern_choices") continue;
             if (typeof vv === "string" || typeof vv === "boolean" || typeof vv === "number") {
               rawVisionSnapshot[vk] = vv;
             }
@@ -1479,6 +1513,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         delete payload.character_marks;
         delete payload.primary_use;
         delete payload.necklace_design;
+        delete payload.verified_color_pattern_choices;
+        delete reviewProposals.verified_color_pattern_choices;
         stripRetiredParkedProducerEntries(payload, "PRODUCT");
         stripRetiredParkedProducerEntries(reviewProposals, "PRODUCT");
 
@@ -1517,6 +1553,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           });
           producerProposals = stripRetiredParkedProducerEntries(builtBenchV2.producerProposals, "PRODUCT");
           producerDiagnostics = stripRetiredParkedProducerEntries(builtBenchV2.producerDiagnostics, "PRODUCT");
+
+          if (!hasValidVerifiedColorPatternChoices) {
+            producerDiagnostics = producerDiagnostics && typeof producerDiagnostics === "object"
+              ? producerDiagnostics
+              : {};
+            producerDiagnostics["shopify.color-pattern"] = parsedVerifiedColorChoices.supplied
+              ? (parsedVerifiedColorChoices.error ||
+                  "Verified Shopify Color reference choices (verified_color_pattern_choices) were invalid or empty on this AI Scan request; standardized color-pattern candidate generation was omitted.")
+              : "Verified Shopify Color reference choices (verified_color_pattern_choices) were not supplied on this AI Scan request; standardized color-pattern candidate generation was omitted until verified reference choices are loaded.";
+          }
         }
 
         return Response.json({
