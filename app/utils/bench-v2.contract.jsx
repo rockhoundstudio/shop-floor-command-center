@@ -1740,10 +1740,16 @@ export function evaluateBenchV2FieldRow({
 
   const allowExplicitReferenceListReplacement = Boolean(
     isShopifyReference &&
+      contract.expectedType === "list.metaobject_reference" &&
+      contract.isWritableInBatch1 === true &&
       hasProposalKey &&
+      !isBlankOrWhitespaceOnly(proposedValue) &&
       rawPropEntry &&
       typeof rawPropEntry === "object" &&
-      rawPropEntry.origin === "Manual" &&
+      !Array.isArray(rawPropEntry) &&
+      (rawPropEntry.origin === "Manual" || rawPropEntry.origin === "AI") &&
+      typeof rawPropEntry.value === "string" &&
+      rawPropEntry.value === proposedValue &&
       rawPropEntry.allowExplicitReferenceListReplacement === true &&
       typeof rawPropEntry.explicitReplacementValue === "string" &&
       rawPropEntry.explicitReplacementValue === proposedValue

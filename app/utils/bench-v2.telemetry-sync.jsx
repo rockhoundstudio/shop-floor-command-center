@@ -19,6 +19,9 @@ import {
   isExactProductGid
 } from "./bench-v2.contract.jsx";
 import {
+  evaluateActionableScanProposalMeta
+} from "./bench-v2.field-filters.jsx";
+import {
   REGISTRY_BY_OWNER_IDENTITY,
   FIELD_CATALOG
 } from "./meta-injector.constants.jsx";
@@ -536,6 +539,7 @@ export function useBenchV2LiveTelemetryPublisher({
           proposalOrigin,
           heldAiAlternative,
           scanProposalMeta,
+          actionableScanMeta,
           validation,
           isApproved,
           isKeepOriginal,
@@ -572,9 +576,40 @@ export function useBenchV2LiveTelemetryPublisher({
           isApproved && fidelityCheck.faithful
         );
 
+        const wasSubmittedInLastRepair = Boolean(
+          activeSaveReportForCurrentProduct?.submittedDestinations?.includes(destKey)
+        );
+        const verifiedInLastRepair = Boolean(
+          activeSaveReportForCurrentProduct?.verifiedDestinations?.includes(destKey)
+        );
+        const blockedInLastRepair =
+          activeSaveReportForCurrentProduct?.blockedFields?.[destKey] || null;
+        const unconfirmedInLastRepair = Boolean(
+          activeSaveReportForCurrentProduct?.unconfirmedDestinations?.includes(destKey)
+        );
+
+        const resolvedActionableScanMeta =
+          actionableScanMeta !== undefined
+            ? actionableScanMeta
+            : evaluateActionableScanProposalMeta({
+                contract,
+                baselineObservation: obs,
+                hasProposalKey,
+                proposedValue,
+                scanProposalMeta,
+                verifiedInLastSave: Boolean(!hasProposalKey && verifiedInLastRepair)
+              });
+
+        const hasActionableUnresolvedScanCandidate = Boolean(
+          !regMeta.isParkedExcluded &&
+            !regMeta.isProtectedAppData &&
+            resolvedActionableScanMeta
+        );
+
         const isActualBlockedProposal = Boolean(
-          hasProposalKey &&
-            (!validation?.valid || !fidelityCheck.faithful)
+          (hasProposalKey &&
+            (!validation?.valid || !fidelityCheck.faithful)) ||
+            hasActionableUnresolvedScanCandidate
         );
 
         const hasTechnicalBlock = Boolean(
@@ -608,22 +643,24 @@ export function useBenchV2LiveTelemetryPublisher({
               )
           );
           mappedFieldStatus = isBlockedInSave ? "API Error / Blocked" : "Save Conflict";
-        } else if (isKeepOriginal) {
+        } else if (isKeepOriginal && !hasActionableUnresolvedScanCandidate) {
           mappedFieldStatus = "Keep original (suggestion rejected)";
         } else if (
           isApproved &&
           (!fidelityCheck.faithful || !validation?.valid)
         ) {
           mappedFieldStatus = "Approved, blocked";
-        } else if (isExplicitlyApprovedValid) {
+        } else if (isExplicitlyApprovedValid && !hasActionableUnresolvedScanCandidate) {
           mappedFieldStatus = "Approved, not saved";
-        } else if (isActualBlockedProposal) {
+        } else if (hasProposalKey && (!validation?.valid || !fidelityCheck.faithful)) {
           mappedFieldStatus =
             validation?.code === "exceeds_max_length"
               ? "Over limit"
               : "API Error / Blocked";
         } else if (hasProposalKey && !validation?.isUnchangedFromStored) {
           mappedFieldStatus = "Proposed";
+        } else if (hasActionableUnresolvedScanCandidate) {
+          mappedFieldStatus = "Unverified proposal";
         } else if (
           !regMeta.isParkedExcluded &&
           !regMeta.isProtectedAppData &&
@@ -637,10 +674,12 @@ export function useBenchV2LiveTelemetryPublisher({
         }
 
         const proposalStatus = !hasProposalKey
-          ? "none"
+          ? hasActionableUnresolvedScanCandidate
+            ? "blocked"
+            : "none"
           : isKeepOriginal
             ? "rejected_keep_original"
-            : isActualBlockedProposal
+            : !validation?.valid || !fidelityCheck.faithful
               ? "blocked"
               : validation?.isUnchangedFromStored
                 ? "unchanged"
@@ -649,12 +688,13 @@ export function useBenchV2LiveTelemetryPublisher({
         const contentNeedsReview = Boolean(
           !regMeta.isParkedExcluded &&
             !regMeta.isProtectedAppData &&
-            !isKeepOriginal &&
-            ((hasProposalKey &&
-              !isExplicitlyApprovedValid &&
-              !validation?.isUnchangedFromStored) ||
+            (hasSaveErrorOrConflict ||
               Boolean(heldAiAlternative) ||
-              hasSaveErrorOrConflict)
+              hasActionableUnresolvedScanCandidate ||
+              (!isKeepOriginal &&
+                hasProposalKey &&
+                !isExplicitlyApprovedValid &&
+                !validation?.isUnchangedFromStored))
         );
 
         const reasonsList = [];
@@ -667,6 +707,20 @@ export function useBenchV2LiveTelemetryPublisher({
         if (hasProposalKey && !fidelityCheck.faithful && fidelityCheck.reason) {
           if (!reasonsList.includes(fidelityCheck.reason)) {
             reasonsList.push(fidelityCheck.reason);
+          }
+        }
+        if (resolvedActionableScanMeta) {
+          if (
+            resolvedActionableScanMeta.summaryText &&
+            !reasonsList.includes(resolvedActionableScanMeta.summaryText)
+          ) {
+            reasonsList.push(resolvedActionableScanMeta.summaryText);
+          }
+          if (
+            resolvedActionableScanMeta.reason &&
+            !reasonsList.some((r) => r.includes(resolvedActionableScanMeta.reason))
+          ) {
+            reasonsList.push(resolvedActionableScanMeta.reason);
           }
         }
 
@@ -733,7 +787,7 @@ export function useBenchV2LiveTelemetryPublisher({
         const effectiveSource =
           hasProposalKey && proposalSource && proposalSource !== "None"
             ? proposalSource
-            : scanProposalMeta?.source || null;
+            : resolvedActionableScanMeta?.source || scanProposalMeta?.source || null;
 
         const workingStateObj = {
           proposalExists: hasProposalKey,
@@ -763,7 +817,18 @@ export function useBenchV2LiveTelemetryPublisher({
           ...(canKeepOriginal ? { canKeepOriginal: true } : {}),
           ...(contentNeedsReview ? { contentNeedsReview: true } : {}),
           ...(heldAiAlternative ? { heldAiAlternative } : {}),
-          ...(scanProposalMeta ? { lastAiScanOutcome: scanProposalMeta } : {})
+          ...(scanProposalMeta ? { lastAiScanOutcome: scanProposalMeta } : {}),
+          ...(resolvedActionableScanMeta
+            ? {
+                unresolvedAiCandidate: {
+                  value: resolvedActionableScanMeta.candidateValue,
+                  source: resolvedActionableScanMeta.source,
+                  disposition: resolvedActionableScanMeta.disposition,
+                  reason: resolvedActionableScanMeta.reason,
+                  reviewStatusLabel: resolvedActionableScanMeta.reviewStatusLabel
+                }
+              }
+            : {})
         };
 
         const isVariantOwner =
@@ -822,6 +887,9 @@ export function useBenchV2LiveTelemetryPublisher({
             ? { isImageAltCapabilityPlaceholder: true }
             : {}),
           ...(isActualBlockedProposal ? { isActualBlockedProposal: true } : {}),
+          ...(hasActionableUnresolvedScanCandidate
+            ? { hasExplicitProducerHold: true }
+            : {}),
           ...(hasTechnicalBlock ? { hasTechnicalBlock: true } : {}),
           ...(hasContractOrOwnerHold ? { hasContractOrOwnerHold: true } : {}),
           ...(isExplicitStorageHold ? { hasExplicitStorageHold: true } : {}),
@@ -830,18 +898,6 @@ export function useBenchV2LiveTelemetryPublisher({
           ...(isChannelFlagHold ? { isChannelFlagReadOnly: true } : {}),
           ...(reasonsList.length > 0 ? { reasons: reasonsList } : {})
         };
-
-        const wasSubmittedInLastRepair = Boolean(
-          activeSaveReportForCurrentProduct?.submittedDestinations?.includes(destKey)
-        );
-        const verifiedInLastRepair = Boolean(
-          activeSaveReportForCurrentProduct?.verifiedDestinations?.includes(destKey)
-        );
-        const blockedInLastRepair =
-          activeSaveReportForCurrentProduct?.blockedFields?.[destKey] || null;
-        const unconfirmedInLastRepair = Boolean(
-          activeSaveReportForCurrentProduct?.unconfirmedDestinations?.includes(destKey)
-        );
 
         const hasAnySaveOrConflictEvidence = Boolean(
           combinedConflictData ||

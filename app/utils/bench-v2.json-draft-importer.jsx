@@ -140,11 +140,24 @@ export function getProposalValueString(rawEntry) {
 
 export function hasExplicitReferenceReplacementFlag(rawEntry, destinationKey, exactProposedValue) {
   const contract = getFieldContractByDestination(destinationKey);
-  if (!contract || contract.namespace !== "shopify") return false;
+  if (
+    !contract ||
+    contract.namespace !== "shopify" ||
+    contract.expectedType !== "list.metaobject_reference" ||
+    !contract.isWritableInBatch1
+  ) {
+    return false;
+  }
+  if (typeof exactProposedValue !== "string" || exactProposedValue.trim() === "") {
+    return false;
+  }
   return Boolean(
     rawEntry &&
       typeof rawEntry === "object" &&
-      rawEntry.origin === "Manual" &&
+      !Array.isArray(rawEntry) &&
+      (rawEntry.origin === "Manual" || rawEntry.origin === "AI") &&
+      typeof rawEntry.value === "string" &&
+      rawEntry.value === exactProposedValue &&
       rawEntry.allowExplicitReferenceListReplacement === true &&
       typeof rawEntry.explicitReplacementValue === "string" &&
       rawEntry.explicitReplacementValue === exactProposedValue

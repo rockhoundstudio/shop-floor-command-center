@@ -26,7 +26,7 @@ import {
 export const getSharedFactualContract = () => `
 --- SHARED FACTUAL CONTRACT ---
 1. PRIORITY: Explicit operator-locked corrections > established verified product facts > resolved origin/collection source context > supported visible observations.
-​2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
+2. UNKNOWN FACTS: Unknown facts MUST remain omitted. Do NOT invent defaults.
 3. NO VISUAL INFERENCE OF FASTENING OR METAL COMPOSITION: Do not infer treatment, provenance, fastening method (bezel vs. glue-on/adhesive), metal alloy/fineness, plating, or mineral rarity from appearance or front photographs alone.
 4. SEPARATE CONSTRUCTION DIMENSIONS: Keep these five dimensions strictly distinct:
    (a) Fastening method (e.g., glue-on/glue-in adhesive setting, pinch bail with pins passing through a drilled hole, wire wrap, or explicit verified bezel setting),
@@ -95,7 +95,7 @@ Format for each supported key inside "standardized_candidates":
 STRICT RULES FOR standardized_candidates:
 - Review candidates ONLY. Do NOT output shopify.* keys or custom.std_* keys.
 - Priority: Explicit operator-locked facts > verified stored facts > permitted image observations.
-- Preserve existing nonblank standardized assignments: if current standardized data is already supplied for an attribute, omit that key unless an explicit correction requests a replacement.
+- Evaluate each of the seven supported keys independently against current evidence (including when a passive stored assignment already exists on the product): propose the complete intended evidence-supported candidate label(s) for operator review, whether they confirm or replace a stored assignment. Do not manufacture differences when an existing assignment is already supported by evidence.
 - Omit any of the seven keys that lack clear factual/visual support.
 - Never output empty arrays, "None", "Unknown", "N/A", guessed GIDs, taxonomy IDs, or definition IDs.
 - Do not infer hidden hardware or undisclosed treatment.
@@ -389,22 +389,15 @@ export function buildTab3VisionPrompt({
       passiveHardwareEntries.push(`- [IGNORED NON-STONE VALUE IN ${k}]: "${v}" (This is hardware/metal, NOT stone identity; use reviewed stone_family/material facts instead)`);
       return;
     }
-    if (
+    const isPassiveUneditedField =
       hasValidProvenance &&
-      (CLASSIFICATION_OVERRIDE_KEYS.has(k) ||
-        PASSIVE_PROVENANCE_AND_SEO_KEYS.has(k) ||
-        PASSIVE_GEOLOGY_REVIEW_KEYS.has(k)) &&
       passiveStoredSet.has(k) &&
-      !operatorLockedSet.has(k)
-    ) {
-      passiveClassificationEntries.push(`- ${k}: ${v}`);
-    } else if (
-      hasValidProvenance &&
-      PASSIVE_CONSTRUCTION_REVIEW_KEYS.has(k) &&
-      passiveStoredSet.has(k) &&
-      !operatorLockedSet.has(k)
-    ) {
+      !operatorLockedSet.has(k);
+
+    if (isPassiveUneditedField && PASSIVE_CONSTRUCTION_REVIEW_KEYS.has(k)) {
       passiveHardwareEntries.push(`- ${k}: ${v}`);
+    } else if (isPassiveUneditedField) {
+      passiveClassificationEntries.push(`- ${k}: ${v}`);
     } else {
       authoritativeEntries.push(`- ${k}: ${v}`);
     }
@@ -432,17 +425,17 @@ ${getSharedFactualContract()}
 CURRENT KNOWN DATA (Operator-locked and verified facts — preserve these exactly; these govern all generated fields and alt text):
 ${currentDataStr || "- No explicit operator-locked data provided."}
 
-PASSIVE STORED HARDWARE / SETTING CONTEXT (Stored product context; NOT operator-locked — if an explicit operator-locked value in CURRENT KNOWN DATA contradicts a passive stored value, CURRENT KNOWN DATA takes priority; never treat hardware/metal in primary_medium as stone identity):
+PASSIVE STORED HARDWARE / SETTING CONTEXT (Stored product context; NOT operator-locked — if an explicit operator-locked value in CURRENT KNOWN DATA or clear visual evidence contradicts a passive stored value, propose the evidence-supported replacement; never treat hardware/metal in primary_medium as stone identity):
 ${passiveHardwareStr || "- None."}
 
-PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS (Fallback only; not operator-locked — re-evaluate against physical/visual evidence and authoritative human provenance/hardware facts; if fresh evidence or locked human provenance contradicts a stale carried value, propose the corrected value; if fresh evidence is insufficient, omit or retain as fallback):
+PASSIVE STORED PRODUCT BASELINE & PRIOR DRAFTS (Review context only; NOT operator-locked — re-evaluate against physical/visual evidence, resolved origin/collection context, and authoritative operator-locked facts in CURRENT KNOWN DATA; if fresh evidence or locked human facts support a replacement for a passive stored value, propose the evidence-supported replacement; if the passive stored value is accurate or fresh evidence cannot determine a replacement, retain it or omit):
 ${passiveClassificationsStr || "- None."}
 
 CRITICAL RULES FOR TAB 3:
-1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored hardware/classifications, image inference, product titles, and collection names.
-​2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED CLASSIFICATIONS & PRIOR DRAFTS, re-evaluate against the photos and authoritative human facts so stale carried "Pendant" labels do not force a loose stone into finished jewelry and stale AI river-origin/SEO drafts do not contradict human-confirmed purchase provenance.
+1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored baseline/hardware/classifications, image inference, product titles, and collection names.
+2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim. When setting_ready, bail_included, jewelry_finding_type, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED PRODUCT BASELINE & PRIOR DRAFTS and PASSIVE STORED HARDWARE / SETTING CONTEXT, re-evaluate against the photos and authoritative facts in CURRENT KNOWN DATA so stale or misidentified stored values can be replaced when evidence supports a correction, while accurate stored values remain unchanged (e.g., stale carried "Pendant" labels do not force a loose stone into finished jewelry, and stale river-origin/SEO drafts do not contradict confirmed purchase provenance).
 3. Never infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a decorative rim, backing frame, front photo, or top chain loop alone. Do not infer metal alloy fineness or plating from photos.
-4. STONE IDENTITY VS. SETTING MATERIAL: primary_medium, material, and stone_family must NEVER contain metal, plating, alloy, wire, or setting hardware (such as "Silver Plated", "Sterling Silver", "Silver Alloy", "Copper Wire", or "Pinch Bail"). Keep mineral family (stone_family, e.g., "Agate") and stone variety (material / primary_medium, e.g., "Botswana Agate") distinct when evidenced; do not force them to be identical. If stone identity is uncertain, omit primary_medium rather than guessing.
+4. STONE IDENTITY VS. SETTING MATERIAL: primary_medium, material, and stone_family must NEVER contain metal, plating, alloy, wire, or setting hardware (such as "Silver Plated", "Sterling Silver", "Silver Alloy", "Copper Wire", or "Pinch Bail"). Keep mineral family (stone_family, e.g., "Agate") and stone variety (material / primary_medium, e.g., "Botswana Agate") distinct when evidenced; do not force them to be identical. Do not infer a stone variety from a generic test title. If stone identity is uncertain, omit primary_medium and material rather than guessing.
 5. Preserve pinch-bail construction ("Silver Plated Pinch Bail", whose pins pass through a drilled hole) when visibly present or stated in facts.
 6. Never change setting_ready to "No" merely because fastening wording is unconfirmed; if a piece is visibly mounted/wear-ready with a setting or bail, setting_ready remains "Yes" (or its exact supplied value).
 7. Never generate, rename, or propose a shopify_title, piece_name, or price during repair/rescan.
@@ -451,19 +444,19 @@ CRITICAL RULES FOR TAB 3:
 10. Never write "None" or "Unknown" as filler.
 11. Do not invent details or lived history. Leave unknown fields entirely unset.
 12. Distinguish physical finished form from intended pendant/jewelry use: set product_format to "Pendant" (or similar finished wearable form) ONLY when authoritative hardware/mounting facts (such as an installed bail, mounted setting with loop, wire wrap, verified bezel setting, or finished drilled wear-ready form) or clear visible mounted hardware establish a finished piece. A bare passive "Pendant" label in jewelry_type, or an unattached chain/cord alone, does NOT establish finished jewelry or force product_format to "Pendant".
-13. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve supplied found_object values and polarity verbatim. Preserve supplied treatment and operator-locked hardware phrases verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
-14. PURCHASE VS. FIELD COLLECTION PROVENANCE: When CURRENT KNOWN DATA indicates purchased material (e.g., found_object is false/"No"/"No — purchased rough" or an explicit operator-locked purchase source is provided), NEVER write "Found at..." or river/field-collection claims in seo_title or poetic_hook, and NEVER override the purchase source with a river or collection name. Purchase location does not establish geological origin.
+13. Preserve actual supplied Yes/No TEXT metafield values (such as treated and is_one_of_a_kind) as exact "Yes" or "No" strings, never boolean true/false or text "true"/"false". Preserve operator-locked found_object, treatment, and hardware phrases in CURRENT KNOWN DATA verbatim. Do not infer treatment from photographs or replace unknown/blank treatment with a guess.
+14. PURCHASE VS. FIELD COLLECTION PROVENANCE: When CURRENT KNOWN DATA (or uncontradicted provenance) indicates purchased material (e.g., found_object is false/"No"/"No — purchased rough" or an explicit operator-locked purchase source is provided), NEVER write "Found at..." or river/field-collection claims in seo_title or poetic_hook, and NEVER override the purchase source with a river or collection name. Purchase location does not establish geological origin.
 15. PHOTO-BASED SOLID LENGTH MEASUREMENT (overall_solid_length_in): Read the measuring tape or ruler markings, identifiable units, and both solid-product endpoints from the photo where the product is deliberately aligned with the tape/ruler. Return decimal inches (including setting/bail, excluding any flexible necklace chain/cord; necklace chain/cord is a separate confirmed 18 inches). Preserve any existing nonblank overall_solid_length_in in CURRENT KNOWN DATA. If the markings, units, or solid endpoints are not clearly readable in the photo(s), omit overall_solid_length_in completely (never guess or derive from dimensions_mm text).
 
 Return ONLY a JSON object. OMIT any keys if you cannot determine the value supported by evidence. DO NOT include "piece_name", "origin_story", "price", "shopify_title", "weight_grams", "shipping_weight_oz", "generated_description", "rarity", or "authenticity".
 
-Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSIVE STORED CLASSIFICATION/PROVENANCE entry or updating PASSIVE STORED HARDWARE when supported by operator-locked facts or clear evidence):
-- is_one_of_a_kind: Propose "Yes" only when supported by existing product facts; do not overwrite an explicit operator value.
+Potential JSON Keys to evaluate and propose if blank or when replacing a passive stored value in PASSIVE STORED PRODUCT BASELINE / HARDWARE with an evidence-supported value (never overwriting an operator-locked entry in CURRENT KNOWN DATA):
+- is_one_of_a_kind: Propose "Yes" only when supported by existing product facts; do not overwrite an explicit operator-locked value in CURRENT KNOWN DATA.
 - product_format: Describe the evidenced physical form (e.g., Cabochon, Pendant, Specimen, Loose Stone).
 - craftsmanship: Propose exactly "Handcrafted" only when supplied product facts identify the work as handcrafted by Bob & Janyce. ("Ground out the miles" describes travel, not stone grinding; never cite that idiom as craftsmanship evidence. Do not place "Handcrafted" in standardized construction candidates.)
 - poetic_hook: Write one short, plain, factual hook based on the supported provenance/origin context and physical piece (under 160 characters). Never claim river/field collection when the material was purchased.
 - seo_title: Max 70 chars. Natural, descriptive wording based on supported facts. Never claim "Found at..." or river collection when purchased. Include "Handcrafted" only when supported by supplied facts identifying work by Bob and Janyce.
-- dimensions_mm: Leave unchanged if provided.
+- dimensions_mm: Leave unchanged if provided in CURRENT KNOWN DATA.
 - overall_solid_length_in: Photo-based measurement in decimal inches read from the visible measuring tape/ruler markings, identifiable units, and both solid-product endpoints (including setting/bail, excluding flexible 18-inch chain/cord). Leave unchanged if already provided in CURRENT KNOWN DATA; omit if tape markings, units, or endpoints cannot be read reliably.
 - cut_and_shape: Detailed lapidary cut and shape description (e.g., "Freeform Cabochon", "Domed Oval Cabochon") distinct from broader stone_shape; omit if uncertain.
 - stone_shape: Broader stone shape classification (e.g., "Freeform", "Oval", "Teardrop", "Round"${derivedShape ? `; title shape context: "${derivedShape}"` : ""}); omit if uncertain.
@@ -484,19 +477,20 @@ Potential JSON Keys to evaluate and propose if blank (or when correcting a PASSI
 - mineral_class
 - geological_era
 - rock_formation
-- stone_family: Derived mineral family from supported picklist only (never setting metal/hardware).
+- material: Specific stone/mineral variety identity ONLY when supported by authoritative context or clear evidence (keeping stone variety such as "Brecciated Jasper" or "Botswana Agate" distinct from base stone_family such as "Jasper" or "Agate"; never setting metal/hardware, and never inferred from a generic test title).
+- stone_family: Base mineral family from supported picklist only (never setting metal/hardware).
 - origin_location: Geographic name ONLY based on "${originSegment}" when supported; never override an operator-locked origin_location or invent a river origin for purchased material.
 - origin_handle
 - collection_name
 - collection_location
 - primary_medium: Evidenced stone/mineral or material variety identity ONLY (never the generic word "Stone", and never setting metal, plating, wire, or hardware; do not infer variety from geography; omit when unknown).
-- secondary_medium: Preserve operator-locked value; never guess metal alloy or plating from front photos.
+- secondary_medium: Preserve operator-locked value in CURRENT KNOWN DATA; never guess metal alloy or plating from front photos.
 - wire_material: Plain text wire material when supported by facts/visible wire wrap.
-- setting_ready: Preserve operator-locked value. Never infer "Bezel Setting - Ready to Wear" from photos alone.
-- bail_included: Preserve operator-locked value. Never infer "Integrated Bezel Bail" from photos alone.
+- setting_ready: Preserve operator-locked value in CURRENT KNOWN DATA. Never infer "Bezel Setting - Ready to Wear" from photos alone.
+- bail_included: Preserve operator-locked value in CURRENT KNOWN DATA. Never infer "Integrated Bezel Bail" from photos alone.
 - chain_material
 - chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
-- jewelry_finding_type: Preserve operator-locked construction details verbatim. If not operator-locked, propose "Silver Plated Pinch Bail" only when a pinch bail is clearly visible; never guess bezel or glue-on fastening from a front photo.
+- jewelry_finding_type: Preserve operator-locked construction details in CURRENT KNOWN DATA verbatim. If not operator-locked, propose "Silver Plated Pinch Bail" only when a pinch bail is clearly visible; never guess bezel or glue-on fastening from a front photo.
 - jewelry_type: Select from Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A when supported by facts. Select "N/A" when clear evidence establishes an unmounted loose stone, cabochon, display piece, or specimen without mounted/wear-ready hardware.
 - google_product_category
 - standardized_candidates: Object containing supported review candidates among ["chain-link-type", "color-pattern", "construction", "jewelry-finding-type", "material-origin", "product-classification", "product-use"] following the exact verified field meanings below.

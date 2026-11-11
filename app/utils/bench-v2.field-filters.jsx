@@ -26,6 +26,113 @@ export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
   { label: "Source: Manual", value: "Manual" }
 ]);
 
+const ACTIONABLE_UNRESOLVED_SCAN_DISPOSITIONS = Object.freeze(
+  new Set([
+    "Rejected (invalid)",
+    "Held (no unique/equivalent verified reference entry match)",
+    "Held (category-ineligible or incomplete reference evidence)",
+    "Pending verified reference choices (will resolve automatically when ready)"
+  ])
+);
+
+export function evaluateActionableScanProposalMeta({
+  contract,
+  baselineObservation,
+  hasProposalKey,
+  proposedValue,
+  scanProposalMeta,
+  verifiedInLastSave = false
+}) {
+  if (!contract || isParkedOrProtectedDrawerId(contract.drawerId)) {
+    return null;
+  }
+  if (isManualOnlyNoAiDestination(contract.destinationKey, contract)) {
+    return null;
+  }
+  if (!scanProposalMeta || typeof scanProposalMeta !== "object" || Array.isArray(scanProposalMeta)) {
+    return null;
+  }
+
+  const disposition =
+    typeof scanProposalMeta.disposition === "string"
+      ? scanProposalMeta.disposition.trim()
+      : "";
+  if (!ACTIONABLE_UNRESOLVED_SCAN_DISPOSITIONS.has(disposition)) {
+    return null;
+  }
+
+  if (verifiedInLastSave) {
+    return null;
+  }
+
+  const candidateValue =
+    typeof scanProposalMeta.value === "string" ? scanProposalMeta.value.trim() : "";
+  const source =
+    typeof scanProposalMeta.source === "string" && scanProposalMeta.source.trim() !== ""
+      ? scanProposalMeta.source.trim()
+      : "Source not reported";
+  const reason =
+    typeof scanProposalMeta.reason === "string" && scanProposalMeta.reason.trim() !== ""
+      ? scanProposalMeta.reason.trim()
+      : disposition;
+
+  // Exclude if the candidate value already matches the saved baseline value
+  if (
+    baselineObservation?.evidenceAvailable &&
+    baselineObservation.presence === "present" &&
+    typeof baselineObservation.rawValue === "string" &&
+    candidateValue !== "" &&
+    baselineObservation.rawValue.trim() === candidateValue
+  ) {
+    return null;
+  }
+
+  // Exclude if the current staged draft is the exact same value (already represented as a staged proposal)
+  if (
+    hasProposalKey &&
+    typeof proposedValue === "string" &&
+    candidateValue !== "" &&
+    proposedValue.trim() === candidateValue
+  ) {
+    return null;
+  }
+
+  const isPendingRefChoices =
+    disposition ===
+    "Pending verified reference choices (will resolve automatically when ready)";
+  const isRejectedInvalid = disposition === "Rejected (invalid)";
+
+  const reviewStatusLabel = isPendingRefChoices
+    ? "AI Candidate Pending Reference Choices"
+    : isRejectedInvalid
+      ? "Rejected AI Suggestion (Not Staged)"
+      : "Held AI Reference Candidate (Not Staged)";
+
+  const tone = isPendingRefChoices
+    ? "muted"
+    : isRejectedInvalid
+      ? "error"
+      : "warning";
+
+  const candidateQuote = candidateValue ? ` "${candidateValue}"` : "";
+  const summaryText = isPendingRefChoices
+    ? `AI candidate${candidateQuote} (${source}) pending verified reference choices: ${reason}`
+    : isRejectedInvalid
+      ? `AI suggestion${candidateQuote} (${source}) rejected and not staged: ${reason}`
+      : `AI reference candidate${candidateQuote} (${source}) held and not staged: ${reason}`;
+
+  return Object.freeze({
+    isActionable: true,
+    disposition,
+    candidateValue,
+    source,
+    reason,
+    reviewStatusLabel,
+    tone,
+    summaryText
+  });
+}
+
 export function formatRawBaselineValueForInspection(baselineObs) {
   if (!baselineObs) return "Unavailable";
   if (!baselineObs.evidenceAvailable) {
@@ -133,9 +240,24 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
     typeAndCompleteness,
     referenceEvidence,
     hasProposalKey,
+    proposedValue,
+    scanProposalMeta,
+    actionableScanMeta,
     validation,
     fidelityCheck
   } = row;
+
+  const resolvedActionableScanMeta =
+    actionableScanMeta !== undefined
+      ? actionableScanMeta
+      : evaluateActionableScanProposalMeta({
+          contract,
+          baselineObservation: obs,
+          hasProposalKey,
+          proposedValue,
+          scanProposalMeta,
+          verifiedInLastSave: false
+        });
 
   if (!obs.evidenceAvailable) {
     if (obs.presence === "unknown_incomplete_read") {
@@ -267,15 +389,33 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
       };
     }
     if (validation && validation.isUnchangedFromStored) {
+      if (resolvedActionableScanMeta) {
+        return {
+          tone: resolvedActionableScanMeta.tone,
+          text: resolvedActionableScanMeta.summaryText
+        };
+      }
       return {
         tone: "muted",
         text: "Matches saved value."
+      };
+    }
+    if (resolvedActionableScanMeta) {
+      return {
+        tone: resolvedActionableScanMeta.tone,
+        text: resolvedActionableScanMeta.summaryText
       };
     }
   }
 
   if (contract.namespace === "shopify") {
     if (!referenceEvidence || !referenceEvidence.evidenceLoaded) {
+      if (resolvedActionableScanMeta) {
+        return {
+          tone: resolvedActionableScanMeta.tone,
+          text: resolvedActionableScanMeta.summaryText
+        };
+      }
       return {
         tone: "muted",
         text: isRefChoicesBusy
@@ -292,11 +432,24 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
       };
     }
     if (referenceEvidence.entriesByGid.size === 0) {
+      if (resolvedActionableScanMeta) {
+        return {
+          tone: resolvedActionableScanMeta.tone,
+          text: resolvedActionableScanMeta.summaryText
+        };
+      }
       return {
         tone: "warning",
         text: `0 Metaobject entries exist in Shopify for ${obs.restrictedMetaobjectDefinitionId} — nothing can be approved until entries exist.`
       };
     }
+  }
+
+  if (resolvedActionableScanMeta) {
+    return {
+      tone: resolvedActionableScanMeta.tone,
+      text: resolvedActionableScanMeta.summaryText
+    };
   }
 
   return null;
@@ -315,6 +468,7 @@ export function matchesBenchV2Filter(row, activeFilter) {
     proposalOrigin,
     heldAiAlternative,
     scanProposalMeta,
+    actionableScanMeta,
     validation,
     isApproved,
     isKeepOriginal,
@@ -346,6 +500,18 @@ export function matchesBenchV2Filter(row, activeFilter) {
       obs.defsCompleteState !== "complete" ||
       Boolean(obs.destinationDefError));
 
+  const resolvedActionableScanMeta =
+    actionableScanMeta !== undefined
+      ? actionableScanMeta
+      : evaluateActionableScanProposalMeta({
+          contract,
+          baselineObservation: obs,
+          hasProposalKey,
+          proposedValue,
+          scanProposalMeta,
+          verifiedInLastSave: false
+        });
+
   if (activeFilter === "Blank") {
     return isBlankBaseline;
   }
@@ -374,6 +540,7 @@ export function matchesBenchV2Filter(row, activeFilter) {
     if (isParkedOrProtectedDrawerId(contract.drawerId)) return false;
     if (isRequiredMissing) return true;
     if (Boolean(heldAiAlternative)) return true;
+    if (Boolean(resolvedActionableScanMeta)) return true;
     if (isKeepOriginal) return false;
     if (isApproved && !isBlockedOrInvalidProposal) return false;
     if (isTemporarilyClearedManualEdit) return true;
@@ -622,6 +789,22 @@ export function evaluateAndFilterBenchV2Drawers({
               activeSaveReportForCurrentProduct.unconfirmedDestinations.includes(destKey)))
       );
 
+      const verifiedInLastSave = Boolean(
+        !baseEval.hasProposalKey &&
+          activeSaveReportForCurrentProduct &&
+          Array.isArray(activeSaveReportForCurrentProduct.verifiedDestinations) &&
+          activeSaveReportForCurrentProduct.verifiedDestinations.includes(destKey)
+      );
+
+      const actionableScanMeta = evaluateActionableScanProposalMeta({
+        contract: fieldContract,
+        baselineObservation: baseEval.baselineObservation,
+        hasProposalKey: baseEval.hasProposalKey,
+        proposedValue: baseEval.proposedValue,
+        scanProposalMeta,
+        verifiedInLastSave
+      });
+
       let effectiveConnectionStatus = baseEval.connectionStatus;
       let effectiveReviewStatus = baseEval.reviewStatus;
       let effectiveStatusReason = baseEval.statusReason;
@@ -652,6 +835,20 @@ export function evaluateAndFilterBenchV2Drawers({
         effectiveStatusReason = fidelityCheck.reason;
       }
 
+      if (actionableScanMeta) {
+        if (!baseEval.hasProposalKey) {
+          effectiveReviewStatus = actionableScanMeta.reviewStatusLabel;
+          effectiveStatusReason = actionableScanMeta.summaryText;
+        } else if (
+          effectiveStatusReason &&
+          !effectiveStatusReason.includes(actionableScanMeta.reason)
+        ) {
+          effectiveStatusReason = `${effectiveStatusReason} | ${actionableScanMeta.summaryText}`;
+        } else if (!effectiveStatusReason) {
+          effectiveStatusReason = actionableScanMeta.summaryText;
+        }
+      }
+
       const obs = baseEval.baselineObservation;
       const isShopifyReference = fieldContract.namespace === "shopify";
       const usesMeaningDisplay = Boolean(
@@ -676,6 +873,7 @@ export function evaluateAndFilterBenchV2Drawers({
         proposalOrigin,
         heldAiAlternative,
         scanProposalMeta,
+        actionableScanMeta,
         hasSaveErrorOrConflict,
         fidelityCheck,
         effectiveConnectionStatus,

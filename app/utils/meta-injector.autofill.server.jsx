@@ -64,6 +64,21 @@ function stripRetiredParkedProducerEntries(obj, defaultOwner = "PRODUCT") {
   return obj;
 }
 
+const BENCH_V2_DB_GEOLOGY_DESTINATIONS = Object.freeze({
+  mohs_hardness: ["custom.mohs_hardness"],
+  specific_gravity: ["custom.specific_gravity"],
+  crystal_system: ["custom.crystal_system", "shopify.crystal-system"],
+  luster: ["custom.luster"],
+  cleavage: ["custom.cleavage"],
+  fracture_pattern: ["custom.fracture_pattern"],
+  diaphaneity: ["custom.diaphaneity"],
+  tenacity: ["custom.tenacity"],
+  mineral_class: ["custom.mineral_class", "shopify.mineral-class"],
+  rock_composition: ["custom.rock_composition", "shopify.rock-composition"],
+  rock_formation: ["custom.rock_formation", "shopify.rock-formation"],
+  geological_age: ["custom.geological_age"]
+});
+
 // 🟢 AI Engine — No Prisma Import Here
 
 const stoneProfileCache = new Map();
@@ -203,7 +218,10 @@ function collectionsDataEdgesMap(edges) {
   });
 }
 
-async function getGeoData(admin, stoneFamily) {
+async function getGeoData(admin, stoneFamily, options = {}) {
+  const { requireAuthoritativeDbOnly = false } =
+    options && typeof options === "object" ? options : {};
+
   const emptyGeo = {
     mohs_hardness: "",
     luster: "",
@@ -255,38 +273,6 @@ async function getGeoData(admin, stoneFamily) {
   ) {
     return emptyGeo;
   }
-
-  try {
-    const { lookupStone } = await import("../utils/geoLibrary.jsx");
-    let localResult = null;
-    for (const candidate of fullCandidates) {
-      localResult = lookupStone(candidate);
-      if (localResult && Object.keys(localResult).length > 0) {
-        break;
-      }
-    }
-    if (!localResult && cleanStoneName && cleanStoneName !== "Unknown") {
-      localResult = lookupStone(cleanStoneName);
-    }
-    if (localResult && Object.keys(localResult).length > 0) {
-      return {
-        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
-        luster: localResult.luster || "",
-        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
-        cleavage: localResult.cleavage || "",
-        specific_gravity: localResult.specific_gravity || "",
-        diaphaneity: localResult.diaphaneity || "",
-        tenacity: localResult.tenacity || "",
-        crystal_system: localResult.crystal_system || "",
-        geological_era: localResult.geological_era || "",
-        mineral_class: localResult.mineral_class || "",
-        rock_composition: localResult.rock_composition || "",
-        rock_formation: localResult.rock_formation || "",
-        geological_age: localResult.geological_age || "",
-        geoSource: "library"
-      };
-    }
-  } catch (err) {}
 
   const search = (cleanStoneName && cleanStoneName !== "Unknown" ? cleanStoneName : primaryStoneCandidate).toLowerCase().trim();
 
@@ -399,25 +385,28 @@ async function getGeoData(admin, stoneFamily) {
     return null;
   };
 
-  try {
-    const cacheCandidateOrder = [];
-    const seenCacheLower = new Set();
-    for (const candidate of fullCandidates) {
-      const candidateLower = candidate.toLowerCase().trim();
-      if (candidateLower && !seenCacheLower.has(candidateLower)) {
-        seenCacheLower.add(candidateLower);
-        cacheCandidateOrder.push(candidateLower);
-      }
+  const dbCandidateOrder = [];
+  const seenDbLower = new Set();
+  for (const candidate of fullCandidates) {
+    const candidateLower = candidate.toLowerCase().trim();
+    if (candidateLower && !seenDbLower.has(candidateLower)) {
+      seenDbLower.add(candidateLower);
+      dbCandidateOrder.push(candidateLower);
     }
-    if (search && !seenCacheLower.has(search)) {
-      seenCacheLower.add(search);
-      cacheCandidateOrder.push(search);
-    }
+  }
+  if (search && !seenDbLower.has(search)) {
+    seenDbLower.add(search);
+    dbCandidateOrder.push(search);
+  }
 
+  let dbReadError = null;
+
+  // 1. Authoritative Postgres StoneCache Lookup First
+  try {
     let matchedCacheNameLower = "";
     let matchedNormalizedCache = null;
 
-    for (const candidateLower of cacheCandidateOrder) {
+    for (const candidateLower of dbCandidateOrder) {
       const cacheRows = await queryPostgres(
         'SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1',
         [candidateLower]
@@ -455,39 +444,105 @@ async function getGeoData(admin, stoneFamily) {
         geological_age: matchedNormalizedCache.geological_age || matchingProfileGeo?.geological_age || "",
         geoSource: "cache"
       };
+      if (requireAuthoritativeDbOnly) {
+        Object.defineProperty(mergedCacheResult, "_dbLookupMeta", {
+          value: {
+            dbLookupComplete: true,
+            dbMatchedStoneName: matchedCacheNameLower,
+            dbCandidatesTried: dbCandidateOrder,
+            dbReadError: null
+          },
+          enumerable: false
+        });
+      }
       return mergedCacheResult;
     }
-  } catch (err) {}
+  } catch (err) {
+    dbReadError = err?.message || "StoneCache database query failed.";
+  }
 
+  // 2. Authoritative Postgres StoneProfile Lookup Second
+  if (!dbReadError) {
+    try {
+      for (const candidateLower of dbCandidateOrder) {
+        const profileGeo = await loadStoneProfileForName(candidateLower);
+        if (profileGeo) {
+          const profileResult = {
+            ...emptyGeo,
+            ...profileGeo,
+            tenacity: profileGeo.tenacity || "",
+            geological_age: profileGeo.geological_age || "",
+            geoSource: "database"
+          };
+          if (requireAuthoritativeDbOnly) {
+            Object.defineProperty(profileResult, "_dbLookupMeta", {
+              value: {
+                dbLookupComplete: true,
+                dbMatchedStoneName: candidateLower,
+                dbCandidatesTried: dbCandidateOrder,
+                dbReadError: null
+              },
+              enumerable: false
+            });
+          }
+          return profileResult;
+        }
+      }
+    } catch (err) {
+      dbReadError = err?.message || "StoneProfile database query failed.";
+    }
+  }
+
+  // If DB read failed or caller requires authoritative DB evidence only (Bench V2 replacement review),
+  // never fall back to static GEO_LIBRARY or Mindat to masquerade as verified DB truth.
+  if (dbReadError || requireAuthoritativeDbOnly) {
+    const authoritativeEmpty = { ...emptyGeo, geoSource: "none" };
+    Object.defineProperty(authoritativeEmpty, "_dbLookupMeta", {
+      value: {
+        dbLookupComplete: !dbReadError,
+        dbMatchedStoneName: null,
+        dbCandidatesTried: dbCandidateOrder,
+        dbReadError
+      },
+      enumerable: false
+    });
+    return authoritativeEmpty;
+  }
+
+  // 3. Non-Bench Fallback Only (when Postgres DB completed with 0 matching records): Local GEO_LIBRARY
   try {
-    const profileCandidateOrder = [];
-    const seenProfileLower = new Set();
+    const { lookupStone } = await import("../utils/geoLibrary.jsx");
+    let localResult = null;
     for (const candidate of fullCandidates) {
-      const candidateLower = candidate.toLowerCase().trim();
-      if (candidateLower && !seenProfileLower.has(candidateLower)) {
-        seenProfileLower.add(candidateLower);
-        profileCandidateOrder.push(candidateLower);
+      localResult = lookupStone(candidate);
+      if (localResult && Object.keys(localResult).length > 0) {
+        break;
       }
     }
-    if (search && !seenProfileLower.has(search)) {
-      seenProfileLower.add(search);
-      profileCandidateOrder.push(search);
+    if (!localResult && cleanStoneName && cleanStoneName !== "Unknown") {
+      localResult = lookupStone(cleanStoneName);
     }
-
-    for (const candidateLower of profileCandidateOrder) {
-      const profileGeo = await loadStoneProfileForName(candidateLower);
-      if (profileGeo) {
-        return {
-          ...emptyGeo,
-          ...profileGeo,
-          tenacity: profileGeo.tenacity || "",
-          geological_age: profileGeo.geological_age || "",
-          geoSource: "database"
-        };
-      }
+    if (localResult && Object.keys(localResult).length > 0) {
+      return {
+        mohs_hardness: localResult.moh_hardness || localResult.hardness || "",
+        luster: localResult.luster || "",
+        fracture_pattern: localResult.fracture_pattern || localResult.fracture || "",
+        cleavage: localResult.cleavage || "",
+        specific_gravity: localResult.specific_gravity || "",
+        diaphaneity: localResult.diaphaneity || "",
+        tenacity: localResult.tenacity || "",
+        crystal_system: localResult.crystal_system || "",
+        geological_era: localResult.geological_era || "",
+        mineral_class: localResult.mineral_class || "",
+        rock_composition: localResult.rock_composition || "",
+        rock_formation: localResult.rock_formation || "",
+        geological_age: localResult.geological_age || "",
+        geoSource: "library"
+      };
     }
   } catch (err) {}
 
+  // 4. Non-Bench Fallback Last: Mindat API
   try {
     if (MINDAT_API_KEY && cleanStoneName && cleanStoneName !== "Unknown") {
       const controller = new AbortController();
@@ -721,7 +776,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       );
       stripRetiredParkedProducerEntries(rawInputFacts, "PRODUCT");
 
-      const stoneIdentityContext = resolveVerifiedStoneIdentityContext(rawInputFacts, idOrigin.derivedFamily);
+      const stoneIdentityContext = resolveVerifiedStoneIdentityContext(rawInputFacts, idOrigin.derivedFamily, provenance);
       const effectiveStoneFamilyForScan = stoneIdentityContext.effectiveFamily || idOrigin.derivedFamily || "";
       const geoLookupCandidates = buildGeoLookupCandidates({
         idOrigin,
@@ -1035,7 +1090,11 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         provenance.passiveStoredSet.has("origin_location") &&
         !provenance.operatorLockedSet.has("origin_location");
 
-      const stoneIdentityContext = resolveVerifiedStoneIdentityContext(currentData, idOrigin.derivedFamily);
+      const stoneIdentityContext = resolveVerifiedStoneIdentityContext(
+        currentData,
+        idOrigin.derivedFamily,
+        provenance
+      );
       const effectiveFamily = stoneIdentityContext.effectiveFamily || idOrigin.derivedFamily || "";
       const effectiveOriginLoc = idOrigin.isOriginOperatorLocked
         ? idOrigin.originSegment
@@ -1051,7 +1110,8 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
       });
       const geoFields = await getGeoData(
         admin,
-        geoLookupCandidates.length > 0 ? geoLookupCandidates : effectiveFamily
+        geoLookupCandidates.length > 0 ? geoLookupCandidates : effectiveFamily,
+        { requireAuthoritativeDbOnly: isBenchV2OptIn }
       );
       const { pagesList, collectionsList } = await getLiveStoreDirectory(admin);
       const defaultOriginSlug = resolveOriginHandle(
@@ -1417,9 +1477,11 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           } else if (geoFields[key] !== undefined && geoFields[key] !== null && geoFields[key] !== "") {
             verifiedGeoValues[key] = geoFields[key];
             parsedVision[key] = geoFields[key];
-          } else if (currentData[key] !== undefined && currentData[key] !== "") {
+          } else if (currentData[key] !== undefined && currentData[key] !== "" && !isBenchV2OptIn) {
             verifiedGeoValues[key] = currentData[key];
             parsedVision[key] = currentData[key];
+          } else {
+            delete parsedVision[key];
           }
         });
 
@@ -1554,10 +1616,55 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           producerProposals = stripRetiredParkedProducerEntries(builtBenchV2.producerProposals, "PRODUCT");
           producerDiagnostics = stripRetiredParkedProducerEntries(builtBenchV2.producerDiagnostics, "PRODUCT");
 
+          producerDiagnostics = producerDiagnostics && typeof producerDiagnostics === "object"
+            ? producerDiagnostics
+            : {};
+
+          const dbMeta = geoFields?._dbLookupMeta || null;
+          const dbSourceLabel =
+            geoFields?.geoSource === "cache"
+              ? "StoneCache DB"
+              : geoFields?.geoSource === "database"
+                ? "StoneProfile DB"
+                : null;
+          const triedStoneLabel =
+            Array.isArray(dbMeta?.dbCandidatesTried) && dbMeta.dbCandidatesTried.length > 0
+              ? dbMeta.dbCandidatesTried.join(", ")
+              : (effectiveFamily || "unknown stone");
+
+          for (const [geoBareKey, destList] of Object.entries(BENCH_V2_DB_GEOLOGY_DESTINATIONS)) {
+            const hasDbGeoValue =
+              Boolean(dbSourceLabel) &&
+              typeof geoFields?.[geoBareKey] === "string" &&
+              geoFields[geoBareKey].trim() !== "";
+            if (hasDbGeoValue) continue;
+
+            const isCustomGeoLocked =
+              provenance.hasValidProvenance &&
+              provenance.operatorLockedSet.has(geoBareKey) &&
+              currentData[geoBareKey] !== undefined &&
+              String(currentData[geoBareKey]).trim() !== "";
+
+            let missingReason = "";
+            if (dbMeta?.dbReadError) {
+              missingReason = `Database geology query failed (${dbMeta.dbReadError}); held pending verified DB geology record (library/model guesses are not substituted).`;
+            } else if (!dbSourceLabel) {
+              missingReason = `No authoritative database geology record found in StoneCache or StoneProfile for "${triedStoneLabel}"; held pending verified DB record (library/model guesses are not substituted).`;
+            } else {
+              missingReason = `Authoritative ${dbSourceLabel} record for "${dbMeta?.dbMatchedStoneName || triedStoneLabel}" has no value for ${geoBareKey}; held blank pending verified DB evidence.`;
+            }
+
+            for (const destKey of destList) {
+              if (destKey.startsWith("custom.") && isCustomGeoLocked) {
+                continue;
+              }
+              if (!Object.prototype.hasOwnProperty.call(producerProposals, destKey)) {
+                producerDiagnostics[destKey] = missingReason;
+              }
+            }
+          }
+
           if (!hasValidVerifiedColorPatternChoices) {
-            producerDiagnostics = producerDiagnostics && typeof producerDiagnostics === "object"
-              ? producerDiagnostics
-              : {};
             producerDiagnostics["shopify.color-pattern"] = parsedVerifiedColorChoices.supplied
               ? (parsedVerifiedColorChoices.error ||
                   "Verified Shopify Color reference choices (verified_color_pattern_choices) were invalid or empty on this AI Scan request; standardized color-pattern candidate generation was omitted.")

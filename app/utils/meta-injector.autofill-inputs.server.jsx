@@ -154,6 +154,46 @@ export function resolvePicklistStoneFamily(rawFamily) {
   return cleaned;
 }
 
+function isConfirmedPicklistOrVarietyStoneIdentity(rawCandidate) {
+  if (typeof rawCandidate !== "string") return false;
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return false;
+  }
+
+  const options = DROPDOWN_OPTIONS?.stone_family || [];
+  const matchesPicklist = (str) => {
+    if (!str) return false;
+    const lower = str.toLowerCase().trim();
+    for (const opt of options) {
+      const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
+      if (val && val.toLowerCase().trim() === lower) return true;
+    }
+    return false;
+  };
+
+  if (matchesPicklist(cleaned)) return true;
+
+  const baseExtracted = extractStoneName(cleaned);
+  if (baseExtracted && baseExtracted !== "Unknown" && matchesPicklist(baseExtracted)) {
+    return true;
+  }
+
+  const strippedPrefix = getDerivedMaterial(cleaned);
+  if (strippedPrefix && strippedPrefix !== cleaned && matchesPicklist(strippedPrefix)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function resolveEvidencedOriginLocation(rawOrigin) {
   const raw = String(rawOrigin || "").trim();
   if (!raw || raw.toLowerCase() === "unknown origin" || raw.toLowerCase() === "unknown") {
@@ -348,18 +388,42 @@ export function parseIdentityAndOriginInputs(body, provenance = null) {
   const rawProductTitle = (body.get("productTitle") || "").trim();
   const rawPieceName = (body.get("pieceName") || body.get("piece_name") || "").trim();
   const rawHumanId = (body.get("humanPieceId") || "").trim();
-  const explicitStoneFamily = (body.get("stone_family") || "").trim();
-  const explicitOriginLocation = (body.get("origin_location") || "").trim();
-  const explicitOriginHandle = (body.get("origin_handle") || body.get("origin_page_handle") || "").trim();
-  const explicitCollectionName = (body.get("collection_name") || body.get("collectionName") || "").trim();
+  const rawPostedStoneFamily = (body.get("stone_family") || "").trim();
+  const rawPostedOriginLocation = (body.get("origin_location") || "").trim();
+  const rawPostedOriginHandle = (body.get("origin_handle") || body.get("origin_page_handle") || "").trim();
+  const rawPostedCollectionName = (body.get("collection_name") || body.get("collectionName") || "").trim();
   const rawFoundObject = body.get("found_object") ?? body.get("custom.found_object");
   const foundObjectPolarity = classifyFoundObjectPolarity(rawFoundObject);
 
   const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
   const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+  const passiveStoredSet = hasValidProvenance ? provenance.passiveStoredSet : new Set();
+
+  const isFieldPassiveOnly = (bareKey) =>
+    hasValidProvenance && passiveStoredSet.has(bareKey) && !operatorLockedSet.has(bareKey);
+
+  const isStoneFamilyOperatorLocked =
+    hasValidProvenance
+      ? operatorLockedSet.has("stone_family") && Boolean(rawPostedStoneFamily)
+      : Boolean(rawPostedStoneFamily);
+  const isOriginOperatorLocked =
+    hasValidProvenance
+      ? operatorLockedSet.has("origin_location") && Boolean(rawPostedOriginLocation)
+      : Boolean(rawPostedOriginLocation);
+  const isOriginHandleOperatorLocked =
+    hasValidProvenance
+      ? (operatorLockedSet.has("origin_handle") || operatorLockedSet.has("origin_page_handle")) && Boolean(rawPostedOriginHandle)
+      : Boolean(rawPostedOriginHandle);
+  const isCollectionNameOperatorLocked =
+    hasValidProvenance
+      ? operatorLockedSet.has("collection_name") && Boolean(rawPostedCollectionName)
+      : Boolean(rawPostedCollectionName);
+  const isFoundObjectOperatorLocked =
+    hasValidProvenance
+      ? operatorLockedSet.has("found_object") && Boolean(rawFoundObject && String(rawFoundObject).trim() !== "")
+      : Boolean(rawFoundObject && String(rawFoundObject).trim() !== "");
 
   const isPurchasedProvenance = foundObjectPolarity === "purchased";
-  const isOriginOperatorLocked = operatorLockedSet.has("origin_location") && Boolean(explicitOriginLocation);
 
   const productTitleSegments = splitSegmentedTitle(rawProductTitle);
   const pieceNameSegments = splitSegmentedTitle(rawPieceName);
@@ -390,15 +454,45 @@ export function parseIdentityAndOriginInputs(body, provenance = null) {
         ? productTitleSegments[1]
         : (hasSegmentedPieceName ? pieceNameSegments[1] : ""));
 
-  const validExplicitStoneFamily = !isSettingOrHardwareMediumValue(explicitStoneFamily) ? explicitStoneFamily : "";
-  const rawFamilySource = validExplicitStoneFamily || titleFamilyCandidate || "";
-  const derivedFamily = resolvePicklistStoneFamily(rawFamilySource);
-  const derivedShape = extractShapeFromString(rawFamilySource);
+  const validPostedStoneFamily = !isSettingOrHardwareMediumValue(rawPostedStoneFamily)
+    ? rawPostedStoneFamily
+    : "";
+  const validLockedStoneFamily = isStoneFamilyOperatorLocked ? validPostedStoneFamily : "";
+  const validPassiveStoneFamily =
+    !isStoneFamilyOperatorLocked && !isFieldPassiveOnly("stone_family")
+      ? validPostedStoneFamily
+      : (isFieldPassiveOnly("stone_family") ? validPostedStoneFamily : "");
 
-  const rawOriginSource = explicitOriginLocation || titleOriginCandidate || "";
+  // Explicit operator-locked stone_family takes priority; otherwise a 3-segment title
+  // family candidate leads over passive stored stone_family, falling back to passive if title has none.
+  const rawFamilySource =
+    validLockedStoneFamily ||
+    titleFamilyCandidate ||
+    validPassiveStoneFamily ||
+    "";
+  const derivedFamily = resolvePicklistStoneFamily(
+    !validLockedStoneFamily && titleFamilyCandidate && extractStoneName(titleFamilyCandidate) !== "Unknown"
+      ? extractStoneName(titleFamilyCandidate)
+      : rawFamilySource
+  ) || resolvePicklistStoneFamily(rawFamilySource);
+  const derivedShape =
+    extractShapeFromString(titleFamilyCandidate || rawFamilySource);
+
+  const rawOriginSource = isOriginOperatorLocked
+    ? rawPostedOriginLocation
+    : isPurchasedProvenance
+      ? (!isFieldPassiveOnly("origin_location") ? rawPostedOriginLocation : "")
+      : (titleOriginCandidate || rawPostedOriginLocation || "");
   const originSegment = isOriginOperatorLocked
-    ? explicitOriginLocation
+    ? rawPostedOriginLocation
     : resolveEvidencedOriginLocation(rawOriginSource);
+
+  const explicitOriginHandle = isOriginHandleOperatorLocked
+    ? rawPostedOriginHandle
+    : (!hasValidProvenance ? rawPostedOriginHandle : "");
+  const explicitCollectionName = isCollectionNameOperatorLocked
+    ? rawPostedCollectionName
+    : (!hasValidProvenance ? rawPostedCollectionName : "");
 
   return {
     rawTitleInput: rawProductTitle || rawPieceName,
@@ -410,14 +504,19 @@ export function parseIdentityAndOriginInputs(body, provenance = null) {
     derivedFamily,
     derivedShape,
     originSegment,
-    explicitStoneFamily: Boolean(validExplicitStoneFamily),
-    explicitOriginLocation: Boolean(explicitOriginLocation),
+    explicitStoneFamily: Boolean(validLockedStoneFamily),
+    explicitOriginLocation: Boolean(isOriginOperatorLocked),
     explicitOriginHandle,
     explicitCollectionName,
     rawFoundObject: rawFoundObject !== null && rawFoundObject !== undefined ? String(rawFoundObject).trim() : "",
     foundObjectPolarity,
     isPurchasedProvenance,
-    isOriginOperatorLocked
+    isOriginOperatorLocked,
+    isStoneFamilyOperatorLocked,
+    isFoundObjectOperatorLocked,
+    hasValidProvenance,
+    operatorLockedSet,
+    passiveStoredSet
   };
 }
 
@@ -455,10 +554,13 @@ export function buildGeoLookupCandidates({
   if (operatorLockedSet.has("material") && currentData.material) {
     pushCandidate(currentData.material);
   }
+  if (operatorLockedSet.has("primary_medium") && currentData.primary_medium) {
+    pushCandidate(currentData.primary_medium);
+  }
   if (operatorLockedSet.has("stone_family") && currentData.stone_family) {
     pushCandidate(currentData.stone_family);
   }
-  if (idOrigin?.titleStoneSegment) {
+  if (idOrigin?.titleStoneSegment && isConfirmedPicklistOrVarietyStoneIdentity(idOrigin.titleStoneSegment)) {
     pushCandidate(idOrigin.titleStoneSegment);
   }
   if (stoneIdentityContext?.effectiveMaterial) {
@@ -474,10 +576,17 @@ export function buildGeoLookupCandidates({
   return candidates;
 }
 
-export function resolveVerifiedStoneIdentityContext(inputs = {}, derivedTitleFamily = "") {
+export function resolveVerifiedStoneIdentityContext(inputs = {}, derivedTitleFamily = "", provenance = null) {
   const rawStoneFamily = String(inputs.stone_family || "").trim();
   const rawMaterial = String(inputs.material || "").trim();
   const rawPrimaryMedium = String(inputs.primary_medium || "").trim();
+
+  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
+  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+  const passiveStoredSet = hasValidProvenance ? provenance.passiveStoredSet : new Set();
+
+  const isPassiveOnly = (k) =>
+    hasValidProvenance && passiveStoredSet.has(k) && !operatorLockedSet.has(k);
 
   const familyIsHardware = isSettingOrHardwareMediumValue(rawStoneFamily);
   const materialIsHardware = isSettingOrHardwareMediumValue(rawMaterial);
@@ -486,25 +595,40 @@ export function resolveVerifiedStoneIdentityContext(inputs = {}, derivedTitleFam
   const validStoneFamily = !familyIsHardware && rawStoneFamily
     ? resolvePicklistStoneFamily(rawStoneFamily)
     : "";
-  const validMaterial = !materialIsHardware && rawMaterial ? rawMaterial : "";
-  const validPrimaryMedium = !primaryMediumIsHardware && rawPrimaryMedium ? rawPrimaryMedium : "";
+  const validMaterial = !materialIsHardware && rawMaterial && !isGenericBareStoneProposal(rawMaterial)
+    ? rawMaterial
+    : "";
+  const validPrimaryMedium = !primaryMediumIsHardware && rawPrimaryMedium && !isGenericBareStoneProposal(rawPrimaryMedium)
+    ? rawPrimaryMedium
+    : "";
   const validDerivedTitleFamily = !isSettingOrHardwareMediumValue(derivedTitleFamily) && derivedTitleFamily
     ? resolvePicklistStoneFamily(derivedTitleFamily)
     : "";
 
+  const lockedStoneFamily = !isPassiveOnly("stone_family") ? validStoneFamily : "";
+  const lockedMaterial = !isPassiveOnly("material") ? validMaterial : "";
+  const lockedPrimaryMedium = !isPassiveOnly("primary_medium") ? validPrimaryMedium : "";
+
   const effectiveFamily =
-    validStoneFamily ||
+    lockedStoneFamily ||
     validDerivedTitleFamily ||
+    (lockedMaterial ? resolvePicklistStoneFamily(lockedMaterial) : "") ||
+    (lockedPrimaryMedium ? resolvePicklistStoneFamily(lockedPrimaryMedium) : "") ||
+    validStoneFamily ||
     (validMaterial ? resolvePicklistStoneFamily(validMaterial) : "") ||
     (validPrimaryMedium ? resolvePicklistStoneFamily(validPrimaryMedium) : "");
 
   const effectiveMaterial =
+    lockedMaterial ||
+    lockedPrimaryMedium ||
     validMaterial ||
     validPrimaryMedium ||
     effectiveFamily ||
     "";
 
   const effectivePrimaryMedium =
+    lockedPrimaryMedium ||
+    lockedMaterial ||
     validPrimaryMedium ||
     validMaterial ||
     effectiveFamily ||
@@ -785,26 +909,11 @@ export function validateStandardizedCandidates(rawCandidates, currentData = {}) 
 
   for (const attrKey of ALLOWED_STANDARDIZED_CANDIDATE_KEYS) {
     const underscoreKey = attrKey.replace(/-/g, "_");
-    const existingStdVal =
-      currentData?.[`shopify.${attrKey}`] ??
-      currentData?.[`std_${underscoreKey}`];
-
-    let hasExistingAssignment = false;
-    if (existingStdVal !== undefined && existingStdVal !== null) {
-      const strVal = String(existingStdVal).trim();
-      if (strVal !== "" && strVal !== "[]" && !INVALID_CANDIDATE_FILLERS.has(strVal.toLowerCase())) {
-        hasExistingAssignment = true;
-      }
-    }
 
     const explicitEntry =
       explicitCorrections?.[attrKey] ??
       currentData?.[`candidate_${attrKey}`] ??
       currentData?.[`candidate_${underscoreKey}`];
-
-    if (hasExistingAssignment && !explicitEntry) {
-      continue;
-    }
 
     const entryToValidate = explicitEntry !== undefined ? explicitEntry : sourceObj?.[attrKey];
     if (!entryToValidate) continue;
@@ -936,6 +1045,26 @@ export function buildBenchV2ProducerProposals({
   const producerProposals = {};
   const producerDiagnostics = {};
 
+  const provenance =
+    idOrigin && typeof idOrigin === "object" && idOrigin.operatorLockedSet instanceof Set
+      ? {
+          hasValidProvenance: Boolean(idOrigin.hasValidProvenance),
+          operatorLockedSet: idOrigin.operatorLockedSet,
+          passiveStoredSet:
+            idOrigin.passiveStoredSet instanceof Set ? idOrigin.passiveStoredSet : new Set()
+        }
+      : resolveTab3FieldProvenance(body);
+
+  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
+  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+
+  const isBareFieldOperatorLocked = (bareKey) =>
+    hasValidProvenance
+      ? operatorLockedSet.has(bareKey) &&
+        currentData[bareKey] !== undefined &&
+        String(currentData[bareKey]).trim() !== ""
+      : false;
+
   const isAllowedDestinationSpecificFiller = (destOrBareKey, cleanedVal) => {
     if (typeof cleanedVal !== "string") return false;
     if (
@@ -1023,6 +1152,11 @@ export function buildBenchV2ProducerProposals({
     idOrigin?.hasSegmentedTitle && rawTitleSegments.length >= 3
       ? rawTitleSegments[0]
       : "";
+  const cleanTitleStoneVariety =
+    idOrigin?.titleStoneSegment &&
+    isConfirmedPicklistOrVarietyStoneIdentity(idOrigin.titleStoneSegment)
+      ? idOrigin.titleStoneSegment
+      : "";
 
   // 1. Segmented Product Title Piece Name
   if (idOrigin.hasSegmentedTitle && idOrigin.preservedPieceName) {
@@ -1041,38 +1175,14 @@ export function buildBenchV2ProducerProposals({
   const rawVisPrimaryMedium = cleanNonBlankVisionStr(rawVisionSnapshot.primary_medium);
   const rawVisStoneFamily = cleanNonBlankVisionStr(rawVisionSnapshot.stone_family);
 
-  if (
-    rawVisMaterial &&
-    !isGenericBareStoneProposal(rawVisMaterial) &&
-    !isSettingOrHardwareMediumValue(rawVisMaterial)
-  ) {
-    addProposal("custom.material", rawVisMaterial, "Gemini Vision (material)");
-  } else if (
-    rawVisPrimaryMedium &&
-    !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
-    !isSettingOrHardwareMediumValue(rawVisPrimaryMedium)
-  ) {
-    const isDistinctVarietyOrConfirmedStone =
-      !rawVisStoneFamily ||
-      rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFamily.toLowerCase() ||
-      Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
-    if (isDistinctVarietyOrConfirmedStone) {
-      addProposal(
-        "custom.material",
-        rawVisPrimaryMedium,
-        "Gemini Vision (primary_medium stone variety)"
-      );
-    }
-  }
-
-  // Base Stone Family (custom.stone_family) — strictly independent from custom.material
   const normalizedVisStoneFamily = rawVisStoneFamily
     ? resolvePicklistStoneFamily(rawVisStoneFamily)
     : "";
   const titleDerivedStoneFamily =
     !idOrigin.explicitStoneFamily &&
     idOrigin.hasSegmentedTitle &&
-    rawTitleStoneSegment
+    rawTitleStoneSegment &&
+    isConfirmedPicklistOrVarietyStoneIdentity(rawTitleStoneSegment)
       ? resolvePicklistStoneFamily(
           extractStoneName(rawTitleStoneSegment) !== "Unknown"
             ? extractStoneName(rawTitleStoneSegment)
@@ -1080,26 +1190,98 @@ export function buildBenchV2ProducerProposals({
         )
       : "";
 
-  if (
-    normalizedVisStoneFamily &&
-    !isGenericBareStoneProposal(normalizedVisStoneFamily) &&
-    !isSettingOrHardwareMediumValue(normalizedVisStoneFamily)
-  ) {
-    addProposal(
-      "custom.stone_family",
-      normalizedVisStoneFamily,
-      "Gemini Vision (stone_family)"
-    );
-  } else if (
-    titleDerivedStoneFamily &&
-    !isGenericBareStoneProposal(titleDerivedStoneFamily) &&
-    !isSettingOrHardwareMediumValue(titleDerivedStoneFamily)
-  ) {
-    addProposal(
-      "custom.stone_family",
-      titleDerivedStoneFamily,
-      "Title Segment Parse (3-Segment Product Title)"
-    );
+  const effectiveBaseFamily =
+    (idOrigin.explicitStoneFamily && currentData.stone_family
+      ? resolvePicklistStoneFamily(currentData.stone_family)
+      : "") ||
+    normalizedVisStoneFamily ||
+    titleDerivedStoneFamily ||
+    "";
+
+  // If Vision echoed a bare base family (e.g. "Jasper") while the 3-segment title carries
+  // a more specific confirmed stone variety of that same family (e.g. "Brecciated Jasper"),
+  // prefer the specific stone variety for custom.material while keeping custom.stone_family
+  // as the normalized base family.
+  const isTitleVarietyMoreSpecificThanVision = Boolean(
+    cleanTitleStoneVariety &&
+    effectiveBaseFamily &&
+    cleanTitleStoneVariety.toLowerCase() !== effectiveBaseFamily.toLowerCase() &&
+    resolvePicklistStoneFamily(
+      extractStoneName(cleanTitleStoneVariety) !== "Unknown"
+        ? extractStoneName(cleanTitleStoneVariety)
+        : cleanTitleStoneVariety
+    ).toLowerCase() === effectiveBaseFamily.toLowerCase()
+  );
+
+  if (!isBareFieldOperatorLocked("material")) {
+    if (
+      rawVisMaterial &&
+      !isGenericBareStoneProposal(rawVisMaterial) &&
+      !isSettingOrHardwareMediumValue(rawVisMaterial) &&
+      !(
+        isTitleVarietyMoreSpecificThanVision &&
+        rawVisMaterial.toLowerCase() === effectiveBaseFamily.toLowerCase()
+      )
+    ) {
+      addProposal("custom.material", rawVisMaterial, "Gemini Vision (material)");
+    } else if (
+      rawVisPrimaryMedium &&
+      !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
+      !isSettingOrHardwareMediumValue(rawVisPrimaryMedium) &&
+      !(
+        isTitleVarietyMoreSpecificThanVision &&
+        rawVisPrimaryMedium.toLowerCase() === effectiveBaseFamily.toLowerCase()
+      )
+    ) {
+      const isDistinctVarietyOrConfirmedStone =
+        !rawVisStoneFamily ||
+        rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFamily.toLowerCase() ||
+        Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
+      if (isDistinctVarietyOrConfirmedStone) {
+        addProposal(
+          "custom.material",
+          rawVisPrimaryMedium,
+          "Gemini Vision (primary_medium stone variety)"
+        );
+      } else if (cleanTitleStoneVariety) {
+        addProposal(
+          "custom.material",
+          cleanTitleStoneVariety,
+          "Title Segment Parse (3-Segment Product Title)"
+        );
+      }
+    } else if (cleanTitleStoneVariety) {
+      addProposal(
+        "custom.material",
+        cleanTitleStoneVariety,
+        "Title Segment Parse (3-Segment Product Title)"
+      );
+    }
+  }
+
+  // Base Stone Family (custom.stone_family) — strictly independent from custom.material
+  if (!isBareFieldOperatorLocked("stone_family")) {
+    if (
+      normalizedVisStoneFamily &&
+      !isGenericBareStoneProposal(normalizedVisStoneFamily) &&
+      !isSettingOrHardwareMediumValue(normalizedVisStoneFamily)
+    ) {
+      addProposal(
+        "custom.stone_family",
+        normalizedVisStoneFamily,
+        "Gemini Vision (stone_family)"
+      );
+    } else if (
+      titleDerivedStoneFamily &&
+      !isGenericBareStoneProposal(titleDerivedStoneFamily) &&
+      !isSettingOrHardwareMediumValue(titleDerivedStoneFamily)
+    ) {
+      addProposal(
+        "custom.stone_family",
+        titleDerivedStoneFamily,
+        "Title Segment Parse (3-Segment Product Title)"
+      );
+    }
   }
 
   // 3. Intentional Distinct OOAK Destinations
@@ -1215,7 +1397,7 @@ export function buildBenchV2ProducerProposals({
       ? idOrigin.originSegment
       : "";
 
-  if (!idOrigin.isPurchasedProvenance) {
+  if (!idOrigin.isPurchasedProvenance && !isBareFieldOperatorLocked("origin_location")) {
     if (rawVisOriginLoc) {
       const resolvedVisOrigin = resolveEvidencedOriginLocation(rawVisOriginLoc);
       if (resolvedVisOrigin) {
@@ -1235,70 +1417,86 @@ export function buildBenchV2ProducerProposals({
   }
 
   const producedOriginLocForRouting =
-    producerProposals["custom.origin_location"]?.value || "";
+    producerProposals["custom.origin_location"]?.value ||
+    (idOrigin.isOriginOperatorLocked ? idOrigin.originSegment : "") ||
+    "";
   const rawVisOriginHandle = cleanNonBlankVisionStr(
     rawVisionSnapshot.origin_page_handle ?? rawVisionSnapshot.origin_handle
   );
-  if (rawVisOriginHandle) {
-    const verifiedVisHandle = resolveOriginHandle(
-      producedOriginLocForRouting,
-      pagesList,
-      rawVisOriginHandle
-    );
-    if (verifiedVisHandle) {
-      addProposal(
-        "custom.origin_page_handle",
-        verifiedVisHandle,
-        "Gemini Vision + Store Page Directory"
+  if (
+    !isBareFieldOperatorLocked("origin_page_handle") &&
+    !isBareFieldOperatorLocked("origin_handle")
+  ) {
+    if (rawVisOriginHandle) {
+      const verifiedVisHandle = resolveOriginHandle(
+        producedOriginLocForRouting,
+        pagesList,
+        rawVisOriginHandle
       );
-    }
-  } else if (producedOriginLocForRouting && !idOrigin.explicitOriginHandle) {
-    const derivedHandleFromProducedOrigin = resolveOriginHandle(
-      producedOriginLocForRouting,
-      pagesList
-    );
-    if (derivedHandleFromProducedOrigin) {
-      addProposal(
-        "custom.origin_page_handle",
-        derivedHandleFromProducedOrigin,
-        "Store Page Directory Resolution"
+      if (verifiedVisHandle) {
+        addProposal(
+          "custom.origin_page_handle",
+          verifiedVisHandle,
+          "Gemini Vision + Store Page Directory"
+        );
+      }
+    } else if (producedOriginLocForRouting && !idOrigin.explicitOriginHandle) {
+      const derivedHandleFromProducedOrigin = resolveOriginHandle(
+        producedOriginLocForRouting,
+        pagesList
       );
+      if (derivedHandleFromProducedOrigin) {
+        addProposal(
+          "custom.origin_page_handle",
+          derivedHandleFromProducedOrigin,
+          "Store Page Directory Resolution"
+        );
+      }
     }
   }
 
   const rawVisColName = cleanNonBlankVisionStr(rawVisionSnapshot.collection_name);
-  if (rawVisColName && collectionsList.some(c => c.title.toLowerCase() === rawVisColName.toLowerCase() || c.handle.toLowerCase() === rawVisColName.toLowerCase())) {
-    const matchedCol = resolveCollectionData("", "", collectionsList, rawVisColName);
-    if (matchedCol.name) {
-      addProposal(
-        "custom.collection_name",
-        matchedCol.name,
-        "Gemini Vision + Store Collection Directory"
+  if (!isBareFieldOperatorLocked("collection_name")) {
+    if (
+      rawVisColName &&
+      collectionsList.some(
+        c =>
+          c.title.toLowerCase() === rawVisColName.toLowerCase() ||
+          c.handle.toLowerCase() === rawVisColName.toLowerCase()
+      )
+    ) {
+      const matchedCol = resolveCollectionData("", "", collectionsList, rawVisColName);
+      if (matchedCol.name) {
+        addProposal(
+          "custom.collection_name",
+          matchedCol.name,
+          "Gemini Vision + Store Collection Directory"
+        );
+      }
+    } else if (
+      !idOrigin.isPurchasedProvenance &&
+      !idOrigin.explicitCollectionName &&
+      producedOriginLocForRouting
+    ) {
+      const matchedColFromOrigin = resolveCollectionData(
+        producedOriginLocForRouting,
+        producerProposals["custom.origin_page_handle"]?.value || "",
+        collectionsList
       );
-    }
-  } else if (
-    !idOrigin.isPurchasedProvenance &&
-    !idOrigin.explicitCollectionName &&
-    producedOriginLocForRouting
-  ) {
-    const matchedColFromOrigin = resolveCollectionData(
-      producedOriginLocForRouting,
-      producerProposals["custom.origin_page_handle"]?.value || "",
-      collectionsList
-    );
-    if (matchedColFromOrigin.name) {
-      addProposal(
-        "custom.collection_name",
-        matchedColFromOrigin.name,
-        "Store Collection Directory Resolution"
-      );
+      if (matchedColFromOrigin.name) {
+        addProposal(
+          "custom.collection_name",
+          matchedColFromOrigin.name,
+          "Store Collection Directory Resolution"
+        );
+      }
     }
   }
 
   const rawVisColLoc = cleanNonBlankVisionStr(rawVisionSnapshot.collection_location);
   const producedCollectionName =
     producerProposals["custom.collection_name"]?.value || "";
-  if (!idOrigin.isPurchasedProvenance) {
+  if (!idOrigin.isPurchasedProvenance && !isBareFieldOperatorLocked("collection_location")) {
     if (rawVisColLoc) {
       const mappedVisColLoc = mapCollectionLocation(rawVisColLoc);
       if (mappedVisColLoc) {
@@ -1323,24 +1521,32 @@ export function buildBenchV2ProducerProposals({
   }
 
   const rawVisFoundObj = cleanNonBlankVisionStr(rawVisionSnapshot.found_object);
-  const callerSuppliedFoundObj =
-    currentData.found_object !== undefined && currentData.found_object !== "";
-  if (rawVisFoundObj && !callerSuppliedFoundObj) {
-    addProposal("custom.found_object", rawVisFoundObj, "Gemini Vision (found_object)");
+  const isFoundObjLocked =
+    Boolean(idOrigin.isFoundObjectOperatorLocked) || isBareFieldOperatorLocked("found_object");
+  const hasStoredFoundObj =
+    currentData.found_object !== undefined && String(currentData.found_object).trim() !== "";
+  if (rawVisFoundObj && !isFoundObjLocked) {
+    const storedPolarity = classifyFoundObjectPolarity(currentData.found_object);
+    const visPolarity = classifyFoundObjectPolarity(rawVisFoundObj);
+    const flipsEstablishedPolarity =
+      hasStoredFoundObj &&
+      storedPolarity !== "unknown" &&
+      visPolarity !== "unknown" &&
+      storedPolarity !== visPolarity;
+    if (!flipsEstablishedPolarity) {
+      addProposal("custom.found_object", rawVisFoundObj, "Gemini Vision (found_object)");
+    }
   }
 
   // 5. Treatment Batch 1 Destinations
   const rawVisTreated = cleanNonBlankVisionStr(rawVisionSnapshot.treated);
-  if (rawVisTreated && rawVisTreated !== currentData.treated) {
+  if (rawVisTreated && !isBareFieldOperatorLocked("treated")) {
     addProposal("custom.treated", rawVisTreated, "Gemini Vision (treated)");
   }
   const rawVisTreatmentStatus = cleanNonBlankVisionStr(
     rawVisionSnapshot.treatment_status
   );
-  if (
-    rawVisTreatmentStatus &&
-    rawVisTreatmentStatus !== currentData.treatment_status
-  ) {
+  if (rawVisTreatmentStatus && !isBareFieldOperatorLocked("treatment_status")) {
     addProposal(
       "custom.treatment_status",
       rawVisTreatmentStatus,
@@ -1350,7 +1556,7 @@ export function buildBenchV2ProducerProposals({
 
   // 6. Appearance and Character Batch 1 Destinations
   const rawVisCutAndShape = cleanNonBlankVisionStr(rawVisionSnapshot.cut_and_shape);
-  if (rawVisCutAndShape) {
+  if (rawVisCutAndShape && !isBareFieldOperatorLocked("cut_and_shape")) {
     addProposal(
       "custom.cut_and_shape",
       rawVisCutAndShape,
@@ -1360,27 +1566,29 @@ export function buildBenchV2ProducerProposals({
 
   const rawVisStoneShape = cleanNonBlankVisionStr(rawVisionSnapshot.stone_shape);
   const titleDerivedShape =
-    !idOrigin.explicitStoneFamily &&
+    !isBareFieldOperatorLocked("stone_shape") &&
     idOrigin.hasSegmentedTitle &&
     rawTitleStoneSegment
       ? extractShapeFromString(rawTitleStoneSegment)
       : "";
-  if (rawVisStoneShape) {
-    addProposal(
-      "custom.stone_shape",
-      rawVisStoneShape,
-      "Gemini Vision (stone_shape)"
-    );
-  } else if (titleDerivedShape) {
-    addProposal(
-      "custom.stone_shape",
-      titleDerivedShape,
-      "Title Segment Parse (3-Segment Product Title)"
-    );
+  if (!isBareFieldOperatorLocked("stone_shape")) {
+    if (rawVisStoneShape) {
+      addProposal(
+        "custom.stone_shape",
+        rawVisStoneShape,
+        "Gemini Vision (stone_shape)"
+      );
+    } else if (titleDerivedShape) {
+      addProposal(
+        "custom.stone_shape",
+        titleDerivedShape,
+        "Title Segment Parse (3-Segment Product Title)"
+      );
+    }
   }
 
   const rawVisSurfaceFinish = cleanNonBlankVisionStr(rawVisionSnapshot.surface_finish);
-  if (rawVisSurfaceFinish) {
+  if (rawVisSurfaceFinish && !isBareFieldOperatorLocked("surface_finish")) {
     addProposal(
       "custom.surface_finish",
       rawVisSurfaceFinish,
@@ -1389,7 +1597,7 @@ export function buildBenchV2ProducerProposals({
   }
 
   const rawVisColor = cleanNonBlankVisionStr(rawVisionSnapshot.color);
-  if (rawVisColor) {
+  if (rawVisColor && !isBareFieldOperatorLocked("color")) {
     addProposal(
       "custom.color",
       rawVisColor,
@@ -1398,7 +1606,7 @@ export function buildBenchV2ProducerProposals({
   }
 
   const rawVisPrimaryColor = cleanNonBlankVisionStr(rawVisionSnapshot.primary_color);
-  if (rawVisPrimaryColor) {
+  if (rawVisPrimaryColor && !isBareFieldOperatorLocked("primary_color")) {
     addProposal(
       "custom.primary_color",
       rawVisPrimaryColor,
@@ -1409,7 +1617,7 @@ export function buildBenchV2ProducerProposals({
   const rawVisSecondaryColors = cleanNonBlankVisionStr(
     rawVisionSnapshot.secondary_colors
   );
-  if (rawVisSecondaryColors) {
+  if (rawVisSecondaryColors && !isBareFieldOperatorLocked("secondary_colors")) {
     addProposal(
       "custom.secondary_colors",
       rawVisSecondaryColors,
@@ -1418,7 +1626,7 @@ export function buildBenchV2ProducerProposals({
   }
 
   const rawVisColorPattern = cleanNonBlankVisionStr(rawVisionSnapshot.color_pattern);
-  if (rawVisColorPattern) {
+  if (rawVisColorPattern && !isBareFieldOperatorLocked("color_pattern")) {
     addProposal(
       "custom.color_pattern",
       rawVisColorPattern,
@@ -1439,6 +1647,7 @@ export function buildBenchV2ProducerProposals({
   ];
 
   for (const hwKey of DRAWER_6_HARDWARE_KEYS) {
+    if (isBareFieldOperatorLocked(hwKey)) continue;
     const rawHwVal = rawVisionSnapshot[hwKey];
     const cleanHwStr =
       typeof rawHwVal === "boolean"
@@ -1503,11 +1712,13 @@ export function buildBenchV2ProducerProposals({
 
       const geoSourceLabel = resolveGeologySourceLabel(geoKey);
 
-      addProposal(
-        `custom.${geoKey}`,
-        cleanGeoStr,
-        geoSourceLabel
-      );
+      if (!isBareFieldOperatorLocked(geoKey)) {
+        addProposal(
+          `custom.${geoKey}`,
+          cleanGeoStr,
+          geoSourceLabel
+        );
+      }
 
       if (Object.prototype.hasOwnProperty.call(PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP, geoKey)) {
         addStandardizedGeologyCandidate(
@@ -1523,7 +1734,7 @@ export function buildBenchV2ProducerProposals({
   const rawVisGoogleCat = cleanNonBlankVisionStr(
     rawVisionSnapshot.google_product_category
   );
-  if (rawVisGoogleCat) {
+  if (rawVisGoogleCat && !isBareFieldOperatorLocked("google_product_category")) {
     addProposal(
       "custom.google_product_category",
       rawVisGoogleCat,
@@ -1533,14 +1744,15 @@ export function buildBenchV2ProducerProposals({
 
   // 10. Drawer 9 Independent SEO Title Destinations (native_seo_title & custom.seo_title)
   const rawVisSeoTitle = cleanNonBlankVisionStr(rawVisionSnapshot.seo_title);
-  if (rawVisSeoTitle) {
+  if (rawVisSeoTitle && !isBareFieldOperatorLocked("seo_title")) {
     let candidateSeoTitle = rawVisSeoTitle;
     let seoTitleSource = "Gemini Vision (seo_title)";
 
     if (idOrigin.isPurchasedProvenance && hasRiverOrFieldCollectionClaim(candidateSeoTitle)) {
       const stoneIdentityContextForSeo = resolveVerifiedStoneIdentityContext(
         currentData,
-        idOrigin.derivedFamily
+        idOrigin.derivedFamily,
+        provenance
       );
       const effectiveStoneFamilyForSeo =
         stoneIdentityContextForSeo.effectiveFamily ||

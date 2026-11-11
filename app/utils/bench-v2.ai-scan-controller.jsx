@@ -273,19 +273,29 @@ export function resolveProducerBackedGeologyReferenceCandidate({
     };
   }
 
-  const mergedGids = [...existingGids];
+  const resolvedOnlyGids = [];
   const matchedLabelsList = [];
   for (const ev of labelEvaluations) {
     const selectedGid = ev.selectedEntry.id;
-    if (!mergedGids.includes(selectedGid)) {
-      mergedGids.push(selectedGid);
+    if (!resolvedOnlyGids.includes(selectedGid)) {
+      resolvedOnlyGids.push(selectedGid);
     }
     matchedLabelsList.push(
       `${ev.selectedEntry.label || displayLabel} (${selectedGid})`
     );
   }
 
-  const serializedGidArray = JSON.stringify(mergedGids);
+  if (resolvedOnlyGids.length === 0) {
+    return {
+      status: "held_unmatched_or_ambiguous",
+      displayLabel,
+      reason: `Candidate "${displayLabel}" resolved to 0 verified Metaobject entries on ${destKey}.`
+    };
+  }
+
+  const resolvedSet = new Set(resolvedOnlyGids);
+  const omitsAnyStoredGid = existingGids.some((g) => !resolvedSet.has(g));
+  const serializedGidArray = JSON.stringify(resolvedOnlyGids);
 
   const baselineWithVerifiedRef =
     targetBaseline.verifiedReferenceEntriesByDestination?.[destKey]
@@ -302,7 +312,8 @@ export function resolveProducerBackedGeologyReferenceCandidate({
     productId,
     destinationKey: destKey,
     proposedValue: serializedGidArray,
-    baselineSnapshot: baselineWithVerifiedRef
+    baselineSnapshot: baselineWithVerifiedRef,
+    allowExplicitReferenceListReplacement: omitsAnyStoredGid
   });
 
   if (!validation.valid) {
@@ -318,6 +329,7 @@ export function resolveProducerBackedGeologyReferenceCandidate({
       status: "unchanged_from_baseline",
       displayLabel,
       serializedValue: validation.normalizedValue,
+      allowExplicitReferenceListReplacement: false,
       matchedSummary: matchedLabelsList.join(", "),
       reason: validation.reason
     };
@@ -327,6 +339,9 @@ export function resolveProducerBackedGeologyReferenceCandidate({
     status: "resolved_valid_change",
     displayLabel,
     serializedValue: validation.normalizedValue,
+    allowExplicitReferenceListReplacement: Boolean(
+      omitsAnyStoredGid && validation.allowExplicitReferenceListReplacement === true
+    ),
     matchedSummary: matchedLabelsList.join(", "),
     reason: null
   };
@@ -888,7 +903,7 @@ export function useBenchV2AiScanController({
       buildStandardizedBaselineContextSignature(rawTargetBaseline);
 
     const existingProdProposals = { ...(proposedByProductRef.current[scannedProductId] || {}) };
-    const existingProdApprovals = approvalsByProductRef.current[scannedProductId] || {};
+    const existingProdApprovals = { ...(approvalsByProductRef.current[scannedProductId] || {}) };
     const existingProdKeepOriginal = keepOriginalByProductRef.current[scannedProductId] || {};
     const nextAiAlternativesForProd = {};
     const proposalsByDestination = {};
@@ -911,8 +926,19 @@ export function useBenchV2AiScanController({
       destKey,
       normalizedValue,
       reportedSource,
-      displayNote = ""
+      displayNote = "",
+      allowExplicitReferenceListReplacement = false
     }) => {
+      const contractForDest = getFieldContractByDestination(destKey);
+      const shouldBindReplacementIntent = Boolean(
+        allowExplicitReferenceListReplacement === true &&
+          contractForDest?.namespace === "shopify" &&
+          contractForDest?.expectedType === "list.metaobject_reference" &&
+          contractForDest?.isWritableInBatch1 === true &&
+          typeof normalizedValue === "string" &&
+          normalizedValue.trim() !== ""
+      );
+
       const existingDraft = existingProdProposals[destKey];
       const existingDraftVal = getProposalValueString(existingDraft);
       const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
@@ -955,7 +981,11 @@ export function useBenchV2AiScanController({
       const formattedSuffix = displayNote ? ` [${displayNote}]` : "";
 
       if (hasProtectedHumanState) {
-        if (existingDraftVal === normalizedValue && !hasValidKeepOriginal) {
+        if (
+          existingDraftVal === normalizedValue &&
+          existingAllowReplacement === shouldBindReplacementIntent &&
+          !hasValidKeepOriginal
+        ) {
           proposalsByDestination[destKey] = {
             value: normalizedValue,
             source: reportedSource,
@@ -970,6 +1000,12 @@ export function useBenchV2AiScanController({
         nextAiAlternativesForProd[destKey] = {
           value: normalizedValue,
           source: reportedSource,
+          ...(shouldBindReplacementIntent
+            ? {
+                allowExplicitReferenceListReplacement: true,
+                explicitReplacementValue: normalizedValue
+              }
+            : {}),
           requestId: pendingScan.requestId,
           receivedAt: new Date().toISOString()
         };
@@ -984,10 +1020,20 @@ export function useBenchV2AiScanController({
         return;
       }
 
+      if (existingProdApprovals[destKey]) {
+        delete existingProdApprovals[destKey];
+      }
+
       existingProdProposals[destKey] = {
         value: normalizedValue,
         source: reportedSource,
         origin: "AI",
+        ...(shouldBindReplacementIntent
+          ? {
+              allowExplicitReferenceListReplacement: true,
+              explicitReplacementValue: normalizedValue
+            }
+          : {}),
         updatedAt: new Date().toISOString()
       };
       stagedCount++;
@@ -1019,7 +1065,7 @@ export function useBenchV2AiScanController({
           ? entry.source.trim()
           : "Source not reported";
 
-      // Check for the 4 producer-backed geology reference companions and 6 Vision standardized candidates
+      // Check for the 4 producer-backed geology reference companions and 7 Vision standardized candidates
       const isGeologyRefCandidateShape = Boolean(
         entry &&
           typeof entry === "object" &&
@@ -1121,7 +1167,10 @@ export function useBenchV2AiScanController({
             destKey,
             normalizedValue: resolution.serializedValue,
             reportedSource,
-            displayNote: `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`
+            displayNote: `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`,
+            allowExplicitReferenceListReplacement: Boolean(
+              resolution.allowExplicitReferenceListReplacement
+            )
           });
           continue;
         }
@@ -1184,11 +1233,43 @@ export function useBenchV2AiScanController({
 
       receivedCount++;
 
+      let directProposalReplacementIntent = Boolean(
+        entry &&
+          typeof entry === "object" &&
+          entry.allowExplicitReferenceListReplacement === true &&
+          typeof entry.explicitReplacementValue === "string" &&
+          entry.explicitReplacementValue === rawValue
+      );
+
+      if (
+        !directProposalReplacementIntent &&
+        contract.namespace === "shopify" &&
+        contract.expectedType === "list.metaobject_reference" &&
+        targetBaseline
+      ) {
+        const baselineObsForDirect = buildBaselineObservation(targetBaseline, destKey);
+        const storedCheckForDirect = inspectStoredReferenceListRawValue(
+          baselineObsForDirect.rawValue
+        );
+        const proposedCheckForDirect = inspectStoredReferenceListRawValue(rawValue);
+        if (
+          storedCheckForDirect.valid &&
+          proposedCheckForDirect.valid &&
+          proposedCheckForDirect.gids.length > 0
+        ) {
+          const proposedSetForDirect = new Set(proposedCheckForDirect.gids);
+          directProposalReplacementIntent = storedCheckForDirect.gids.some(
+            (g) => !proposedSetForDirect.has(g)
+          );
+        }
+      }
+
       const validation = validateBatch1ProposedValue({
         productId: scannedProductId,
         destinationKey: destKey,
         proposedValue: rawValue,
-        baselineSnapshot: targetBaseline
+        baselineSnapshot: targetBaseline,
+        allowExplicitReferenceListReplacement: directProposalReplacementIntent
       });
 
       if (!validation.valid) {
@@ -1199,6 +1280,7 @@ export function useBenchV2AiScanController({
           disposition: "Rejected (invalid)",
           reason: validation.reason
         };
+        diagnosticsObj[destKey] = validation.reason;
         details.push(
           `[${destKey}] Rejected invalid AI suggestion "${rawValue}" (Source: ${reportedSource}): ${validation.reason}`
         );
@@ -1221,13 +1303,30 @@ export function useBenchV2AiScanController({
       stageOrHoldResolvedProposal({
         destKey,
         normalizedValue: validation.normalizedValue,
-        reportedSource
+        reportedSource,
+        allowExplicitReferenceListReplacement: Boolean(
+          directProposalReplacementIntent &&
+            validation.allowExplicitReferenceListReplacement === true
+        )
       });
     }
 
+    proposedByProductRef.current = {
+      ...proposedByProductRef.current,
+      [scannedProductId]: existingProdProposals
+    };
     setProposedByProduct((prev) => ({
       ...prev,
       [scannedProductId]: existingProdProposals
+    }));
+
+    approvalsByProductRef.current = {
+      ...approvalsByProductRef.current,
+      [scannedProductId]: existingProdApprovals
+    };
+    setApprovalsByProduct((prev) => ({
+      ...prev,
+      [scannedProductId]: existingProdApprovals
     }));
 
     setAiAlternativesByProduct((prev) => ({
@@ -1296,7 +1395,8 @@ export function useBenchV2AiScanController({
     approvalsByProductRef,
     keepOriginalByProductRef,
     benchSessionIdRef,
-    setProposedByProduct
+    setProposedByProduct,
+    setApprovalsByProduct
   ]);
 
   const handleAcceptAiAlternative = (destinationKey) => {
@@ -1309,15 +1409,47 @@ export function useBenchV2AiScanController({
       return;
     }
 
+    const exactVal = altEntry.value;
+    let shouldBindReplacementIntent = Boolean(
+      contract?.namespace === "shopify" &&
+        contract?.expectedType === "list.metaobject_reference" &&
+        contract?.isWritableInBatch1 === true &&
+        altEntry.allowExplicitReferenceListReplacement === true &&
+        typeof altEntry.explicitReplacementValue === "string" &&
+        altEntry.explicitReplacementValue === exactVal
+    );
+
+    if (
+      !shouldBindReplacementIntent &&
+      contract?.namespace === "shopify" &&
+      contract?.expectedType === "list.metaobject_reference" &&
+      contract?.isWritableInBatch1 === true &&
+      currentBaselineRef.current
+    ) {
+      const obs = buildBaselineObservation(currentBaselineRef.current, destinationKey);
+      const storedCheck = inspectStoredReferenceListRawValue(obs.rawValue);
+      const proposedCheck = inspectStoredReferenceListRawValue(exactVal);
+      if (storedCheck.valid && proposedCheck.valid && proposedCheck.gids.length > 0) {
+        const proposedSet = new Set(proposedCheck.gids);
+        shouldBindReplacementIntent = storedCheck.gids.some((g) => !proposedSet.has(g));
+      }
+    }
+
     setProposedByProduct((prev) => {
       const prodMap = { ...(prev[activeProductId] || {}) };
       prodMap[destinationKey] = {
-        value: altEntry.value,
+        value: exactVal,
         source:
           typeof altEntry.source === "string" && altEntry.source.trim() !== ""
             ? altEntry.source.trim()
             : "Source not reported",
         origin: "AI",
+        ...(shouldBindReplacementIntent
+          ? {
+              allowExplicitReferenceListReplacement: true,
+              explicitReplacementValue: exactVal
+            }
+          : {}),
         updatedAt: new Date().toISOString()
       };
       return { ...prev, [activeProductId]: prodMap };
@@ -1345,9 +1477,10 @@ export function useBenchV2AiScanController({
       pendingGeologyRefCandidatesByProduct,
       setPendingGeologyRefCandidatesByProduct,
       setAiAlternativesByProduct,
-      setLastAiScanReportByProduct
+      setLastAiScanReportByProduct,
+      setApprovalsByProduct
     }),
-    [pendingGeologyRefCandidatesByProduct]
+    [pendingGeologyRefCandidatesByProduct, setApprovalsByProduct]
   );
 
   return {
@@ -1390,6 +1523,8 @@ export function useBenchV2DeferredAiReferenceResolver({
     deferredResolverContext?.setAiAlternativesByProduct;
   const setLastAiScanReportByProduct =
     deferredResolverContext?.setLastAiScanReportByProduct;
+  const setApprovalsByProduct =
+    deferredResolverContext?.setApprovalsByProduct;
 
   useEffect(() => {
     if (
@@ -1448,7 +1583,7 @@ export function useBenchV2DeferredAiReferenceResolver({
     if (destEntries.length === 0) return;
 
     const existingProdProposals = { ...(proposedByProductRef.current[activeProductId] || {}) };
-    const existingProdApprovals = approvalsByProductRef.current[activeProductId] || {};
+    const existingProdApprovals = { ...(approvalsByProductRef.current[activeProductId] || {}) };
     const existingProdKeepOriginal = keepOriginalByProductRef.current[activeProductId] || {};
     const nextAiAlternativesForProd = {};
 
@@ -1456,6 +1591,7 @@ export function useBenchV2DeferredAiReferenceResolver({
     let addedHeld = 0;
     let addedUnchanged = 0;
     let addedRejected = 0;
+    let approvalsCleared = false;
     const updatedProposalsMeta = {};
     const updatedDiagnostics = {};
     const appendedDetails = [];
@@ -1503,6 +1639,11 @@ export function useBenchV2DeferredAiReferenceResolver({
 
       if (resolution.status === "resolved_valid_change") {
         const normalizedValue = resolution.serializedValue;
+        const shouldBindReplacementIntent = Boolean(
+          resolution.allowExplicitReferenceListReplacement === true &&
+            typeof normalizedValue === "string" &&
+            normalizedValue.trim() !== ""
+        );
         const displayNote = `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`;
         updatedDiagnostics[destKey] = null;
 
@@ -1546,7 +1687,11 @@ export function useBenchV2DeferredAiReferenceResolver({
           isManualDraft || hasValidApproval || hasValidKeepOriginal;
 
         if (hasProtectedHumanState) {
-          if (existingDraftVal === normalizedValue && !hasValidKeepOriginal) {
+          if (
+            existingDraftVal === normalizedValue &&
+            existingAllowReplacement === shouldBindReplacementIntent &&
+            !hasValidKeepOriginal
+          ) {
             updatedProposalsMeta[destKey] = {
               value: normalizedValue,
               source: reportedSource,
@@ -1560,6 +1705,12 @@ export function useBenchV2DeferredAiReferenceResolver({
             nextAiAlternativesForProd[destKey] = {
               value: normalizedValue,
               source: reportedSource,
+              ...(shouldBindReplacementIntent
+                ? {
+                    allowExplicitReferenceListReplacement: true,
+                    explicitReplacementValue: normalizedValue
+                  }
+                : {}),
               requestId: pendingBundle.requestId,
               receivedAt: new Date().toISOString()
             };
@@ -1573,10 +1724,20 @@ export function useBenchV2DeferredAiReferenceResolver({
             );
           }
         } else {
+          if (existingProdApprovals[destKey]) {
+            delete existingProdApprovals[destKey];
+            approvalsCleared = true;
+          }
           existingProdProposals[destKey] = {
             value: normalizedValue,
             source: reportedSource,
             origin: "AI",
+            ...(shouldBindReplacementIntent
+              ? {
+                  allowExplicitReferenceListReplacement: true,
+                  explicitReplacementValue: normalizedValue
+                }
+              : {}),
             updatedAt: new Date().toISOString()
           };
           addedStaged++;
@@ -1610,9 +1771,24 @@ export function useBenchV2DeferredAiReferenceResolver({
     }
 
     if (addedStaged > 0) {
+      proposedByProductRef.current = {
+        ...proposedByProductRef.current,
+        [activeProductId]: existingProdProposals
+      };
       setProposedByProduct((prev) => ({
         ...prev,
         [activeProductId]: existingProdProposals
+      }));
+    }
+
+    if (approvalsCleared && typeof setApprovalsByProduct === "function") {
+      approvalsByProductRef.current = {
+        ...approvalsByProductRef.current,
+        [activeProductId]: existingProdApprovals
+      };
+      setApprovalsByProduct((prev) => ({
+        ...prev,
+        [activeProductId]: existingProdApprovals
       }));
     }
 
@@ -1678,6 +1854,7 @@ export function useBenchV2DeferredAiReferenceResolver({
     setPendingGeologyRefCandidatesByProduct,
     setAiAlternativesByProduct,
     setLastAiScanReportByProduct,
+    setApprovalsByProduct,
     activeProductId,
     benchSessionIdRef,
     baselineByProductRef,
