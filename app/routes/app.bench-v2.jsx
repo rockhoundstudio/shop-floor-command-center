@@ -992,28 +992,67 @@ export default function BenchV2Route() {
 
   /**
    * Handles selecting a preset option from the dropdown.
-   * For `shopify.*` (`list.metaobject_reference`):
-   * - When a draft is active (`row.hasProposalKey`), requires the active draft
-   *   to be a valid non-empty canonical GID list (never silently falling back to
-   *   `storedCheck.gids` on invalid/empty drafts) and appends `selectedGids` to
-   *   the active draft list without re-seeding removed saved GIDs.
-   * - When no draft is active, seeds from `storedCheck.gids` and appends `selectedGids`.
-   * - Preserves `allowExplicitReferenceListReplacement` when the resulting list
-   *   still omits a saved baseline GID from an explicit operator removal.
+   * - For non-reference preset dropdowns: if no draft is currently staged and the
+   *   selected option matches the verified stored baseline value, does not stage
+   *   a redundant no-change draft and shows an info banner ("Already saved on product
+   *   (no change to approve)"); if an existing draft is returned to the stored baseline,
+   *   clears only that destination's draft and obsolete approval while preserving any
+   *   Keep Original decision.
+   * - For `shopify.*` (`list.metaobject_reference`):
+   *   * When a draft is active (`row.hasProposalKey`), requires the active draft
+   *     to be a valid non-empty canonical GID list (never silently falling back to
+   *     `storedCheck.gids` on invalid/empty drafts) and appends `selectedGids` to
+   *     the active draft list without re-seeding removed saved GIDs.
+   *   * When no draft is active, seeds from `storedCheck.gids` and appends `selectedGids`.
+   *   * When the resulting `nextSerialized` equals the stored baseline (`!stillOmitsStoredGid`
+   *     and identical GID sequence/raw JSON): if no draft is active, omits redundant
+   *     staging and displays an info notice; if a draft was active, clears that draft
+   *     and its now-obsolete approval while preserving any Keep Original record.
+   *   * Preserves `allowExplicitReferenceListReplacement` when the resulting list
+   *     still omits a saved baseline GID from an explicit operator removal.
    */
   const handleSelectPresetOption = (row, selectedOptionValue) => {
     const destKey = row.contract.destinationKey;
+    const obs = row.baselineObservation;
+
     if (
       row.contract.namespace !== "shopify" ||
       row.contract.expectedType !== "list.metaobject_reference"
     ) {
+      const exactOptionStr =
+        typeof selectedOptionValue === "string"
+          ? selectedOptionValue
+          : String(selectedOptionValue ?? "");
+      const matchesStoredNonRefBaseline = Boolean(
+        obs?.evidenceAvailable &&
+          obs.presence === "present" &&
+          typeof obs.rawValue === "string" &&
+          obs.rawValue === exactOptionStr
+      );
+
+      if (matchesStoredNonRefBaseline) {
+        if (!row.hasProposalKey) {
+          setClientPrevalidationBanner({
+            tone: "info",
+            title: `Already saved on product (no change to approve): ${row.plainLabel || destKey}`,
+            reasons: [
+              `The selected value "${exactOptionStr}" is already saved on ${activeProductTitle} for ${destKey}. No new draft was staged.`
+            ]
+          });
+          return;
+        }
+        setClientPrevalidationBanner(null);
+        releaseRetainedFieldEditor(activeProductId, destKey);
+        clearDecisionForDestination(setProposedByProduct, activeProductId, destKey);
+        clearDecisionForDestination(setApprovalsByProduct, activeProductId, destKey);
+        return;
+      }
+
       handleManualProposalChange(destKey, selectedOptionValue);
       return;
     }
 
-    const storedCheck = inspectStoredReferenceListRawValue(
-      row.baselineObservation?.rawValue
-    );
+    const storedCheck = inspectStoredReferenceListRawValue(obs?.rawValue);
     if (!storedCheck.valid) {
       setClientPrevalidationBanner({
         tone: "error",
@@ -1108,6 +1147,34 @@ export default function BenchV2Route() {
     const nextSerialized = JSON.stringify(mergedGids);
     const mergedSet = new Set(mergedGids);
     const stillOmitsStoredGid = storedCheck.gids.some((g) => !mergedSet.has(g));
+
+    const isIdenticalToStoredRefBaseline = Boolean(
+      !stillOmitsStoredGid &&
+        obs?.evidenceAvailable &&
+        obs.presence === "present" &&
+        storedCheck.gids.length === mergedGids.length &&
+        storedCheck.gids.every((g, idx) => g === mergedGids[idx]) &&
+        typeof obs.rawValue === "string" &&
+        obs.rawValue === nextSerialized
+    );
+
+    if (isIdenticalToStoredRefBaseline) {
+      if (!row.hasProposalKey) {
+        setClientPrevalidationBanner({
+          tone: "info",
+          title: `Already saved on product (no change to approve): ${row.plainLabel || destKey}`,
+          reasons: [
+            `The selected reference choice is already saved in ${destKey} on ${activeProductTitle} (${row.readableSaved || nextSerialized}). No new draft was staged.`
+          ]
+        });
+        return;
+      }
+      setClientPrevalidationBanner(null);
+      releaseRetainedFieldEditor(activeProductId, destKey);
+      clearDecisionForDestination(setProposedByProduct, activeProductId, destKey);
+      clearDecisionForDestination(setApprovalsByProduct, activeProductId, destKey);
+      return;
+    }
 
     stageManualProposalForDestination(
       destKey,

@@ -375,6 +375,11 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
     };
   }
 
+  // When a proposal is staged (`hasProposalKey`), keep the primary short notice
+  // strictly faithful to the active proposal's own fidelity, validation, or
+  // unchanged-from-baseline status. Never let `resolvedActionableScanMeta`
+  // overwrite a valid human/staged draft or unchanged selection notice;
+  // `row.actionableScanMeta` is rendered independently when present.
   if (hasProposalKey) {
     if (!fidelityCheck.faithful) {
       return {
@@ -389,23 +394,12 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
       };
     }
     if (validation && validation.isUnchangedFromStored) {
-      if (resolvedActionableScanMeta) {
-        return {
-          tone: resolvedActionableScanMeta.tone,
-          text: resolvedActionableScanMeta.summaryText
-        };
-      }
       return {
         tone: "muted",
-        text: "Matches saved value."
+        text: "Already saved on product — no changed value to approve."
       };
     }
-    if (resolvedActionableScanMeta) {
-      return {
-        tone: resolvedActionableScanMeta.tone,
-        text: resolvedActionableScanMeta.summaryText
-      };
-    }
+    return null;
   }
 
   if (contract.namespace === "shopify") {
@@ -809,6 +803,20 @@ export function evaluateAndFilterBenchV2Drawers({
       let effectiveReviewStatus = baseEval.reviewStatus;
       let effectiveStatusReason = baseEval.statusReason;
 
+      const obs = baseEval.baselineObservation;
+      const isShopifyReference = fieldContract.namespace === "shopify";
+      const isCategoryIneligibleBlocked = Boolean(
+        isShopifyReference &&
+          fieldContract.isWritableInBatch1 &&
+          obs.evidenceAvailable &&
+          baseEval.typeAndCompleteness?.ready !== true &&
+          obs.categoryEligibility?.status === "category_ineligible"
+      );
+
+      if (isCategoryIneligibleBlocked && !baseEval.hasProposalKey) {
+        effectiveReviewStatus = "Ineligible for Product Category (Read-Only)";
+      }
+
       if (
         fieldContract.namespace === "shopify" &&
         fieldContract.isWritableInBatch1 &&
@@ -835,11 +843,17 @@ export function evaluateAndFilterBenchV2Drawers({
         effectiveStatusReason = fidelityCheck.reason;
       }
 
-      if (actionableScanMeta) {
-        if (!baseEval.hasProposalKey) {
+      // Keep `effectiveReviewStatus` and `effectiveStatusReason` faithful to the
+      // active valid human/staged draft, exact approval, or unchanged baseline.
+      // Only promote `actionableScanMeta` to `effectiveReviewStatus` when NO draft
+      // is staged (`!baseEval.hasProposalKey`) and the field is not already marked
+      // category-ineligible; `actionableScanMeta` remains attached on the row for
+      // independent rendering in `BenchV2DrawersView` and telemetry.
+      if (actionableScanMeta && !baseEval.hasProposalKey) {
+        if (!isCategoryIneligibleBlocked) {
           effectiveReviewStatus = actionableScanMeta.reviewStatusLabel;
-          effectiveStatusReason = actionableScanMeta.summaryText;
-        } else if (
+        }
+        if (
           effectiveStatusReason &&
           !effectiveStatusReason.includes(actionableScanMeta.reason)
         ) {
@@ -849,8 +863,6 @@ export function evaluateAndFilterBenchV2Drawers({
         }
       }
 
-      const obs = baseEval.baselineObservation;
-      const isShopifyReference = fieldContract.namespace === "shopify";
       const usesMeaningDisplay = Boolean(
         fieldContract.usesYesNoMeaningDisplay || isShopifyReference
       );

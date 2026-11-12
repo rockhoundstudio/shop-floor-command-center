@@ -194,6 +194,101 @@ function isConfirmedPicklistOrVarietyStoneIdentity(rawCandidate) {
   return false;
 }
 
+const EXACT_CANONICAL_ROCK_COMPOSITION_LABELS = Object.freeze({
+  agate: "Agate",
+  "banded iron": "Banded iron",
+  basalt: "Basalt",
+  chert: "Chert",
+  conglomerate: "Conglomerate",
+  gabbro: "Gabbro",
+  gneiss: "Gneiss",
+  granite: "Granite",
+  jasper: "Jasper",
+  limestone: "Limestone",
+  marble: "Marble",
+  obsidian: "Obsidian",
+  peridotite: "Peridotite",
+  pumice: "Pumice",
+  quartzite: "Quartzite",
+  rhyolite: "Rhyolite",
+  sandstone: "Sandstone",
+  schist: "Schist",
+  scoria: "Scoria",
+  shale: "Shale",
+  slate: "Slate"
+});
+
+/**
+ * Bounded canonical normalization for the 4 producer-backed standardized
+ * geology reference companions (`shopify.crystal-system`, `shopify.mineral-class`,
+ * `shopify.rock-composition`, `shopify.rock-formation`).
+ *
+ * - Full descriptive DB strings remain untouched in `custom.*`.
+ * - Maps only unambiguous observed equivalents:
+ *     * `shopify.crystal-system`: `"Trigonal (Microcrystalline Quartz)"` -> `"Trigonal"`
+ *     * `shopify.mineral-class`: `"Silicate"` / `"Silicate (Quartz Group)"` -> `"Silicates"`
+ *     * `shopify.rock-composition`: maps ONLY when `confirmedRockIdentity` (from
+ *       confirmed current stone identity/provenance) or `rawGeoStr` itself is an
+ *       exact canonical rock composition label (e.g. `"Jasper"`). Never maps generic
+ *       `SiO2` / chemical descriptions to a rock identity when stone identity is
+ *       not an exact canonical rock label; retains the original descriptive string
+ *       so downstream resolution holds it with a clear diagnostic reason.
+ *     * `shopify.rock-formation`: multi-mechanism strings such as
+ *       `"Sedimentary / Hydrothermal precipitation"` are never forced into one side
+ *       and remain as-is so downstream resolution holds them as ambiguous/unmatched.
+ */
+export function normalizeCanonicalGeologyReferenceCandidate(
+  geoKey,
+  rawGeoStr,
+  confirmedRockIdentity = ""
+) {
+  const cleaned = sanitizeCandidateString(rawGeoStr);
+  if (!cleaned) return "";
+
+  const collapsed = cleaned.replace(/\s+/g, " ").trim();
+  const lower = collapsed.toLowerCase();
+
+  if (geoKey === "crystal_system" || geoKey === "shopify.crystal-system") {
+    if (
+      lower === "trigonal" ||
+      /^trigonal\s*\(\s*microcrystalline\s+quartz\s*\)$/i.test(collapsed)
+    ) {
+      return "Trigonal";
+    }
+    return collapsed;
+  }
+
+  if (geoKey === "mineral_class" || geoKey === "shopify.mineral-class") {
+    if (
+      lower === "silicates" ||
+      lower === "silicate" ||
+      /^silicates?\s*\(\s*quartz\s+group\s*\)$/i.test(collapsed)
+    ) {
+      return "Silicates";
+    }
+    return collapsed;
+  }
+
+  if (geoKey === "rock_composition" || geoKey === "shopify.rock-composition") {
+    if (Object.prototype.hasOwnProperty.call(EXACT_CANONICAL_ROCK_COMPOSITION_LABELS, lower)) {
+      return EXACT_CANONICAL_ROCK_COMPOSITION_LABELS[lower];
+    }
+    const cleanIdentity = sanitizeCandidateString(confirmedRockIdentity)
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (
+      cleanIdentity &&
+      Object.prototype.hasOwnProperty.call(EXACT_CANONICAL_ROCK_COMPOSITION_LABELS, cleanIdentity)
+    ) {
+      return EXACT_CANONICAL_ROCK_COMPOSITION_LABELS[cleanIdentity];
+    }
+    return collapsed;
+  }
+
+  return collapsed;
+}
+
 export function resolveEvidencedOriginLocation(rawOrigin) {
   const raw = String(rawOrigin || "").trim();
   if (!raw || raw.toLowerCase() === "unknown origin" || raw.toLowerCase() === "unknown") {
@@ -1685,6 +1780,31 @@ export function buildBenchV2ProducerProposals({
     rock_formation: "shopify.rock-formation"
   });
 
+  // Confirmed current stone identity for shopify.rock-composition:
+  // Requires operator-locked stone identity, active Vision/3-segment title family,
+  // or confirmed stone identity when not merely a passive unconfirmed legacy label.
+  const lockedMaterialFamily =
+    isBareFieldOperatorLocked("material") && currentData.material
+      ? resolvePicklistStoneFamily(
+          extractStoneName(currentData.material) !== "Unknown"
+            ? extractStoneName(currentData.material)
+            : currentData.material
+        ) || resolvePicklistStoneFamily(currentData.material)
+      : "";
+  const lockedPrimaryMediumFamily =
+    isBareFieldOperatorLocked("primary_medium") && currentData.primary_medium
+      ? resolvePicklistStoneFamily(
+          extractStoneName(currentData.primary_medium) !== "Unknown"
+            ? extractStoneName(currentData.primary_medium)
+            : currentData.primary_medium
+        ) || resolvePicklistStoneFamily(currentData.primary_medium)
+      : "";
+  const confirmedRockIdentityForCompanion =
+    effectiveBaseFamily ||
+    lockedMaterialFamily ||
+    lockedPrimaryMediumFamily ||
+    "";
+
   const geoSourceTag = geoFields?.geoSource || "none";
   if (geoSourceTag !== "none") {
     const resolveGeologySourceLabel = (geoKey) => {
@@ -1721,9 +1841,14 @@ export function buildBenchV2ProducerProposals({
       }
 
       if (Object.prototype.hasOwnProperty.call(PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP, geoKey)) {
+        const companionCandidateLabel = normalizeCanonicalGeologyReferenceCandidate(
+          geoKey,
+          cleanGeoStr,
+          geoKey === "rock_composition" ? confirmedRockIdentityForCompanion : ""
+        );
         addStandardizedGeologyCandidate(
           PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP[geoKey],
-          cleanGeoStr,
+          companionCandidateLabel,
           geoSourceLabel
         );
       }

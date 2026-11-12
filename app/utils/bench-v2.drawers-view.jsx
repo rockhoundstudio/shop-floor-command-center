@@ -274,6 +274,7 @@ function formatDrawerFieldCopyBlock(row, indexNumber) {
     proposalOrigin,
     heldAiAlternative,
     scanProposalMeta,
+    actionableScanMeta,
     validation,
     isApproved,
     isKeepOriginal,
@@ -374,6 +375,11 @@ function formatDrawerFieldCopyBlock(row, indexNumber) {
   if (typeAndCompleteness && !typeAndCompleteness.ready && typeAndCompleteness.reason) {
     if (!blockingReasons.includes(typeAndCompleteness.reason)) {
       blockingReasons.push(typeAndCompleteness.reason);
+    }
+  }
+  if (actionableScanMeta && actionableScanMeta.summaryText) {
+    if (!blockingReasons.includes(actionableScanMeta.summaryText)) {
+      blockingReasons.push(actionableScanMeta.summaryText);
     }
   }
 
@@ -1174,6 +1180,7 @@ export function BenchV2DrawersView({
                           proposalOrigin,
                           heldAiAlternative,
                           scanProposalMeta,
+                          actionableScanMeta,
                           validation,
                           isApproved,
                           isKeepOriginal,
@@ -1254,7 +1261,64 @@ export function BenchV2DrawersView({
                           Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
                           fidelityCheck.faithful;
 
+                        const isCategoryIneligibleRow = Boolean(
+                          isShopifyReference &&
+                            contract.isWritableInBatch1 &&
+                            obs.evidenceAvailable &&
+                            typeAndCompleteness?.ready !== true &&
+                            obs.categoryEligibility?.status === "category_ineligible"
+                        );
+
+                        const isUnchangedStagedDraft = Boolean(
+                          hasProposalKey && validation?.isUnchangedFromStored === true
+                        );
+
+                        let rowHeaderStatusLabel = "Unchanged";
+                        let rowHeaderStatusColor = "#334155";
+                        if (isApproved) {
+                          rowHeaderStatusLabel =
+                            proposalOrigin === "Manual"
+                              ? "Approved to save (exact manual replacement)"
+                              : "Approved to save";
+                          rowHeaderStatusColor = "#15803d";
+                        } else if (isKeepOriginal) {
+                          rowHeaderStatusLabel = "Keeping original";
+                        } else if (hasProposalKey) {
+                          if (isUnchangedStagedDraft) {
+                            rowHeaderStatusLabel = "Already saved on product (no change to approve)";
+                          } else if (!validation?.valid || !fidelityCheck.faithful) {
+                            rowHeaderStatusLabel = "Blocked draft (cannot approve)";
+                            rowHeaderStatusColor = "#991b1b";
+                          } else if (proposalOrigin === "AI") {
+                            rowHeaderStatusLabel = "AI suggestion (unapproved)";
+                            rowHeaderStatusColor = "#1e3a8a";
+                          } else {
+                            rowHeaderStatusLabel = "Manual replacement staged (unapproved)";
+                            rowHeaderStatusColor = "#1e3a8a";
+                          }
+                        } else if (isCategoryIneligibleRow) {
+                          rowHeaderStatusLabel = "Ineligible for product category (write blocked)";
+                          rowHeaderStatusColor = "#991b1b";
+                        } else if (actionableScanMeta) {
+                          rowHeaderStatusLabel = "Unresolved AI candidate (no valid draft staged)";
+                          rowHeaderStatusColor =
+                            actionableScanMeta.tone === "error"
+                              ? "#991b1b"
+                              : actionableScanMeta.tone === "warning"
+                                ? "#9a3412"
+                                : "#334155";
+                        } else if (obs.evidenceAvailable && obs.presence === "present") {
+                          rowHeaderStatusLabel = "Already saved on product (no change to approve)";
+                        }
+
                         const shortNotice = getShortPlainNotice(row, isRefChoicesBusy);
+                        const showSeparateActionableScanNotice = Boolean(
+                          contract.isWritableInBatch1 &&
+                            actionableScanMeta &&
+                            actionableScanMeta.summaryText &&
+                            (!shortNotice ||
+                              shortNotice.text !== actionableScanMeta.summaryText)
+                        );
 
                         const activeReferenceSelection = isListReferenceContract
                           ? inspectActiveReferenceSelectionForCard({
@@ -1459,16 +1523,14 @@ export function BenchV2DrawersView({
                                   )}
                               </div>
 
-                              <div style={{ fontSize: "15px", fontWeight: 600, color: "#334155" }}>
-                                {isApproved
-                                  ? "Approved to save"
-                                  : isKeepOriginal
-                                    ? "Keeping original"
-                                    : hasProposalKey
-                                      ? proposalOrigin === "AI"
-                                        ? "AI suggestion (unapproved)"
-                                        : "Draft staged (unapproved)"
-                                      : "Unchanged"}
+                              <div
+                                style={{
+                                  fontSize: "15px",
+                                  fontWeight: 600,
+                                  color: rowHeaderStatusColor
+                                }}
+                              >
+                                {rowHeaderStatusLabel}
                               </div>
                             </div>
 
@@ -2180,6 +2242,13 @@ export function BenchV2DrawersView({
                                     {shortNotice.text}
                                   </div>
                                 )}
+
+                                {/* INDEPENDENT AI CANDIDATE DIAGNOSTIC WHEN SEPARATE FROM PRIMARY DRAFT / BASELINE NOTICE */}
+                                {showSeparateActionableScanNotice && (
+                                  <div style={getShortNoticeBoxStyle(actionableScanMeta.tone)}>
+                                    {actionableScanMeta.summaryText}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -2247,6 +2316,12 @@ export function BenchV2DrawersView({
                                       ? scanProposalMeta.source.trim()
                                       : "Source not reported"}{" "}
                                     | <strong>Outcome:</strong> {scanProposalMeta.disposition}
+                                  </div>
+                                )}
+                                {actionableScanMeta && (
+                                  <div>
+                                    <strong>Unresolved AI Candidate Diagnostic:</strong>{" "}
+                                    {actionableScanMeta.summaryText}
                                   </div>
                                 )}
                                 {effectiveStatusReason && (
