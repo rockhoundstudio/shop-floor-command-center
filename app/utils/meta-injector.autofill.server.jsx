@@ -1,3 +1,8 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — AI AUTOFILL, VISION SCAN & DB GEOLOGY PRODUCER ENGINE
+// File: app/utils/meta-injector.autofill.server.jsx
+// ==========================================================================
+
 import {
   DROPDOWN_OPTIONS,
   REMOVED_PARKED_CANONICAL_IDENTITIES,
@@ -32,6 +37,7 @@ import {
   resolveTab3FieldProvenance,
   parseVerifiedColorPatternChoiceLabels,
   validateStandardizedCandidates,
+  sanitizeCandidateString,
   sanitizeObject,
   formatDyslexiaText,
   cleanStoneFamilyShape,
@@ -218,9 +224,214 @@ function collectionsDataEdgesMap(edges) {
   });
 }
 
+function isSupportedPicklistStoneFamily(rawFamily) {
+  const cleaned = cleanStoneFamilyShape(String(rawFamily || "").trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return false;
+  }
+  const options = DROPDOWN_OPTIONS?.stone_family || [];
+  const lower = cleaned.toLowerCase();
+  for (const opt of options) {
+    const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
+    if (val && val.toLowerCase().trim() === lower) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveCanonicalBaseFamilyForStoneCandidate(rawCandidate) {
+  if (typeof rawCandidate !== "string") return "";
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return "";
+  }
+  if (isSupportedPicklistStoneFamily(cleaned)) {
+    return resolvePicklistStoneFamily(cleaned);
+  }
+  const extracted = extractStoneName(cleaned);
+  if (
+    extracted &&
+    extracted !== "Unknown" &&
+    isSupportedPicklistStoneFamily(extracted)
+  ) {
+    return resolvePicklistStoneFamily(extracted);
+  }
+  const derived = getDerivedMaterial(cleaned);
+  if (
+    derived &&
+    derived !== cleaned &&
+    isSupportedPicklistStoneFamily(derived)
+  ) {
+    return resolvePicklistStoneFamily(derived);
+  }
+  return "";
+}
+
+function isValidatedSpecificVarietyOfBaseFamily(rawCandidate, targetBaseFamily = "") {
+  if (typeof rawCandidate !== "string") return false;
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (!cleaned) return false;
+  const candidateBaseFamily = resolveCanonicalBaseFamilyForStoneCandidate(cleaned);
+  if (!candidateBaseFamily) return false;
+  if (cleaned.toLowerCase() === candidateBaseFamily.toLowerCase()) {
+    return false;
+  }
+  if (targetBaseFamily) {
+    const cleanTargetFamily = resolveCanonicalBaseFamilyForStoneCandidate(targetBaseFamily);
+    if (
+      !cleanTargetFamily ||
+      candidateBaseFamily.toLowerCase() !== cleanTargetFamily.toLowerCase()
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function cleanProducerNonBlankVisionStr(rawVal) {
+  if (typeof rawVal !== "string") return "";
+  const cleaned = sanitizeCandidateString(rawVal);
+  if (!cleaned) return "";
+  if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return "";
+  return cleaned;
+}
+
+/**
+ * Computes the exact `custom.material` value that `buildBenchV2ProducerProposals`
+ * will stage for the current scan inputs, using the identical precedence rules as
+ * `buildBenchV2ProducerProposals` (operator lock -> `rawVisMaterial` ->
+ * `rawVisPrimaryMedium` -> 3-segment title variety).
+ */
+function resolveBenchV2ProducedMaterialCandidate({
+  idOrigin,
+  currentData = {},
+  rawVisionSnapshot = {},
+  provenance = null
+}) {
+  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
+  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+  const isMaterialLocked =
+    hasValidProvenance &&
+    operatorLockedSet.has("material") &&
+    currentData.material !== undefined &&
+    String(currentData.material).trim() !== "";
+
+  if (isMaterialLocked) {
+    return "";
+  }
+
+  const rawTitleSegments = splitSegmentedTitle(idOrigin?.rawTitleInput || "");
+  const rawTitleStoneSegment =
+    idOrigin?.hasSegmentedTitle && rawTitleSegments.length >= 3
+      ? rawTitleSegments[0]
+      : "";
+  const cleanTitleStoneVariety =
+    idOrigin?.titleStoneSegment &&
+    resolveCanonicalBaseFamilyForStoneCandidate(idOrigin.titleStoneSegment) !== ""
+      ? idOrigin.titleStoneSegment
+      : "";
+
+  const rawVisMaterial = cleanProducerNonBlankVisionStr(rawVisionSnapshot.material);
+  const rawVisPrimaryMedium = cleanProducerNonBlankVisionStr(rawVisionSnapshot.primary_medium);
+  const rawVisStoneFamily = cleanProducerNonBlankVisionStr(rawVisionSnapshot.stone_family);
+
+  const normalizedVisStoneFamily = rawVisStoneFamily
+    ? resolvePicklistStoneFamily(rawVisStoneFamily)
+    : "";
+  const titleDerivedStoneFamily =
+    !idOrigin?.explicitStoneFamily &&
+    idOrigin?.hasSegmentedTitle &&
+    rawTitleStoneSegment &&
+    resolveCanonicalBaseFamilyForStoneCandidate(rawTitleStoneSegment) !== ""
+      ? resolvePicklistStoneFamily(
+          extractStoneName(rawTitleStoneSegment) !== "Unknown"
+            ? extractStoneName(rawTitleStoneSegment)
+            : rawTitleStoneSegment
+        )
+      : "";
+
+  const effectiveBaseFamily =
+    (idOrigin?.explicitStoneFamily && currentData.stone_family
+      ? resolvePicklistStoneFamily(currentData.stone_family)
+      : "") ||
+    normalizedVisStoneFamily ||
+    titleDerivedStoneFamily ||
+    "";
+
+  const isTitleVarietyMoreSpecificThanVision = Boolean(
+    cleanTitleStoneVariety &&
+    effectiveBaseFamily &&
+    cleanTitleStoneVariety.toLowerCase() !== effectiveBaseFamily.toLowerCase() &&
+    resolvePicklistStoneFamily(
+      extractStoneName(cleanTitleStoneVariety) !== "Unknown"
+        ? extractStoneName(cleanTitleStoneVariety)
+        : cleanTitleStoneVariety
+    ).toLowerCase() === effectiveBaseFamily.toLowerCase()
+  );
+
+  if (
+    rawVisMaterial &&
+    !isGenericBareStoneProposal(rawVisMaterial) &&
+    !isSettingOrHardwareMediumValue(rawVisMaterial) &&
+    !(
+      isTitleVarietyMoreSpecificThanVision &&
+      rawVisMaterial.toLowerCase() === effectiveBaseFamily.toLowerCase()
+    )
+  ) {
+    return rawVisMaterial;
+  }
+
+  if (
+    rawVisPrimaryMedium &&
+    !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
+    !isSettingOrHardwareMediumValue(rawVisPrimaryMedium) &&
+    !(
+      isTitleVarietyMoreSpecificThanVision &&
+      rawVisPrimaryMedium.toLowerCase() === effectiveBaseFamily.toLowerCase()
+    )
+  ) {
+    const isDistinctVarietyOrConfirmedStone =
+      !rawVisStoneFamily ||
+      rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFamily.toLowerCase() ||
+      Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
+    if (isDistinctVarietyOrConfirmedStone) {
+      return rawVisPrimaryMedium;
+    }
+    if (cleanTitleStoneVariety) {
+      return cleanTitleStoneVariety;
+    }
+    return "";
+  }
+
+  if (cleanTitleStoneVariety) {
+    return cleanTitleStoneVariety;
+  }
+
+  return "";
+}
+
 async function getGeoData(admin, stoneFamily, options = {}) {
-  const { requireAuthoritativeDbOnly = false } =
-    options && typeof options === "object" ? options : {};
+  const {
+    requireAuthoritativeDbOnly = false,
+    exactCandidatesOnly = false
+  } = options && typeof options === "object" ? options : {};
+
+  const attachDbLookupMeta = Boolean(requireAuthoritativeDbOnly || exactCandidatesOnly);
 
   const emptyGeo = {
     mohs_hardness: "",
@@ -394,19 +605,22 @@ async function getGeoData(admin, stoneFamily, options = {}) {
       dbCandidateOrder.push(candidateLower);
     }
   }
-  if (search && !seenDbLower.has(search)) {
+  if (!exactCandidatesOnly && search && !seenDbLower.has(search)) {
     seenDbLower.add(search);
     dbCandidateOrder.push(search);
   }
 
   let dbReadError = null;
 
-  // 1. Authoritative Postgres StoneCache Lookup First
+  // 1 & 2. Authoritative Postgres Lookup by Candidate Identity Priority:
+  // For each ordered candidate in dbCandidateOrder, check StoneCache first and
+  // StoneProfile second for THAT candidate before moving to the next (more generic)
+  // candidate. Never merge a generic fallback candidate's cache/profile fields into
+  // a preceding specific candidate's record.
   try {
-    let matchedCacheNameLower = "";
-    let matchedNormalizedCache = null;
-
     for (const candidateLower of dbCandidateOrder) {
+      let matchedNormalizedCache = null;
+
       const cacheRows = await queryPostgres(
         'SELECT data FROM "StoneCache" WHERE LOWER("stone_name") = $1 LIMIT 1',
         [candidateLower]
@@ -418,63 +632,62 @@ async function getGeoData(admin, stoneFamily, options = {}) {
             : cacheRows[0].data;
         const { normalized, hasUsableGeoField } = normalizeStoneCacheObject(parsed);
         if (hasUsableGeoField && normalized) {
-          matchedCacheNameLower = candidateLower;
           matchedNormalizedCache = normalized;
-          break;
         }
       }
-    }
 
-    if (matchedNormalizedCache) {
-      const hasMissingCanonicalField = CANONICAL_GEO_FIELD_KEYS.some(
-        (k) => !matchedNormalizedCache[k]
-      );
-      let matchingProfileGeo = null;
-      if (hasMissingCanonicalField && matchedCacheNameLower) {
-        try {
-          matchingProfileGeo = await loadStoneProfileForName(matchedCacheNameLower);
-        } catch (profileErr) {}
+      if (matchedNormalizedCache) {
+        const hasMissingCanonicalField = CANONICAL_GEO_FIELD_KEYS.some(
+          (k) => !matchedNormalizedCache[k]
+        );
+        let matchingProfileGeo = null;
+        if (hasMissingCanonicalField) {
+          try {
+            matchingProfileGeo = await loadStoneProfileForName(candidateLower);
+          } catch (profileErr) {}
+        }
+
+        const mergedCacheResult = {
+          ...emptyGeo,
+          ...(matchingProfileGeo || {}),
+          ...matchedNormalizedCache,
+          tenacity: matchedNormalizedCache.tenacity || matchingProfileGeo?.tenacity || "",
+          geological_age: matchedNormalizedCache.geological_age || matchingProfileGeo?.geological_age || "",
+          geoSource: "cache"
+        };
+        const hasAnyUsableMergedField = CANONICAL_GEO_FIELD_KEYS.some(
+          (k) => typeof mergedCacheResult[k] === "string" && mergedCacheResult[k].trim() !== ""
+        );
+        if (hasAnyUsableMergedField) {
+          if (attachDbLookupMeta) {
+            Object.defineProperty(mergedCacheResult, "_dbLookupMeta", {
+              value: {
+                dbLookupComplete: true,
+                dbMatchedStoneName: candidateLower,
+                dbCandidatesTried: dbCandidateOrder,
+                dbReadError: null
+              },
+              enumerable: false
+            });
+          }
+          return mergedCacheResult;
+        }
       }
 
-      const mergedCacheResult = {
-        ...emptyGeo,
-        ...(matchingProfileGeo || {}),
-        ...matchedNormalizedCache,
-        tenacity: matchedNormalizedCache.tenacity || matchingProfileGeo?.tenacity || "",
-        geological_age: matchedNormalizedCache.geological_age || matchingProfileGeo?.geological_age || "",
-        geoSource: "cache"
-      };
-      if (requireAuthoritativeDbOnly) {
-        Object.defineProperty(mergedCacheResult, "_dbLookupMeta", {
-          value: {
-            dbLookupComplete: true,
-            dbMatchedStoneName: matchedCacheNameLower,
-            dbCandidatesTried: dbCandidateOrder,
-            dbReadError: null
-          },
-          enumerable: false
-        });
-      }
-      return mergedCacheResult;
-    }
-  } catch (err) {
-    dbReadError = err?.message || "StoneCache database query failed.";
-  }
-
-  // 2. Authoritative Postgres StoneProfile Lookup Second
-  if (!dbReadError) {
-    try {
-      for (const candidateLower of dbCandidateOrder) {
-        const profileGeo = await loadStoneProfileForName(candidateLower);
-        if (profileGeo) {
-          const profileResult = {
-            ...emptyGeo,
-            ...profileGeo,
-            tenacity: profileGeo.tenacity || "",
-            geological_age: profileGeo.geological_age || "",
-            geoSource: "database"
-          };
-          if (requireAuthoritativeDbOnly) {
+      const profileGeo = await loadStoneProfileForName(candidateLower);
+      if (profileGeo) {
+        const profileResult = {
+          ...emptyGeo,
+          ...profileGeo,
+          tenacity: profileGeo.tenacity || "",
+          geological_age: profileGeo.geological_age || "",
+          geoSource: "database"
+        };
+        const hasAnyUsableProfileField = CANONICAL_GEO_FIELD_KEYS.some(
+          (k) => typeof profileResult[k] === "string" && profileResult[k].trim() !== ""
+        );
+        if (hasAnyUsableProfileField) {
+          if (attachDbLookupMeta) {
             Object.defineProperty(profileResult, "_dbLookupMeta", {
               value: {
                 dbLookupComplete: true,
@@ -488,14 +701,14 @@ async function getGeoData(admin, stoneFamily, options = {}) {
           return profileResult;
         }
       }
-    } catch (err) {
-      dbReadError = err?.message || "StoneProfile database query failed.";
     }
+  } catch (err) {
+    dbReadError = err?.message || "Database geology query failed.";
   }
 
-  // If DB read failed or caller requires authoritative DB evidence only (Bench V2 replacement review),
+  // If DB read failed or caller requires authoritative DB evidence only or exact candidates only,
   // never fall back to static GEO_LIBRARY or Mindat to masquerade as verified DB truth.
-  if (dbReadError || requireAuthoritativeDbOnly) {
+  if (dbReadError || requireAuthoritativeDbOnly || exactCandidatesOnly) {
     const authoritativeEmpty = { ...emptyGeo, geoSource: "none" };
     Object.defineProperty(authoritativeEmpty, "_dbLookupMeta", {
       value: {
@@ -1108,7 +1321,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         currentData,
         provenance
       });
-      const geoFields = await getGeoData(
+      let geoFields = await getGeoData(
         admin,
         geoLookupCandidates.length > 0 ? geoLookupCandidates : effectiveFamily,
         { requireAuthoritativeDbOnly: isBenchV2OptIn }
@@ -1266,6 +1479,158 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           }
         }
         stripRetiredParkedProducerEntries(rawVisionSnapshot, "PRODUCT");
+
+        // Bounded Post-Vision Specific Variety DB Relookup (Bench V2 Opt-In Only):
+        // Uses the exact material proposal precedence of `buildBenchV2ProducerProposals`.
+        // When `custom.material`, `primary_medium`, and `stone_family` are not operator-locked
+        // to a conflicting identity, and the pre-Vision lookup did NOT already lead with a
+        // validated specific variety, check whether the actual produced `custom.material`
+        // candidate is a validated specific variety compatible with the established base
+        // stone family. If so, run ONE exact-candidate-only authoritative DB lookup for
+        // `[emergedSpecificVariety]` (`requireAuthoritativeDbOnly: true, exactCandidatesOnly: true`).
+        // - Success requires: `dbLookupComplete === true`, `!dbReadError`,
+        //   `dbMatchedStoneName === expectedSpecificLower`, `geoSource` in `("cache", "database")`,
+        //   and at least one usable canonical geology field.
+        // - Failure (no exact DB record for `emergedSpecificVariety` or DB read error) is
+        //   fail-closed: `geoFields` is set to the empty `geoSource: "none"` result carrying
+        //   `_dbLookupMeta` for `[expectedSpecificLower]`, so downstream producer diagnostics
+        //   explicitly hold all 12 geology fields for that specific variety rather than
+        //   silently pairing `emergedSpecificVariety` with pre-Vision generic fallback facts.
+        const hasOperatorLockedMaterialOrMedium = Boolean(
+          provenance.hasValidProvenance &&
+          ((provenance.operatorLockedSet.has("material") &&
+            currentData.material !== undefined &&
+            String(currentData.material).trim() !== "") ||
+            (provenance.operatorLockedSet.has("primary_medium") &&
+              currentData.primary_medium !== undefined &&
+              String(currentData.primary_medium).trim() !== ""))
+        );
+
+        if (isBenchV2OptIn && !hasOperatorLockedMaterialOrMedium) {
+          const preVisionPrimaryCandidate =
+            geoLookupCandidates.length > 0
+              ? cleanStoneFamilyShape(String(geoLookupCandidates[0] || "").trim())
+              : "";
+          const preVisionBaseFamily =
+            resolveCanonicalBaseFamilyForStoneCandidate(effectiveFamily) ||
+            resolveCanonicalBaseFamilyForStoneCandidate(preVisionPrimaryCandidate);
+          const preVisionAlreadySpecificVariety = Boolean(
+            preVisionPrimaryCandidate &&
+            isValidatedSpecificVarietyOfBaseFamily(
+              preVisionPrimaryCandidate,
+              preVisionBaseFamily
+            )
+          );
+
+          if (!preVisionAlreadySpecificVariety) {
+            const producedMaterialCandidate = resolveBenchV2ProducedMaterialCandidate({
+              idOrigin,
+              currentData,
+              rawVisionSnapshot,
+              provenance
+            });
+            const cleanedProducedVariety = producedMaterialCandidate
+              ? cleanStoneFamilyShape(producedMaterialCandidate.trim())
+              : "";
+            const rawVisFamCandidate =
+              typeof rawVisionSnapshot.stone_family === "string"
+                ? cleanStoneFamilyShape(rawVisionSnapshot.stone_family.trim())
+                : "";
+
+            const targetBaseFamilyForCheck =
+              preVisionBaseFamily ||
+              resolveCanonicalBaseFamilyForStoneCandidate(rawVisFamCandidate) ||
+              resolveCanonicalBaseFamilyForStoneCandidate(cleanedProducedVariety);
+
+            const emergedSpecificVariety =
+              cleanedProducedVariety &&
+              !INVALID_CANDIDATE_FILLERS.has(cleanedProducedVariety.toLowerCase()) &&
+              !isGenericBareStoneProposal(cleanedProducedVariety) &&
+              !isSettingOrHardwareMediumValue(cleanedProducedVariety) &&
+              isValidatedSpecificVarietyOfBaseFamily(
+                cleanedProducedVariety,
+                targetBaseFamilyForCheck
+              )
+                ? cleanedProducedVariety
+                : "";
+
+            const alreadyTriedLowerSet = new Set(
+              geoLookupCandidates.map((c) => String(c || "").toLowerCase().trim())
+            );
+
+            if (
+              emergedSpecificVariety &&
+              !alreadyTriedLowerSet.has(emergedSpecificVariety.toLowerCase())
+            ) {
+              const expectedSpecificLower = emergedSpecificVariety.toLowerCase().trim();
+              const relookupGeoFields = await getGeoData(
+                admin,
+                [emergedSpecificVariety],
+                {
+                  requireAuthoritativeDbOnly: true,
+                  exactCandidatesOnly: true
+                }
+              );
+              const relookupMeta = relookupGeoFields?._dbLookupMeta || null;
+              const RELOOKUP_GEO_KEYS = Object.keys(BENCH_V2_DB_GEOLOGY_DESTINATIONS);
+              const hasUsableSpecificField = Boolean(
+                relookupGeoFields &&
+                RELOOKUP_GEO_KEYS.some(
+                  (k) =>
+                    typeof relookupGeoFields[k] === "string" &&
+                    relookupGeoFields[k].trim() !== ""
+                )
+              );
+              const isExactSpecificMatchVerified = Boolean(
+                relookupMeta &&
+                relookupMeta.dbLookupComplete === true &&
+                !relookupMeta.dbReadError &&
+                relookupMeta.dbMatchedStoneName === expectedSpecificLower &&
+                (relookupGeoFields?.geoSource === "cache" ||
+                  relookupGeoFields?.geoSource === "database") &&
+                hasUsableSpecificField
+              );
+
+              if (isExactSpecificMatchVerified) {
+                geoFields = relookupGeoFields;
+              } else {
+                const failClosedEmptyGeo = {
+                  mohs_hardness: "",
+                  luster: "",
+                  fracture_pattern: "",
+                  cleavage: "",
+                  specific_gravity: "",
+                  diaphaneity: "",
+                  tenacity: "",
+                  crystal_system: "",
+                  geological_era: "",
+                  mineral_class: "",
+                  rock_composition: "",
+                  rock_formation: "",
+                  geological_age: "",
+                  geoSource: "none"
+                };
+                const failClosedReadError =
+                  relookupMeta?.dbReadError ||
+                  (!relookupMeta || relookupMeta.dbLookupComplete !== true
+                    ? `Incomplete database lookup verification for specific stone variety "${emergedSpecificVariety}".`
+                    : null);
+                Object.defineProperty(failClosedEmptyGeo, "_dbLookupMeta", {
+                  value: {
+                    dbLookupComplete: Boolean(
+                      relookupMeta?.dbLookupComplete === true && !failClosedReadError
+                    ),
+                    dbMatchedStoneName: null,
+                    dbCandidatesTried: [expectedSpecificLower],
+                    dbReadError: failClosedReadError
+                  },
+                  enumerable: false
+                });
+                geoFields = failClosedEmptyGeo;
+              }
+            }
+          }
+        }
 
         let validatedImageAlts = [];
         let altValidationErrors = [];
