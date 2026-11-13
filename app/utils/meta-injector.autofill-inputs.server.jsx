@@ -5,7 +5,11 @@
 // zero model calls.
 // ==========================================================================
 
-import { DROPDOWN_OPTIONS, normalizeDropdownValue } from "../utils/meta-injector.constants.jsx";
+import {
+  DROPDOWN_OPTIONS,
+  EXCLUDED_TITLES,
+  normalizeDropdownValue
+} from "../utils/meta-injector.constants.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS,
   isGenericBareStoneProposal,
@@ -1855,16 +1859,64 @@ export function buildBenchV2ProducerProposals({
     }
   }
 
-  // 9. Drawer 8 Product-Owned Google Product Category
+  // 9. Drawer 13 Product-Owned Google Product Category (custom.google_product_category)
+  // Native Shopify category (Gemstones for all loose or wearable stone-bearing products;
+  // standalone hardware-only excluded), custom.google_product_category, and
+  // shopify.product-classification are strictly separate. Because no external Google
+  // stone taxonomy value is verified in this contract, unverified Vision
+  // google_product_category proposals are held on stone-bearing products (with a
+  // diagnostic note only when Vision returned a candidate) while preserving explicit
+  // operator locks, saved values, and standalone hardware-only products.
   const rawVisGoogleCat = cleanNonBlankVisionStr(
     rawVisionSnapshot.google_product_category
   );
   if (rawVisGoogleCat && !isBareFieldOperatorLocked("google_product_category")) {
-    addProposal(
-      "custom.google_product_category",
-      rawVisGoogleCat,
-      "Gemini Vision (google_product_category)"
+    const stoneIdentityContextForCat = resolveVerifiedStoneIdentityContext(
+      currentData,
+      idOrigin?.derivedFamily || "",
+      provenance
     );
+    const hasConfirmedStoneIdentity = Boolean(
+      !stoneIdentityContextForCat.isIdentityUncertain ||
+      effectiveBaseFamily ||
+      cleanTitleStoneVariety ||
+      producerProposals["custom.material"]?.value ||
+      producerProposals["custom.stone_family"]?.value ||
+      (geoFields && geoFields.geoSource && geoFields.geoSource !== "none")
+    );
+    const rawTitleForHardwareCheck = String(idOrigin?.rawTitleInput || "").trim();
+    const isExcludedStandaloneHardwareTitle = Boolean(
+      rawTitleForHardwareCheck &&
+      Array.isArray(EXCLUDED_TITLES) &&
+      EXCLUDED_TITLES.some(
+        (t) =>
+          typeof t === "string" &&
+          t.trim().toLowerCase() === rawTitleForHardwareCheck.toLowerCase()
+      )
+    );
+    const isStandaloneHardwareOnly = Boolean(
+      !hasConfirmedStoneIdentity &&
+      (isExcludedStandaloneHardwareTitle ||
+        stoneIdentityContextForCat.hadHardwareContamination)
+    );
+    const isShopifyTaxonomyPathOrGid =
+      /^gid:\/\/shopify\//i.test(rawVisGoogleCat) ||
+      /\b(?:TaxonomyCategory|ProductTaxonomyNode)\b/i.test(rawVisGoogleCat) ||
+      /^ae-\d+(?:-\d+)*$/i.test(rawVisGoogleCat);
+
+    if (isShopifyTaxonomyPathOrGid) {
+      producerDiagnostics["custom.google_product_category"] =
+        `Held Vision google_product_category candidate "${rawVisGoogleCat}": native Shopify taxonomy IDs/paths are never valid in custom.google_product_category.`;
+    } else if (!isStandaloneHardwareOnly) {
+      producerDiagnostics["custom.google_product_category"] =
+        `Held Vision google_product_category candidate "${rawVisGoogleCat}": stone-bearing products (loose or wearable) use native Shopify Gemstones by business rule, and no external Google stone taxonomy mapping is verified in this contract (existing saved or operator-locked values are preserved).`;
+    } else {
+      addProposal(
+        "custom.google_product_category",
+        rawVisGoogleCat,
+        "Gemini Vision (google_product_category)"
+      );
+    }
   }
 
   // 10. Drawer 9 Independent SEO Title Destinations (native_seo_title & custom.seo_title)

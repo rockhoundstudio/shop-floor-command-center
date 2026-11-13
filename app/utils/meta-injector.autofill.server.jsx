@@ -5,6 +5,7 @@
 
 import {
   DROPDOWN_OPTIONS,
+  EXCLUDED_TITLES,
   REMOVED_PARKED_CANONICAL_IDENTITIES,
   REMOVED_PARKED_DESTINATIONS,
   REMOVED_PARKED_CUSTOM_INPUT_ALIASES
@@ -68,6 +69,17 @@ function stripRetiredParkedProducerEntries(obj, defaultOwner = "PRODUCT") {
     }
   }
   return obj;
+}
+
+function isShopifyTaxonomyPathOrGidString(rawVal) {
+  if (typeof rawVal !== "string") return false;
+  const trimmed = rawVal.trim();
+  if (!trimmed) return false;
+  return (
+    /^gid:\/\/shopify\//i.test(trimmed) ||
+    /\b(?:TaxonomyCategory|ProductTaxonomyNode)\b/i.test(trimmed) ||
+    /^ae-\d+(?:-\d+)*$/i.test(trimmed)
+  );
 }
 
 const BENCH_V2_DB_GEOLOGY_DESTINATIONS = Object.freeze({
@@ -915,6 +927,24 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             : "";
         }
 
+        const rawSuppliedGoogleCat =
+          (body.get("google_product_category") ?? body.get("custom.google_product_category") ?? "").trim();
+        const isSuppliedGoogleCatPassiveOnly =
+          provenance.hasValidProvenance &&
+          provenance.passiveStoredSet.has("google_product_category") &&
+          !provenance.operatorLockedSet.has("google_product_category");
+        const preservedGoogleCatForTitleParse =
+          rawSuppliedGoogleCat &&
+          !INVALID_CANDIDATE_FILLERS.has(rawSuppliedGoogleCat.toLowerCase()) &&
+          !isShopifyTaxonomyPathOrGidString(rawSuppliedGoogleCat) &&
+          (!provenance.hasValidProvenance ||
+            provenance.operatorLockedSet.has("google_product_category") ||
+            isSuppliedGoogleCatPassiveOnly)
+            ? rawSuppliedGoogleCat
+            : "";
+
+        delete parsed.google_product_category;
+
         const finalParse = sanitizeObject({
           ...parsed,
           stone_family: verifiedFamily,
@@ -935,7 +965,9 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           ...dbGeoData,
           ...(explicitOoak.value ? { is_one_of_a_kind: explicitOoak.value } : {}),
           target_gender: "Unisex",
-          google_product_category: "Apparel & Accessories > Jewelry"
+          ...(preservedGoogleCatForTitleParse
+            ? { google_product_category: preservedGoogleCatForTitleParse }
+            : {})
         });
         delete finalParse.is_ooak;
         delete finalParse.rarity;
@@ -1034,6 +1066,16 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         currentInputFacts.primary_medium = stoneIdentityContext.effectivePrimaryMedium;
       }
 
+      const isGoogleCatPassiveInScan =
+        provenance.hasValidProvenance &&
+        provenance.passiveStoredSet.has("google_product_category") &&
+        !provenance.operatorLockedSet.has("google_product_category");
+      const promptOperatorFacts = { ...currentInputFacts };
+      if (isGoogleCatPassiveInScan) {
+        delete promptOperatorFacts.google_product_category;
+        delete promptOperatorFacts["custom.google_product_category"];
+      }
+
       const matchedCollectionObj = defaultCollection.slug
         ? collectionsList.find(c => c.handle === defaultCollection.slug)
         : null;
@@ -1050,7 +1092,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
         fullCollectionTitle: defaultCollection.name,
         collectionUrlPath: defaultCollection.slug ? `/collections/${defaultCollection.slug}` : "",
         pagesList,
-        operatorFacts: currentInputFacts,
+        operatorFacts: promptOperatorFacts,
         verifiedColorPatternChoices: validVerifiedColorPatternChoices,
         requireVerifiedColorPatternChoices: false
       });
@@ -1178,6 +1220,64 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           parsedVision.primary_medium ||
           (resolvedFamily ? getDerivedMaterial(resolvedFamily) : "");
 
+        const hasConfirmedStoneForScan = Boolean(
+          !stoneIdentityContext.isIdentityUncertain ||
+          resolvedFamily ||
+          resolvedMaterialVariety ||
+          (geoFields && geoFields.geoSource && geoFields.geoSource !== "none")
+        );
+        const rawTitleForScanHardwareCheck = String(idOrigin?.rawTitleInput || "").trim();
+        const isExcludedHardwareTitleForScan = Boolean(
+          rawTitleForScanHardwareCheck &&
+          Array.isArray(EXCLUDED_TITLES) &&
+          EXCLUDED_TITLES.some(
+            (t) =>
+              typeof t === "string" &&
+              t.trim().toLowerCase() === rawTitleForScanHardwareCheck.toLowerCase()
+          )
+        );
+        const isStandaloneHardwareOnlyForScan = Boolean(
+          !hasConfirmedStoneForScan &&
+          (isExcludedHardwareTitleForScan ||
+            stoneIdentityContext.hadHardwareContamination)
+        );
+
+        const rawSuppliedScanGoogleCat = String(
+          currentInputFacts.google_product_category ??
+          currentInputFacts["custom.google_product_category"] ??
+          ""
+        ).trim();
+        const cleanSuppliedScanGoogleCat =
+          rawSuppliedScanGoogleCat &&
+          !INVALID_CANDIDATE_FILLERS.has(rawSuppliedScanGoogleCat.toLowerCase()) &&
+          !isShopifyTaxonomyPathOrGidString(rawSuppliedScanGoogleCat)
+            ? rawSuppliedScanGoogleCat
+            : "";
+
+        const rawVisScanGoogleCat = cleanProducerNonBlankVisionStr(
+          parsedVision.google_product_category
+        );
+        const cleanVisScanGoogleCat =
+          rawVisScanGoogleCat && !isShopifyTaxonomyPathOrGidString(rawVisScanGoogleCat)
+            ? rawVisScanGoogleCat
+            : "";
+
+        delete parsedVision.google_product_category;
+
+        let resolvedScanGoogleCat = "";
+        if (cleanSuppliedScanGoogleCat) {
+          resolvedScanGoogleCat = cleanSuppliedScanGoogleCat;
+          if (
+            isStandaloneHardwareOnlyForScan &&
+            cleanVisScanGoogleCat &&
+            cleanVisScanGoogleCat !== cleanSuppliedScanGoogleCat
+          ) {
+            reviewProposals.google_product_category = cleanVisScanGoogleCat;
+          }
+        } else if (isStandaloneHardwareOnlyForScan && cleanVisScanGoogleCat) {
+          resolvedScanGoogleCat = cleanVisScanGoogleCat;
+        }
+
         const payload = sanitizeObject({
           pieceId,
           ...parsedVision,
@@ -1201,7 +1301,7 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
           ...(singleAltText ? { alt_text: singleAltText } : {}),
           ...(singleImageId && singleAltText ? { imageAlts: [{ imageId: singleImageId, altText: singleAltText }] } : {}),
           target_gender: currentInputFacts.target_gender || "Unisex",
-          google_product_category: currentInputFacts.google_product_category || parsedVision.google_product_category || "Apparel & Accessories > Jewelry"
+          ...(resolvedScanGoogleCat ? { google_product_category: resolvedScanGoogleCat } : {})
         });
 
         delete payload.is_ooak;
@@ -1700,6 +1800,45 @@ Return JSON with EXACT keys: stone_family, piece_name, origin_handle, origin_loc
             parsedVision.overall_solid_length_in = validSolidLen;
           } else {
             delete parsedVision.overall_solid_length_in;
+          }
+        }
+
+        const hasConfirmedStoneForTab3 = Boolean(
+          !stoneIdentityContext.isIdentityUncertain ||
+          effectiveFamily ||
+          resolvePicklistStoneFamily(parsedVision.stone_family) ||
+          cleanProducerNonBlankVisionStr(parsedVision.material) ||
+          cleanProducerNonBlankVisionStr(parsedVision.primary_medium) ||
+          (geoFields && geoFields.geoSource && geoFields.geoSource !== "none")
+        );
+        const rawTitleForTab3HardwareCheck = String(idOrigin?.rawTitleInput || "").trim();
+        const isExcludedHardwareTitleForTab3 = Boolean(
+          rawTitleForTab3HardwareCheck &&
+          Array.isArray(EXCLUDED_TITLES) &&
+          EXCLUDED_TITLES.some(
+            (t) =>
+              typeof t === "string" &&
+              t.trim().toLowerCase() === rawTitleForTab3HardwareCheck.toLowerCase()
+          )
+        );
+        const isStandaloneHardwareOnlyForTab3 = Boolean(
+          !hasConfirmedStoneForTab3 &&
+          (isExcludedHardwareTitleForTab3 ||
+            stoneIdentityContext.hadHardwareContamination)
+        );
+
+        if (parsedVision.google_product_category !== undefined) {
+          const cleanVisTab3GoogleCat = cleanProducerNonBlankVisionStr(
+            parsedVision.google_product_category
+          );
+          if (
+            !cleanVisTab3GoogleCat ||
+            isShopifyTaxonomyPathOrGidString(cleanVisTab3GoogleCat) ||
+            !isStandaloneHardwareOnlyForTab3
+          ) {
+            delete parsedVision.google_product_category;
+          } else {
+            parsedVision.google_product_category = cleanVisTab3GoogleCat;
           }
         }
 
