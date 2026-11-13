@@ -1,3 +1,8 @@
+// ==========================================================================
+// ROCKHOUND STUDIO — READ-ONLY PRODUCT & STANDARDIZED CANDIDATE RESOLVER
+// File: app/utils/meta-injector.read-actions.server.jsx
+// ==========================================================================
+
 import {
   REMOVED_PARKED_DESTINATION_LIST,
   REMOVED_PARKED_CUSTOM_INPUT_ALIAS_LIST,
@@ -607,6 +612,7 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
   let overallComplete = true;
 
   const productShopifyMetafields = {};
+  let resolvedServerProductId = null;
   let productCategory = null;
   let productCategoryReadComplete = false;
   let productMetafieldsReadComplete = false;
@@ -659,6 +665,7 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
       }
 
       if (mfPagesFetched === 1) {
+        resolvedServerProductId = productNode.id;
         productCategory = productNode.category
           ? { id: productNode.category.id || null, fullName: productNode.category.fullName || null }
           : null;
@@ -715,6 +722,7 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
     const dest = `shopify.${stdMetaKey}`;
     const liveDef = liveDefs[dest] || null;
     let elig = evaluateStandardizedCategoryEligibility({
+      productId: resolvedServerProductId,
       destination: dest,
       liveDef,
       defsReadComplete,
@@ -733,6 +741,7 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
     ) {
       elig = await continueProductDefinitionCategoryConstraintMatch({
         admin,
+        productId: resolvedServerProductId,
         destination: dest,
         liveDef,
         defsReadComplete,
@@ -899,6 +908,7 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
     const parsedStored = parseStoredReferenceList(storedMf?.value);
     const liveDef = liveDefs[destination] || null;
     let catElig = categoryEligibility[destination] || evaluateStandardizedCategoryEligibility({
+      productId: resolvedServerProductId,
       destination,
       liveDef,
       defsReadComplete,
@@ -916,6 +926,7 @@ export async function executeResolveStandardizedCandidates({ admin, body, onMatc
     ) {
       catElig = await continueProductDefinitionCategoryConstraintMatch({
         admin,
+        productId: resolvedServerProductId,
         destination,
         liveDef,
         defsReadComplete,

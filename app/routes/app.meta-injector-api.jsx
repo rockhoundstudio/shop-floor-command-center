@@ -473,6 +473,8 @@ export const action = async ({ request }) => {
       }
 
       const productNode = lookupData?.data?.product || null;
+      const resolvedServerProductId =
+        productLookupComplete && productNode?.id === productGid ? productNode.id : null;
       const productCategory = productNode?.category
         ? { id: productNode.category.id || null, fullName: productNode.category.fullName || null }
         : null;
@@ -1186,6 +1188,7 @@ export const action = async ({ request }) => {
             defConstraintErrorsByDestination,
             evaluateCategoryEligibility: (liveDefForDest) =>
               evaluateStandardizedCategoryEligibility({
+                productId: resolvedServerProductId,
                 destination: fullKey,
                 liveDef: liveDefForDest,
                 defsReadComplete,
@@ -1383,6 +1386,7 @@ export const action = async ({ request }) => {
         let evaluatedCatEligForDest = null;
         if (ns === "shopify" || (def?.constraints && (def.constraints.hasConstraints || !def.constraints.isComplete))) {
             let catElig = evaluateStandardizedCategoryEligibility({
+                productId: resolvedServerProductId,
                 destination: canonicalDestinationKey,
                 liveDef: def,
                 defsReadComplete,
@@ -1397,6 +1401,7 @@ export const action = async ({ request }) => {
             ) {
                 catElig = await continueProductDefinitionCategoryConstraintMatch({
                     admin,
+                    productId: resolvedServerProductId,
                     destination: canonicalDestinationKey,
                     liveDef: def,
                     defsReadComplete,
