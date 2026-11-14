@@ -9,7 +9,8 @@ import {
   isManualOnlyNoAiDestination,
   checkExistingWriterStringFidelity,
   evaluateDestinationTypeAndCompleteness,
-  evaluateBenchV2FieldRow
+  evaluateBenchV2FieldRow,
+  isKeepOriginalRecordValid
 } from "./bench-v2.contract.jsx";
 
 export const BENCH_V2_FILTER_OPTIONS = Object.freeze([
@@ -244,7 +245,8 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
     scanProposalMeta,
     actionableScanMeta,
     validation,
-    fidelityCheck
+    fidelityCheck,
+    isKeepOriginal
   } = row;
 
   const resolvedActionableScanMeta =
@@ -402,6 +404,17 @@ export function getShortPlainNotice(row, isRefChoicesBusy = false) {
     return null;
   }
 
+  if (isKeepOriginal && resolvedActionableScanMeta) {
+    return {
+      tone: "muted",
+      text: `Keeping original saved value (unresolved AI candidate${
+        resolvedActionableScanMeta.candidateValue
+          ? ` "${resolvedActionableScanMeta.candidateValue}"`
+          : ""
+      } dismissed; raw diagnostic preserved in Details).`
+    };
+  }
+
   if (contract.namespace === "shopify") {
     if (!referenceEvidence || !referenceEvidence.evidenceLoaded) {
       if (resolvedActionableScanMeta) {
@@ -534,13 +547,13 @@ export function matchesBenchV2Filter(row, activeFilter) {
     if (isParkedOrProtectedDrawerId(contract.drawerId)) return false;
     if (isRequiredMissing) return true;
     if (Boolean(heldAiAlternative)) return true;
-    if (Boolean(resolvedActionableScanMeta)) return true;
     if (isKeepOriginal) return false;
     if (isApproved && !isBlockedOrInvalidProposal) return false;
     if (isTemporarilyClearedManualEdit) return true;
     if (hasChangedProposal && (!isApproved || isBlockedOrInvalidProposal)) {
       return true;
     }
+    if (!hasProposalKey && Boolean(resolvedActionableScanMeta)) return true;
     return false;
   }
 
@@ -790,7 +803,7 @@ export function evaluateAndFilterBenchV2Drawers({
           activeSaveReportForCurrentProduct.verifiedDestinations.includes(destKey)
       );
 
-      const actionableScanMeta = evaluateActionableScanProposalMeta({
+      const rawActionableScanMeta = evaluateActionableScanProposalMeta({
         contract: fieldContract,
         baselineObservation: baseEval.baselineObservation,
         hasProposalKey: baseEval.hasProposalKey,
@@ -799,11 +812,54 @@ export function evaluateAndFilterBenchV2Drawers({
         verifiedInLastSave
       });
 
+      const obs = baseEval.baselineObservation;
+      const keepOrigRec = currentKeepOriginalMap?.[destKey] || null;
+      const unstagedCandidateValue =
+        !baseEval.hasProposalKey &&
+        rawActionableScanMeta &&
+        typeof rawActionableScanMeta.candidateValue === "string"
+          ? rawActionableScanMeta.candidateValue.trim()
+          : "";
+
+      const isKeepOriginalForUnstagedCandidate = Boolean(
+        !baseEval.hasProposalKey &&
+          unstagedCandidateValue !== "" &&
+          isKeepOriginalRecordValid({
+            keepOriginalRecord: keepOrigRec,
+            productId: activeProductId,
+            destinationKey: destKey,
+            currentProposedValue: unstagedCandidateValue,
+            baselineSnapshot: currentBaseline
+          })
+      );
+
+      const effectiveIsKeepOriginal = Boolean(
+        baseEval.isKeepOriginal || isKeepOriginalForUnstagedCandidate
+      );
+
+      const hasValidStagedProposal = Boolean(
+        baseEval.hasProposalKey &&
+          baseEval.validation?.valid === true &&
+          !baseEval.validation?.isUnchangedFromStored &&
+          fidelityCheck.faithful
+      );
+
+      // Suppress active unresolved scan hold from the card header / primary review
+      // banner when addressed by a valid Keep Original decision or superseded by an
+      // independently valid staged proposal, while preserving `scanProposalMeta`
+      // on the row so Details and drawer copy retain the full raw AI diagnostic.
+      const actionableScanMeta =
+        effectiveIsKeepOriginal || hasValidStagedProposal ? null : rawActionableScanMeta;
+
       let effectiveConnectionStatus = baseEval.connectionStatus;
       let effectiveReviewStatus = baseEval.reviewStatus;
       let effectiveStatusReason = baseEval.statusReason;
 
-      const obs = baseEval.baselineObservation;
+      if (isKeepOriginalForUnstagedCandidate && !baseEval.hasProposalKey) {
+        effectiveReviewStatus = "Keep Original (Unresolved AI Candidate Dismissed)";
+        effectiveStatusReason = `Bound to current baseline signature; unresolved AI candidate "${unstagedCandidateValue}" dismissed while retaining saved value.`;
+      }
+
       const isShopifyReference = fieldContract.namespace === "shopify";
       const isCategoryIneligibleBlocked = Boolean(
         isShopifyReference &&
@@ -813,7 +869,11 @@ export function evaluateAndFilterBenchV2Drawers({
           obs.categoryEligibility?.status === "category_ineligible"
       );
 
-      if (isCategoryIneligibleBlocked && !baseEval.hasProposalKey) {
+      if (
+        isCategoryIneligibleBlocked &&
+        !baseEval.hasProposalKey &&
+        !effectiveIsKeepOriginal
+      ) {
         effectiveReviewStatus = "Ineligible for Product Category (Read-Only)";
       }
 
@@ -826,7 +886,7 @@ export function evaluateAndFilterBenchV2Drawers({
         effectiveConnectionStatus = isRefChoicesBusy
           ? `Connected (Standardized Reference Eligible — Loading Verified ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId} Choices...)`
           : `Connected (Standardized Reference Eligible — Reference Choices Load Automatically for ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId})`;
-        if (!baseEval.hasProposalKey) {
+        if (!baseEval.hasProposalKey && !effectiveIsKeepOriginal) {
           effectiveStatusReason = isRefChoicesBusy
             ? `Loading verified Metaobject entries for ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId}...`
             : `Verified Metaobject entries for ${baseEval.baselineObservation.restrictedMetaobjectDefinitionId} load automatically when the product baseline is ready.`;
@@ -844,12 +904,10 @@ export function evaluateAndFilterBenchV2Drawers({
       }
 
       // Keep `effectiveReviewStatus` and `effectiveStatusReason` faithful to the
-      // active valid human/staged draft, exact approval, or unchanged baseline.
-      // Only promote `actionableScanMeta` to `effectiveReviewStatus` when NO draft
-      // is staged (`!baseEval.hasProposalKey`) and the field is not already marked
-      // category-ineligible; `actionableScanMeta` remains attached on the row for
-      // independent rendering in `BenchV2DrawersView` and telemetry.
-      if (actionableScanMeta && !baseEval.hasProposalKey) {
+      // active valid human/staged draft, exact approval, Keep Original decision,
+      // or unchanged baseline. Only promote `actionableScanMeta` when NO draft is
+      // staged (`!baseEval.hasProposalKey`) and Keep Original is not active.
+      if (actionableScanMeta && !baseEval.hasProposalKey && !effectiveIsKeepOriginal) {
         if (!isCategoryIneligibleBlocked) {
           effectiveReviewStatus = actionableScanMeta.reviewStatusLabel;
         }
@@ -872,7 +930,8 @@ export function evaluateAndFilterBenchV2Drawers({
         usesMeaningDisplay,
         baseEval.baselineDisplayValue
       );
-      const canSelectKeepOriginal = Boolean(
+
+      const canSelectKeepOriginalForStagedDraft = Boolean(
         fieldContract.isWritableInBatch1 &&
           baseEval.hasProposalKey &&
           obs.evidenceAvailable &&
@@ -880,8 +939,21 @@ export function evaluateAndFilterBenchV2Drawers({
           !(obs.presence === "present" && obs.rawValue === baseEval.proposedValue)
       );
 
+      const canSelectKeepOriginalForUnstagedCandidate = Boolean(
+        fieldContract.isWritableInBatch1 &&
+          !baseEval.hasProposalKey &&
+          obs.evidenceAvailable &&
+          unstagedCandidateValue !== "" &&
+          !(obs.presence === "present" && obs.rawValue === unstagedCandidateValue)
+      );
+
+      const canSelectKeepOriginal = Boolean(
+        canSelectKeepOriginalForStagedDraft || canSelectKeepOriginalForUnstagedCandidate
+      );
+
       const enrichedRow = {
         ...baseEval,
+        isKeepOriginal: effectiveIsKeepOriginal,
         proposalOrigin,
         heldAiAlternative,
         scanProposalMeta,

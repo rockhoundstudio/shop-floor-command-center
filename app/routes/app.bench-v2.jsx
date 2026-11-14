@@ -25,6 +25,7 @@ import {
   isExactProductGid,
   getFieldContractByDestination,
   inspectStoredReferenceListRawValue,
+  buildBaselineObservation,
   createExactValueApprovalRecord,
   createKeepOriginalRecord
 } from "../utils/bench-v2.contract.jsx";
@@ -54,6 +55,7 @@ import {
   BENCH_V2_FILTER_OPTIONS,
   PLAIN_DRAWER_TITLES,
   matchesBenchV2Filter,
+  evaluateActionableScanProposalMeta,
   evaluateAndFilterBenchV2Drawers
 } from "../utils/bench-v2.field-filters.jsx";
 import {
@@ -1257,12 +1259,43 @@ export default function BenchV2Route() {
       return;
     }
 
-    const exactProposedValue = getProposalValueString(currentProposedMap[destinationKey]);
+    const hasProposalKey = Boolean(
+      currentProposedMap &&
+        typeof currentProposedMap === "object" &&
+        Object.prototype.hasOwnProperty.call(currentProposedMap, destinationKey)
+    );
+    const exactStagedProposalValue = hasProposalKey
+      ? getProposalValueString(currentProposedMap[destinationKey])
+      : "";
+
+    let rejectedTargetValue = exactStagedProposalValue;
+
+    if (!hasProposalKey) {
+      const contract = getFieldContractByDestination(destinationKey);
+      const baselineObs = buildBaselineObservation(currentBaseline, destinationKey);
+      const verifiedInLastSave = Boolean(
+        lastSaveReport &&
+          lastSaveReport.productId === activeProductId &&
+          Array.isArray(lastSaveReport.verifiedDestinations) &&
+          lastSaveReport.verifiedDestinations.includes(destinationKey)
+      );
+      const actionableScanMeta = evaluateActionableScanProposalMeta({
+        contract,
+        baselineObservation: baselineObs,
+        hasProposalKey: false,
+        proposedValue: "",
+        scanProposalMeta: currentScanProposalsMetaMap[destinationKey] || null,
+        verifiedInLastSave
+      });
+      if (actionableScanMeta && typeof actionableScanMeta.candidateValue === "string") {
+        rejectedTargetValue = actionableScanMeta.candidateValue.trim();
+      }
+    }
 
     const created = createKeepOriginalRecord({
       productId: activeProductId,
       destinationKey,
-      rejectedProposedValue: exactProposedValue,
+      rejectedProposedValue: rejectedTargetValue,
       baselineSnapshot: currentBaseline
     });
 
