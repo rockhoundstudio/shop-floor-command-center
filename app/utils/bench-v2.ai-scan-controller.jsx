@@ -67,6 +67,170 @@ export const AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS = Object.fre
   ])
 );
 
+function formatAiScanSummaryText({
+  receivedCount,
+  stagedCount,
+  heldConflictCount,
+  unchangedSkippedCount,
+  ignoredManualOnlyCount
+}) {
+  const manualIgnoredNote =
+    ignoredManualOnlyCount > 0
+      ? `, ${ignoredManualOnlyCount} manual-only suggestion${
+          ignoredManualOnlyCount === 1 ? "" : "s"
+        } ignored`
+      : "";
+
+  return `AI Scan complete: ${receivedCount} eligible suggestion${
+    receivedCount === 1 ? "" : "s"
+  } received (${stagedCount} staged as unapproved drafts, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline${manualIgnoredNote}).`;
+}
+
+function evaluateAndRecordResolvedAiProposal({
+  productId,
+  destKey,
+  normalizedValue,
+  reportedSource,
+  displayNote = "",
+  allowExplicitReferenceListReplacement = false,
+  requestId,
+  targetBaseline,
+  existingProdProposals,
+  existingProdApprovals,
+  existingProdKeepOriginal,
+  nextAiAlternativesForProd,
+  proposalsByDestination,
+  details
+}) {
+  const contractForDest = getFieldContractByDestination(destKey);
+  const shouldBindReplacementIntent = Boolean(
+    allowExplicitReferenceListReplacement === true &&
+      contractForDest?.namespace === "shopify" &&
+      contractForDest?.expectedType === "list.metaobject_reference" &&
+      contractForDest?.isWritableInBatch1 === true &&
+      typeof normalizedValue === "string" &&
+      normalizedValue.trim() !== ""
+  );
+
+  const existingDraft = existingProdProposals[destKey];
+  const existingDraftVal = getProposalValueString(existingDraft);
+  const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
+  const isManualDraft = Boolean(
+    hasExistingDraft &&
+      (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+  );
+  const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
+    existingDraft,
+    destKey,
+    existingDraftVal
+  );
+
+  const approvalRec = existingProdApprovals[destKey] || null;
+  const hasValidApproval =
+    hasExistingDraft &&
+    isExactValueApprovalValid({
+      approvalRecord: approvalRec,
+      productId,
+      destinationKey: destKey,
+      currentProposedValue: existingDraftVal,
+      baselineSnapshot: targetBaseline,
+      allowExplicitReferenceListReplacement: existingAllowReplacement
+    });
+
+  const keepOrigRec = existingProdKeepOriginal[destKey] || null;
+  const hasValidKeepOriginal =
+    hasExistingDraft &&
+    isKeepOriginalRecordValid({
+      keepOriginalRecord: keepOrigRec,
+      productId,
+      destinationKey: destKey,
+      currentProposedValue: existingDraftVal,
+      baselineSnapshot: targetBaseline
+    });
+
+  const hasProtectedHumanState =
+    isManualDraft || hasValidApproval || hasValidKeepOriginal;
+
+  const formattedSuffix = displayNote ? ` [${displayNote}]` : "";
+
+  if (hasProtectedHumanState) {
+    if (
+      existingDraftVal === normalizedValue &&
+      existingAllowReplacement === shouldBindReplacementIntent &&
+      !hasValidKeepOriginal
+    ) {
+      proposalsByDestination[destKey] = {
+        value: normalizedValue,
+        source: reportedSource,
+        disposition: "Matches current draft"
+      };
+      details.push(
+        `[${destKey}] AI suggestion matches your current draft ("${normalizedValue}"${formattedSuffix}) — Source: ${reportedSource}.`
+      );
+      return {
+        dispositionOutcome: "matched_draft",
+        approvalCleared: false
+      };
+    }
+
+    nextAiAlternativesForProd[destKey] = {
+      value: normalizedValue,
+      source: reportedSource,
+      ...(shouldBindReplacementIntent
+        ? {
+            allowExplicitReferenceListReplacement: true,
+            explicitReplacementValue: normalizedValue
+          }
+        : {}),
+      requestId,
+      receivedAt: new Date().toISOString()
+    };
+    proposalsByDestination[destKey] = {
+      value: normalizedValue,
+      source: reportedSource,
+      disposition: "Held as separate AI alternative"
+    };
+    details.push(
+      `[${destKey}] Held AI alternative "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}) without overwriting your current draft or decision.`
+    );
+    return {
+      dispositionOutcome: "held_conflict",
+      approvalCleared: false
+    };
+  }
+
+  let approvalCleared = false;
+  if (existingProdApprovals[destKey]) {
+    delete existingProdApprovals[destKey];
+    approvalCleared = true;
+  }
+
+  existingProdProposals[destKey] = {
+    value: normalizedValue,
+    source: reportedSource,
+    origin: "AI",
+    ...(shouldBindReplacementIntent
+      ? {
+          allowExplicitReferenceListReplacement: true,
+          explicitReplacementValue: normalizedValue
+        }
+      : {}),
+    updatedAt: new Date().toISOString()
+  };
+  proposalsByDestination[destKey] = {
+    value: normalizedValue,
+    source: reportedSource,
+    disposition: "Staged as unapproved AI draft"
+  };
+  details.push(
+    `[${destKey}] Staged unapproved AI draft "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}).`
+  );
+  return {
+    dispositionOutcome: "staged",
+    approvalCleared
+  };
+}
+
 export function resolveProducerBackedGeologyReferenceCandidate({
   productId,
   destKey,
@@ -956,122 +1120,28 @@ export function useBenchV2AiScanController({
       displayNote = "",
       allowExplicitReferenceListReplacement = false
     }) => {
-      const contractForDest = getFieldContractByDestination(destKey);
-      const shouldBindReplacementIntent = Boolean(
-        allowExplicitReferenceListReplacement === true &&
-          contractForDest?.namespace === "shopify" &&
-          contractForDest?.expectedType === "list.metaobject_reference" &&
-          contractForDest?.isWritableInBatch1 === true &&
-          typeof normalizedValue === "string" &&
-          normalizedValue.trim() !== ""
-      );
-
-      const existingDraft = existingProdProposals[destKey];
-      const existingDraftVal = getProposalValueString(existingDraft);
-      const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
-      const isManualDraft = Boolean(
-        hasExistingDraft &&
-          (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
-      );
-      const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
-        existingDraft,
+      const outcome = evaluateAndRecordResolvedAiProposal({
+        productId: scannedProductId,
         destKey,
-        existingDraftVal
-      );
+        normalizedValue,
+        reportedSource,
+        displayNote,
+        allowExplicitReferenceListReplacement,
+        requestId: pendingScan.requestId,
+        targetBaseline,
+        existingProdProposals,
+        existingProdApprovals,
+        existingProdKeepOriginal,
+        nextAiAlternativesForProd,
+        proposalsByDestination,
+        details
+      });
 
-      const approvalRec = existingProdApprovals[destKey] || null;
-      const hasValidApproval =
-        hasExistingDraft &&
-        isExactValueApprovalValid({
-          approvalRecord: approvalRec,
-          productId: scannedProductId,
-          destinationKey: destKey,
-          currentProposedValue: existingDraftVal,
-          baselineSnapshot: targetBaseline,
-          allowExplicitReferenceListReplacement: existingAllowReplacement
-        });
-
-      const keepOrigRec = existingProdKeepOriginal[destKey] || null;
-      const hasValidKeepOriginal =
-        hasExistingDraft &&
-        isKeepOriginalRecordValid({
-          keepOriginalRecord: keepOrigRec,
-          productId: scannedProductId,
-          destinationKey: destKey,
-          currentProposedValue: existingDraftVal,
-          baselineSnapshot: targetBaseline
-        });
-
-      const hasProtectedHumanState =
-        isManualDraft || hasValidApproval || hasValidKeepOriginal;
-
-      const formattedSuffix = displayNote ? ` [${displayNote}]` : "";
-
-      if (hasProtectedHumanState) {
-        if (
-          existingDraftVal === normalizedValue &&
-          existingAllowReplacement === shouldBindReplacementIntent &&
-          !hasValidKeepOriginal
-        ) {
-          proposalsByDestination[destKey] = {
-            value: normalizedValue,
-            source: reportedSource,
-            disposition: "Matches current draft"
-          };
-          details.push(
-            `[${destKey}] AI suggestion matches your current draft ("${normalizedValue}"${formattedSuffix}) — Source: ${reportedSource}.`
-          );
-          return;
-        }
+      if (outcome.dispositionOutcome === "held_conflict") {
         heldConflictCount++;
-        nextAiAlternativesForProd[destKey] = {
-          value: normalizedValue,
-          source: reportedSource,
-          ...(shouldBindReplacementIntent
-            ? {
-                allowExplicitReferenceListReplacement: true,
-                explicitReplacementValue: normalizedValue
-              }
-            : {}),
-          requestId: pendingScan.requestId,
-          receivedAt: new Date().toISOString()
-        };
-        proposalsByDestination[destKey] = {
-          value: normalizedValue,
-          source: reportedSource,
-          disposition: "Held as separate AI alternative"
-        };
-        details.push(
-          `[${destKey}] Held AI alternative "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}) without overwriting your current draft or decision.`
-        );
-        return;
+      } else if (outcome.dispositionOutcome === "staged") {
+        stagedCount++;
       }
-
-      if (existingProdApprovals[destKey]) {
-        delete existingProdApprovals[destKey];
-      }
-
-      existingProdProposals[destKey] = {
-        value: normalizedValue,
-        source: reportedSource,
-        origin: "AI",
-        ...(shouldBindReplacementIntent
-          ? {
-              allowExplicitReferenceListReplacement: true,
-              explicitReplacementValue: normalizedValue
-            }
-          : {}),
-        updatedAt: new Date().toISOString()
-      };
-      stagedCount++;
-      proposalsByDestination[destKey] = {
-        value: normalizedValue,
-        source: reportedSource,
-        disposition: "Staged as unapproved AI draft"
-      };
-      details.push(
-        `[${destKey}] Staged unapproved AI draft "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}).`
-      );
     };
 
     for (const [destKey, entry] of Object.entries(combinedProducerAndVisionProposals)) {
@@ -1420,13 +1490,6 @@ export function useBenchV2AiScanController({
       return next;
     });
 
-    const manualIgnoredNote =
-      ignoredManualOnlyCount > 0
-        ? `, ${ignoredManualOnlyCount} manual-only suggestion${
-            ignoredManualOnlyCount === 1 ? "" : "s"
-          } ignored`
-        : "";
-
     setLastAiScanReportByProduct((prev) => ({
       ...prev,
       [scannedProductId]: {
@@ -1434,9 +1497,13 @@ export function useBenchV2AiScanController({
         productId: scannedProductId,
         completedAt: new Date().toISOString(),
         ok: true,
-        summary: `AI Scan complete: ${receivedCount} eligible suggestion${
-          receivedCount === 1 ? "" : "s"
-        } received (${stagedCount} staged as unapproved drafts, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline${manualIgnoredNote}).`,
+        summary: formatAiScanSummaryText({
+          receivedCount,
+          stagedCount,
+          heldConflictCount,
+          unchangedSkippedCount,
+          ignoredManualOnlyCount
+        }),
         receivedCount,
         stagedCount,
         heldConflictCount,
@@ -1705,117 +1772,35 @@ export function useBenchV2DeferredAiReferenceResolver({
       }
 
       if (resolution.status === "resolved_valid_change") {
-        const normalizedValue = resolution.serializedValue;
-        const shouldBindReplacementIntent = Boolean(
-          resolution.allowExplicitReferenceListReplacement === true &&
-            typeof normalizedValue === "string" &&
-            normalizedValue.trim() !== ""
-        );
         const displayNote = `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`;
         updatedDiagnostics[destKey] = null;
 
-        const existingDraft = existingProdProposals[destKey];
-        const existingDraftVal = getProposalValueString(existingDraft);
-        const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
-        const isManualDraft = Boolean(
-          hasExistingDraft &&
-            (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
-        );
-        const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
-          existingDraft,
+        const outcome = evaluateAndRecordResolvedAiProposal({
+          productId: activeProductId,
           destKey,
-          existingDraftVal
-        );
+          normalizedValue: resolution.serializedValue,
+          reportedSource,
+          displayNote,
+          allowExplicitReferenceListReplacement: Boolean(
+            resolution.allowExplicitReferenceListReplacement
+          ),
+          requestId: pendingBundle.requestId,
+          targetBaseline: currentBaseline,
+          existingProdProposals,
+          existingProdApprovals,
+          existingProdKeepOriginal,
+          nextAiAlternativesForProd,
+          proposalsByDestination: updatedProposalsMeta,
+          details: appendedDetails
+        });
 
-        const approvalRec = existingProdApprovals[destKey] || null;
-        const hasValidApproval =
-          hasExistingDraft &&
-          isExactValueApprovalValid({
-            approvalRecord: approvalRec,
-            productId: activeProductId,
-            destinationKey: destKey,
-            currentProposedValue: existingDraftVal,
-            baselineSnapshot: currentBaseline,
-            allowExplicitReferenceListReplacement: existingAllowReplacement
-          });
-
-        const keepOrigRec = existingProdKeepOriginal[destKey] || null;
-        const hasValidKeepOriginal =
-          hasExistingDraft &&
-          isKeepOriginalRecordValid({
-            keepOriginalRecord: keepOrigRec,
-            productId: activeProductId,
-            destinationKey: destKey,
-            currentProposedValue: existingDraftVal,
-            baselineSnapshot: currentBaseline
-          });
-
-        const hasProtectedHumanState =
-          isManualDraft || hasValidApproval || hasValidKeepOriginal;
-
-        if (hasProtectedHumanState) {
-          if (
-            existingDraftVal === normalizedValue &&
-            existingAllowReplacement === shouldBindReplacementIntent &&
-            !hasValidKeepOriginal
-          ) {
-            updatedProposalsMeta[destKey] = {
-              value: normalizedValue,
-              source: reportedSource,
-              disposition: "Matches current draft"
-            };
-            appendedDetails.push(
-              `[${destKey}] AI suggestion matches your current draft ("${normalizedValue}" [${displayNote}]) — Source: ${reportedSource}.`
-            );
-          } else {
-            addedHeld++;
-            nextAiAlternativesForProd[destKey] = {
-              value: normalizedValue,
-              source: reportedSource,
-              ...(shouldBindReplacementIntent
-                ? {
-                    allowExplicitReferenceListReplacement: true,
-                    explicitReplacementValue: normalizedValue
-                  }
-                : {}),
-              requestId: pendingBundle.requestId,
-              receivedAt: new Date().toISOString()
-            };
-            updatedProposalsMeta[destKey] = {
-              value: normalizedValue,
-              source: reportedSource,
-              disposition: "Held as separate AI alternative"
-            };
-            appendedDetails.push(
-              `[${destKey}] Held AI alternative "${normalizedValue}" [${displayNote}] (Source: ${reportedSource}) without overwriting your current draft or decision.`
-            );
-          }
-        } else {
-          if (existingProdApprovals[destKey]) {
-            delete existingProdApprovals[destKey];
+        if (outcome.dispositionOutcome === "held_conflict") {
+          addedHeld++;
+        } else if (outcome.dispositionOutcome === "staged") {
+          addedStaged++;
+          if (outcome.approvalCleared) {
             approvalsCleared = true;
           }
-          existingProdProposals[destKey] = {
-            value: normalizedValue,
-            source: reportedSource,
-            origin: "AI",
-            ...(shouldBindReplacementIntent
-              ? {
-                  allowExplicitReferenceListReplacement: true,
-                  explicitReplacementValue: normalizedValue
-                }
-              : {}),
-            updatedAt: new Date().toISOString()
-          };
-          addedStaged++;
-          updatedProposalsMeta[destKey] = {
-            value: normalizedValue,
-            source: reportedSource,
-            disposition: "Staged as unapproved AI draft"
-          };
-          appendedDetails.push(
-            `[${destKey}] Staged unapproved AI draft "${normalizedValue}" [${displayNote}] (Source: ${reportedSource}).`
-          );
         }
         continue;
       }
@@ -1891,10 +1876,6 @@ export function useBenchV2DeferredAiReferenceResolver({
         (existingReport.rejectedInvalidCount || 0) + addedRejected;
       const recCount = existingReport.receivedCount || 0;
       const ignCount = existingReport.ignoredManualOnlyCount || 0;
-      const manualIgnoredNote =
-        ignCount > 0
-          ? `, ${ignCount} manual-only suggestion${ignCount === 1 ? "" : "s"} ignored`
-          : "";
 
       return {
         ...prev,
@@ -1904,9 +1885,13 @@ export function useBenchV2DeferredAiReferenceResolver({
           heldConflictCount: nextHeldCount,
           unchangedSkippedCount: nextUnchangedCount,
           rejectedInvalidCount: nextRejectedCount,
-          summary: `AI Scan complete: ${recCount} eligible suggestion${
-            recCount === 1 ? "" : "s"
-          } received (${nextStagedCount} staged as unapproved drafts, ${nextHeldCount} held as alternatives alongside your existing edits, ${nextUnchangedCount} matched saved baseline${manualIgnoredNote}).`,
+          summary: formatAiScanSummaryText({
+            receivedCount: recCount,
+            stagedCount: nextStagedCount,
+            heldConflictCount: nextHeldCount,
+            unchangedSkippedCount: nextUnchangedCount,
+            ignoredManualOnlyCount: ignCount
+          }),
           diagnostics: nextDiagnostics,
           details: [...(existingReport.details || []), ...appendedDetails],
           proposalsByDestination: {

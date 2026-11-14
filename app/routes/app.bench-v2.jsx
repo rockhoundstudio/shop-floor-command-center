@@ -254,6 +254,48 @@ function mergeKnownProductsMap(prevMap, pageItems, snap) {
   return next;
 }
 
+function inspectActiveReferenceListDraft(
+  row,
+  { requireVerifiedMembers = false } = {}
+) {
+  const rawDraft = typeof row?.proposedValue === "string" ? row.proposedValue : "";
+  let parsedDraft = null;
+  try {
+    parsedDraft = JSON.parse(rawDraft);
+  } catch {
+    parsedDraft = null;
+  }
+  const draftCheck = inspectStoredReferenceListRawValue(rawDraft);
+  const verifiedMap =
+    requireVerifiedMembers &&
+    row?.referenceEvidence?.isComplete &&
+    row.referenceEvidence.entriesByGid instanceof Map
+      ? row.referenceEvidence.entriesByGid
+      : null;
+  const allDraftMembersVerified = requireVerifiedMembers
+    ? Boolean(
+        draftCheck.valid &&
+          draftCheck.gids.length > 0 &&
+          (!verifiedMap || draftCheck.gids.every((g) => verifiedMap.has(g)))
+      )
+    : true;
+  const valid = Boolean(
+    Array.isArray(parsedDraft) &&
+      parsedDraft.length > 0 &&
+      draftCheck.valid &&
+      draftCheck.gids.length === parsedDraft.length &&
+      JSON.stringify(parsedDraft) === rawDraft &&
+      allDraftMembersVerified &&
+      (!row?.validation || row.validation.valid === true)
+  );
+
+  return {
+    valid,
+    gids: draftCheck.gids,
+    error: draftCheck.error
+  };
+}
+
 export default function BenchV2Route() {
   const loaderData = useLoaderData();
   const revalidator = useRevalidator();
@@ -932,24 +974,11 @@ export default function BenchV2Route() {
 
     let activeGids = [];
     if (row.hasProposalKey) {
-      const rawDraft = typeof row.proposedValue === "string" ? row.proposedValue : "";
-      let parsedDraft = null;
-      try {
-        parsedDraft = JSON.parse(rawDraft);
-      } catch {
-        parsedDraft = null;
-      }
-      const draftCheck = inspectStoredReferenceListRawValue(rawDraft);
-      const isDraftCanonicalValid = Boolean(
-        Array.isArray(parsedDraft) &&
-          parsedDraft.length > 0 &&
-          draftCheck.valid &&
-          draftCheck.gids.length === parsedDraft.length &&
-          JSON.stringify(parsedDraft) === rawDraft &&
-          (!row.validation || row.validation.valid === true)
-      );
+      const draftCheck = inspectActiveReferenceListDraft(row, {
+        requireVerifiedMembers: false
+      });
 
-      if (!isDraftCanonicalValid) {
+      if (!draftCheck.valid) {
         setClientPrevalidationBanner({
           tone: "error",
           title: `Cannot remove reference choice on ${destKey}: active draft is invalid`,
@@ -1091,35 +1120,11 @@ export default function BenchV2Route() {
     );
 
     if (row.hasProposalKey) {
-      const rawDraft = typeof row.proposedValue === "string" ? row.proposedValue : "";
-      let parsedCurrent = null;
-      try {
-        parsedCurrent = JSON.parse(rawDraft);
-      } catch {
-        parsedCurrent = null;
-      }
-      const draftCheck = inspectStoredReferenceListRawValue(rawDraft);
-      const verifiedMap =
-        row.referenceEvidence?.isComplete &&
-        row.referenceEvidence.entriesByGid instanceof Map
-          ? row.referenceEvidence.entriesByGid
-          : null;
-      const allDraftMembersVerified = Boolean(
-        draftCheck.valid &&
-          draftCheck.gids.length > 0 &&
-          (!verifiedMap || draftCheck.gids.every((g) => verifiedMap.has(g)))
-      );
-      const isDraftValidForAppend = Boolean(
-        Array.isArray(parsedCurrent) &&
-          parsedCurrent.length > 0 &&
-          draftCheck.valid &&
-          draftCheck.gids.length === parsedCurrent.length &&
-          JSON.stringify(parsedCurrent) === rawDraft &&
-          allDraftMembersVerified &&
-          (!row.validation || row.validation.valid === true)
-      );
+      const draftCheck = inspectActiveReferenceListDraft(row, {
+        requireVerifiedMembers: true
+      });
 
-      if (!isDraftValidForAppend) {
+      if (!draftCheck.valid) {
         setClientPrevalidationBanner({
           tone: "error",
           title: `Cannot append reference choice on ${destKey}: active draft is invalid or empty`,
