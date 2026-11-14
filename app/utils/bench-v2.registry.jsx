@@ -108,12 +108,14 @@ const BENCH_V2_EXCLUDED_STANDARDIZED_KEYS = Object.freeze(
     "authenticity",
     "necklace-design",
     "rarity",
-    "geological-era"
+    "geological-era",
+    "chain-link-type",
+    "jewelry-finding-type"
   ])
 );
 
 // Explicit replacement-bench-local allowlist of finite retained PRODUCT
-// standardized reference destinations (17 keys; excludes authenticity, necklace-design, rarity, geological-era).
+// standardized reference destinations (15 keys; excludes authenticity, necklace-design, rarity, geological-era, chain-link-type, jewelry-finding-type).
 export const BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS = Object.freeze(
   new Set(
     SUPPORTED_STANDARDIZED_REFERENCE_KEYS
@@ -418,7 +420,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Connected setting and hardware facts (custom.secondary_medium, custom.jewelry_type, custom.setting_ready, custom.bail_included, custom.chain_material, custom.chain_link_type, custom.jewelry_finding_type, custom.wire_material) plus related standardized reference attributes (shopify.jewelry-type, shopify.jewelry-material, shopify.jewelry-finding-type, shopify.chain-link-type, shopify.construction)."
+    description: "Connected setting and hardware facts (custom.secondary_medium, custom.jewelry_type, custom.setting_ready, custom.bail_included, custom.chain_material, custom.chain_link_type, custom.jewelry_finding_type, custom.wire_material) plus related standardized reference attributes (shopify.jewelry-type, shopify.jewelry-material, shopify.construction)."
   }),
   Object.freeze({
     drawerId: "seo_and_media_alts",
@@ -790,7 +792,7 @@ function defineProtectedAppField(drawerId, namespace, key, label) {
 }
 
 // ==========================================================================
-// AUTHORITATIVE FIELD CONTRACTS (ALL 15 FOCUSED DRAWERS — 92 CONTRACTS)
+// AUTHORITATIVE FIELD CONTRACTS (ALL 15 FOCUSED DRAWERS — 90 CONTRACTS)
 // ==========================================================================
 
 export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
@@ -1117,7 +1119,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "Inspectable legacy alias; canonical writes target custom.origin_page_handle only."
   ),
 
-  // DRAWER 8: SETTING, CHAIN & HARDWARE (13 CONTRACTS)
+  // DRAWER 8: SETTING, CHAIN & HARDWARE (11 CONTRACTS)
   defineBatch1CustomField(
     "setting_and_hardware",
     "SUB_HARNESS_2",
@@ -1179,8 +1181,6 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
   ),
   defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "jewelry-type", "custom.jewelry_type"),
   defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "jewelry-material", "custom.secondary_medium"),
-  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "jewelry-finding-type", "custom.jewelry_finding_type"),
-  defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "chain-link-type", "custom.chain_link_type"),
   defineStandardizedShopifyField("setting_and_hardware", "SUB_HARNESS_5", "construction"),
 
   // DRAWER 9: SEO TITLES, META DESCRIPTION & PHOTO ALTS (5 CONTRACTS + EXPANDED PHOTO ALTS)

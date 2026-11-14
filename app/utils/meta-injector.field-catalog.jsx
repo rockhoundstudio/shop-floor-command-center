@@ -7,12 +7,14 @@
 // ==========================================================================
 // AUTHORITATIVE RETIRED / REMOVED PARKED DESTINATION IDENTITIES
 // ==========================================================================
-// Single shared leaf authority for the 29 removed parked destinations and
+// Single shared leaf authority for the 31 removed parked destinations and
 // their 12 custom product metafield input aliases.
 // Note: Bare "price", "age_group", "condition", "custom_product",
-// "authenticity", and "rarity" are NEVER placed in global retirement sets
-// so surviving native_price/price, variant mm-google-shopping.*, standardized
-// shopify.*, internal profile/geology lookups, and geo.* fields remain intact.
+// "authenticity", "rarity", "chain_link_type", and "jewelry_finding_type"
+// are NEVER placed in global retirement sets so surviving native_price/price,
+// variant mm-google-shopping.*, custom.chain_link_type, custom.jewelry_finding_type,
+// standardized shopify.*, internal profile/geology lookups, and geo.* fields
+// remain intact.
 
 export const REMOVED_PARKED_CANONICAL_IDENTITY_LIST = Object.freeze([
   "PRODUCT:custom.character_marks",
@@ -34,6 +36,8 @@ export const REMOVED_PARKED_CANONICAL_IDENTITY_LIST = Object.freeze([
   "PRODUCT:shopify.authenticity",
   "PRODUCT:shopify.necklace-design",
   "PRODUCT:shopify.rarity",
+  "PRODUCT:shopify.chain-link-type",
+  "PRODUCT:shopify.jewelry-finding-type",
   "PRODUCT:app--3026047.conversation_starters",
   "PRODUCTVARIANT:global.harmonized_system_code",
   "PRODUCTVARIANT:mm-google-shopping.mpn",
@@ -66,6 +70,8 @@ export const REMOVED_PARKED_DESTINATION_LIST = Object.freeze([
   "shopify.authenticity",
   "shopify.necklace-design",
   "shopify.rarity",
+  "shopify.chain-link-type",
+  "shopify.jewelry-finding-type",
   "app--3026047.conversation_starters",
   "global.harmonized_system_code",
   "mm-google-shopping.mpn",
@@ -106,14 +112,14 @@ export const REMOVED_PARKED_CUSTOM_INPUT_ALIASES = new Set(
 );
 
 // ==========================================================================
-// AUTHORITATIVE OWNER + IDENTITY REGISTRY CONTRACT (108 ROWS + 5 ADDITIONS)
+// AUTHORITATIVE OWNER + IDENTITY REGISTRY CONTRACT (106 ROWS + 5 ADDITIONS)
 // ==========================================================================
 
 export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
   approvedCapabilities: 62,
   canonicalCoreCount: 57,
   approvedMeasurementAdditionsCount: 5,
-  compatibilityAdapterCount: 35,
+  compatibilityAdapterCount: 33,
   shippingWeightRule: "actual_whole_product_ounces_plus_0.5_oz_packaging_once",
   mpnPolicy: "excluded_for_all_products",
   customsCodePolicy: "parked_no_deletion",
@@ -198,13 +204,11 @@ export const UNIVERSAL_CAPABILITY_CONTRACT = Object.freeze({
     { row: 91, owner: "PRODUCTVARIANT", identity: "mm-google-shopping.gender", role: "COMPAT_REP" },
     { row: 92, owner: "PRODUCT", identity: "mm-google-shopping.google_product_category", role: "COMPAT_REP" },
     { row: 94, owner: "PRODUCT", identity: "shopify.age-group", role: "COMPAT_REP" },
-    { row: 96, owner: "PRODUCT", identity: "shopify.chain-link-type", role: "COMPAT_REP" },
     { row: 97, owner: "PRODUCT", identity: "shopify.color-pattern", role: "COMPAT_REP" },
     { row: 98, owner: "PRODUCT", identity: "shopify.condition", role: "COMPAT_REP" },
     { row: 99, owner: "PRODUCT", identity: "shopify.construction", role: "PRIMARY_CANDIDATE_DESTINATION" },
     { row: 100, owner: "PRODUCT", identity: "shopify.crystal-system", role: "COMPAT_REP" },
     { row: 101, owner: "PRODUCT", identity: "shopify.geological-era", role: "COMPAT_REP" },
-    { row: 102, owner: "PRODUCT", identity: "shopify.jewelry-finding-type", role: "COMPAT_REP" },
     { row: 103, owner: "PRODUCT", identity: "shopify.jewelry-material", role: "COMPAT_REP" },
     { row: 104, owner: "PRODUCT", identity: "shopify.jewelry-type", role: "COMPAT_REP" },
     { row: 105, owner: "PRODUCT", identity: "shopify.material", role: "COMPAT_REP" },
@@ -333,13 +337,11 @@ export const PRODUCER_ALIGNMENT_PENDING_KEYS = Object.freeze([]);
 
 const STANDARDIZED_ATTRIBUTE_KEYS = [
   "age-group",
-  "chain-link-type",
   "color-pattern",
   "condition",
   "construction",
   "crystal-system",
   "geological-era",
-  "jewelry-finding-type",
   "jewelry-material",
   "jewelry-type",
   "material",
