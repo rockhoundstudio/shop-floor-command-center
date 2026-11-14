@@ -13,6 +13,10 @@ import {
   REMOVED_PARKED_CANONICAL_IDENTITIES,
   REMOVED_PARKED_DESTINATIONS,
   REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
+  RETIRED_ERA_DESTINATIONS,
+  isRetiredParkedBenchDestination,
+  getProposalValueString,
+  hasExplicitReferenceReplacementFlag,
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_FIELD_CONTRACTS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
@@ -36,44 +40,12 @@ import {
   BENCH_V2_JSON_DRAFT_MAX_BYTES
 } from "./bench-v2.header-banners-view.jsx";
 
-export const RETIRED_ERA_DESTINATIONS = Object.freeze(
-  new Set([
-    "geological_era",
-    "geological-era",
-    "custom.geological_era",
-    "custom.geological-era",
-    "shopify.geological-era",
-    "shopify.geological_era"
-  ])
-);
-
-export function isRetiredParkedBenchDestination(rawDestKey, explicitOwner = null) {
-  if (typeof rawDestKey !== "string" || !rawDestKey.trim()) return false;
-  const trimmed = rawDestKey.trim();
-  const normalizedOwner =
-    typeof explicitOwner === "string" && explicitOwner.trim() !== ""
-      ? explicitOwner.trim()
-      : null;
-
-  if (
-    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
-    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${trimmed}`) ||
-    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${trimmed}`) ||
-    (normalizedOwner && REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${normalizedOwner}:${trimmed}`))
-  ) {
-    return true;
-  }
-
-  if (!trimmed.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
-    return true;
-  }
-
-  if (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
-    return true;
-  }
-
-  return false;
-}
+export {
+  RETIRED_ERA_DESTINATIONS,
+  isRetiredParkedBenchDestination,
+  getProposalValueString,
+  hasExplicitReferenceReplacementFlag
+};
 
 const ALLOWED_TOP_LEVEL_JSON_PACKET_KEYS = Object.freeze(
   new Set([
@@ -128,40 +100,6 @@ export function measureUtf8Bytes(str) {
     // Fallback below
   }
   return str.length;
-}
-
-export function getProposalValueString(rawEntry) {
-  return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
-    ? rawEntry.value
-    : typeof rawEntry === "string"
-      ? rawEntry
-      : "";
-}
-
-export function hasExplicitReferenceReplacementFlag(rawEntry, destinationKey, exactProposedValue) {
-  const contract = getFieldContractByDestination(destinationKey);
-  if (
-    !contract ||
-    contract.namespace !== "shopify" ||
-    contract.expectedType !== "list.metaobject_reference" ||
-    !contract.isWritableInBatch1
-  ) {
-    return false;
-  }
-  if (typeof exactProposedValue !== "string" || exactProposedValue.trim() === "") {
-    return false;
-  }
-  return Boolean(
-    rawEntry &&
-      typeof rawEntry === "object" &&
-      !Array.isArray(rawEntry) &&
-      (rawEntry.origin === "Manual" || rawEntry.origin === "AI") &&
-      typeof rawEntry.value === "string" &&
-      rawEntry.value === exactProposedValue &&
-      rawEntry.allowExplicitReferenceListReplacement === true &&
-      typeof rawEntry.explicitReplacementValue === "string" &&
-      rawEntry.explicitReplacementValue === exactProposedValue
-  );
 }
 
 export function useBenchV2JsonDraftImporter({

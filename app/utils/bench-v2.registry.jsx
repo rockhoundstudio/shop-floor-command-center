@@ -29,6 +29,45 @@ export {
   REMOVED_PARKED_CUSTOM_INPUT_ALIASES
 };
 
+export const RETIRED_ERA_DESTINATIONS = Object.freeze(
+  new Set([
+    "geological_era",
+    "geological-era",
+    "custom.geological_era",
+    "custom.geological-era",
+    "shopify.geological-era",
+    "shopify.geological_era"
+  ])
+);
+
+export function isRetiredParkedBenchDestination(rawDestKey, explicitOwner = null) {
+  if (typeof rawDestKey !== "string" || !rawDestKey.trim()) return false;
+  const trimmed = rawDestKey.trim();
+  const normalizedOwner =
+    typeof explicitOwner === "string" && explicitOwner.trim() !== ""
+      ? explicitOwner.trim()
+      : null;
+
+  if (
+    REMOVED_PARKED_DESTINATIONS.has(trimmed) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${trimmed}`) ||
+    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${trimmed}`) ||
+    (normalizedOwner && REMOVED_PARKED_CANONICAL_IDENTITIES.has(`${normalizedOwner}:${trimmed}`))
+  ) {
+    return true;
+  }
+
+  if (!trimmed.includes(".") && REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+
+  if (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
 export const BENCH_V2_CONTRACT_VERSION = "2.0.0-batch-1";
 
 export const BENCH_V2_REFERENCE_PRODUCTS = Object.freeze([

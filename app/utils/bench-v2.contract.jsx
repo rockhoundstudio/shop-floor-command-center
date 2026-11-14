@@ -16,6 +16,8 @@ import {
   REMOVED_PARKED_CANONICAL_IDENTITIES,
   REMOVED_PARKED_DESTINATIONS,
   REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
+  RETIRED_ERA_DESTINATIONS,
+  isRetiredParkedBenchDestination,
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_REFERENCE_PRODUCTS,
   BENCH_V2_BATCH_STAGE,
@@ -68,6 +70,8 @@ export {
   REMOVED_PARKED_CANONICAL_IDENTITIES,
   REMOVED_PARKED_DESTINATIONS,
   REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
+  RETIRED_ERA_DESTINATIONS,
+  isRetiredParkedBenchDestination,
   BENCH_V2_CONTRACT_VERSION,
   BENCH_V2_REFERENCE_PRODUCTS,
   BENCH_V2_BATCH_STAGE,
@@ -123,6 +127,40 @@ const PLAIN_TEXT_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 const isBlankOrWhitespaceOnly = (str) =>
   typeof str !== "string" || str.trim() === "";
+
+export function getProposalValueString(rawEntry) {
+  return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
+    ? rawEntry.value
+    : typeof rawEntry === "string"
+      ? rawEntry
+      : "";
+}
+
+export function hasExplicitReferenceReplacementFlag(rawEntry, destinationKey, exactProposedValue) {
+  const contract = getFieldContractByDestination(destinationKey);
+  if (
+    !contract ||
+    contract.namespace !== "shopify" ||
+    contract.expectedType !== "list.metaobject_reference" ||
+    !contract.isWritableInBatch1
+  ) {
+    return false;
+  }
+  if (typeof exactProposedValue !== "string" || exactProposedValue.trim() === "") {
+    return false;
+  }
+  return Boolean(
+    rawEntry &&
+      typeof rawEntry === "object" &&
+      !Array.isArray(rawEntry) &&
+      (rawEntry.origin === "Manual" || rawEntry.origin === "AI") &&
+      typeof rawEntry.value === "string" &&
+      rawEntry.value === exactProposedValue &&
+      rawEntry.allowExplicitReferenceListReplacement === true &&
+      typeof rawEntry.explicitReplacementValue === "string" &&
+      rawEntry.explicitReplacementValue === exactProposedValue
+  );
+}
 
 function parseExactMoneyStringToCentsBigInt(moneyStr) {
   if (typeof moneyStr !== "string" || !STORED_SHOPIFY_MONEY_DECIMAL_REGEX.test(moneyStr)) {
