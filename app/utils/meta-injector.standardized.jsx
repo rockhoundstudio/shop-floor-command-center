@@ -85,6 +85,21 @@ export const extractEntryDefinitionId = (entry) => {
   return "";
 };
 
+export const extractEntryDefinitionType = (entry) => {
+  if (!entry || typeof entry !== "object") return "";
+  if (typeof entry.definitionType === "string" && entry.definitionType.trim() !== "") {
+    return entry.definitionType.trim();
+  }
+  const def = entry.definition;
+  if (def && typeof def === "object" && typeof def.type === "string" && def.type.trim() !== "") {
+    return def.type.trim();
+  }
+  if (typeof entry.type === "string" && entry.type.trim() !== "") {
+    return entry.type.trim();
+  }
+  return "";
+};
+
 export const extractEntryTaxonomyRef = (entry) => {
   if (!entry || typeof entry !== "object") return "";
   const tax = entry.taxonomy_reference ?? entry.taxonomyReference ?? entry.taxonomyValueId ?? "";
@@ -552,6 +567,12 @@ export const collectVerifiedEntriesForResolution = (fieldResolution) => {
   const map = new Map();
   if (!fieldResolution || typeof fieldResolution !== "object") return map;
 
+  const fallbackDefType =
+    typeof fieldResolution.restrictedMetaobjectDefinition?.type === "string" &&
+    fieldResolution.restrictedMetaobjectDefinition.type.trim() !== ""
+      ? fieldResolution.restrictedMetaobjectDefinition.type.trim()
+      : "";
+
   const addEntry = (entry) => {
     if (!entry || typeof entry !== "object") return;
     const gid = extractEntryGid(entry);
@@ -559,11 +580,17 @@ export const collectVerifiedEntriesForResolution = (fieldResolution) => {
     const existing = map.get(gid) || {};
     const label = extractEntryLabel(entry) || existing.label || "";
     const definitionId = extractEntryDefinitionId(entry) || existing.definitionId || "";
+    const definitionType =
+      extractEntryDefinitionType(entry) ||
+      existing.definitionType ||
+      fallbackDefType ||
+      "";
     const taxonomyRef = extractEntryTaxonomyRef(entry) || existing.taxonomyRef || "";
     map.set(gid, {
       id: gid,
       label,
       definitionId,
+      definitionType,
       taxonomyRef
     });
   };
@@ -598,6 +625,94 @@ export const collectVerifiedEntriesForResolution = (fieldResolution) => {
   }
 
   return map;
+};
+
+/**
+ * Pure semantic equivalence check for two non-empty Metaobject GID lists within
+ * the same verified MetaobjectDefinition.
+ *
+ * Returns `true` ONLY when:
+ * - Both `gidsA` and `gidsB` are non-empty arrays of exact Metaobject GIDs.
+ * - `verifiedEntriesMap` is a non-empty `Map` and `expectedDefinitionId` is a
+ *   valid `gid://shopify/MetaobjectDefinition/<id>`.
+ * - Every GID in `gidsA` and `gidsB` exists in `verifiedEntriesMap`, has
+ *   `entry.definitionId === expectedDefinitionId`, a non-empty consistent
+ *   `definitionType` across all compared entries, a non-empty normalized label,
+ *   and a non-empty valid `taxonomyRef` (`gid://shopify/TaxonomyValue/...`).
+ * - The canonical semantic tuple sets `(definitionId, definitionType, normalizedLabel, taxonomyRef)`
+ *   of `gidsA` and `gidsB` are identical.
+ *
+ * Any missing, malformed, ambiguous, or mismatched metadata returns `false`.
+ */
+export const areReferenceGidSetsSemanticallyEquivalent = (
+  gidsA,
+  gidsB,
+  verifiedEntriesMap,
+  expectedDefinitionId
+) => {
+  if (!Array.isArray(gidsA) || !Array.isArray(gidsB)) return false;
+  if (gidsA.length === 0 || gidsB.length === 0) return false;
+  if (!(verifiedEntriesMap instanceof Map) || verifiedEntriesMap.size === 0) return false;
+  if (
+    typeof expectedDefinitionId !== "string" ||
+    !/^gid:\/\/shopify\/MetaobjectDefinition\/[0-9]+$/.test(expectedDefinitionId.trim())
+  ) {
+    return false;
+  }
+  const cleanExpectedDefId = expectedDefinitionId.trim();
+
+  let sharedDefinitionType = null;
+
+  const buildCanonicalSet = (gidList) => {
+    const canonicalKeys = new Set();
+    for (const rawGid of gidList) {
+      if (typeof rawGid !== "string") return null;
+      const trimmedGid = rawGid.trim();
+      if (trimmedGid !== rawGid || !isExactMetaobjectGid(trimmedGid)) return null;
+      if (extractNumericMetaobjectId(trimmedGid) === null) return null;
+
+      const entry = verifiedEntriesMap.get(trimmedGid);
+      if (!entry || typeof entry !== "object") return null;
+
+      const entryDefId = extractEntryDefinitionId(entry);
+      if (!entryDefId || entryDefId !== cleanExpectedDefId) return null;
+
+      const entryDefType = extractEntryDefinitionType(entry);
+      if (!entryDefType) return null;
+      if (sharedDefinitionType === null) {
+        sharedDefinitionType = entryDefType;
+      } else if (entryDefType !== sharedDefinitionType) {
+        return null;
+      }
+
+      const normLabel = normalizeCandidateLabel(extractEntryLabel(entry));
+      if (!normLabel || /^gid:\/\//i.test(normLabel)) return null;
+
+      const taxRef = extractEntryTaxonomyRef(entry);
+      if (
+        !taxRef ||
+        !/^gid:\/\/shopify\/TaxonomyValue\/[0-9]+$/.test(taxRef)
+      ) {
+        return null;
+      }
+
+      canonicalKeys.add(`${entryDefId}::${entryDefType}::${normLabel}::${taxRef}`);
+    }
+    return canonicalKeys.size > 0 ? canonicalKeys : null;
+  };
+
+  const setA = buildCanonicalSet(gidsA);
+  if (!setA) return false;
+
+  const setB = buildCanonicalSet(gidsB);
+  if (!setB) return false;
+
+  if (setA.size !== setB.size) return false;
+  for (const key of setA) {
+    if (!setB.has(key)) return false;
+  }
+
+  return true;
 };
 
 export const findLabelMatchEntries = (candLabel, fieldResolution, verifiedEntriesMap) => {

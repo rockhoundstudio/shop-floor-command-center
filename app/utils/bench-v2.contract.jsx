@@ -6,7 +6,8 @@
 // ==========================================================================
 
 import {
-  isExactMetaobjectGid
+  isExactMetaobjectGid,
+  areReferenceGidSetsSemanticallyEquivalent
 } from "./meta-injector.standardized.jsx";
 import {
   REMOVED_PARKED_CANONICAL_IDENTITY_LIST,
@@ -1072,15 +1073,6 @@ export function validateBatch1ProposedValue({
 
     const isExplicitReplacementAllowed = Boolean(allowExplicitReferenceListReplacement === true);
 
-    if (removedStoredReferenceGids.length > 0 && !isExplicitReplacementAllowed) {
-      const firstDroppedGid = removedStoredReferenceGids[0];
-      return {
-        valid: false,
-        code: "existing_reference_assignment_dropped",
-        reason: `Proposal for "${contract.destinationKey}" is missing existing assigned Metaobject ${firstDroppedGid}. Existing reference assignments are preserved and never silently removed.`
-      };
-    }
-
     const isUnchangedRefList =
       baselineObs.presence === "present" &&
       storedCheck.gids.length === parsedArray.length &&
@@ -1110,6 +1102,46 @@ export function validateBatch1ProposedValue({
       baselineObs.restrictedMetaobjectDefinitionId
     );
 
+    if (removedStoredReferenceGids.length > 0 && !isExplicitReplacementAllowed) {
+      if (
+        baselineObs.presence === "present" &&
+        storedCheck.gids.length > 0 &&
+        refEvidence.evidenceLoaded &&
+        refEvidence.isComplete &&
+        areReferenceGidSetsSemanticallyEquivalent(
+          parsedArray,
+          storedCheck.gids,
+          refEvidence.entriesByGid,
+          baselineObs.restrictedMetaobjectDefinitionId
+        )
+      ) {
+        const preservedBaselineRaw =
+          typeof baselineObs.rawValue === "string" && baselineObs.rawValue.trim() !== ""
+            ? baselineObs.rawValue.trim()
+            : JSON.stringify(storedCheck.gids);
+        return {
+          valid: true,
+          code: "unchanged_from_baseline",
+          normalizedValue: preservedBaselineRaw,
+          isUnchangedFromStored: true,
+          allowExplicitReferenceListReplacement: false,
+          removedStoredReferenceGids: Object.freeze([]),
+          verifiedActualType,
+          observedShopifyType: typeAndCompleteness.observedShopifyType,
+          typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
+          baselineObservation: baselineObs,
+          reason: "Proposed reference list is canonically equivalent to the current stored baseline."
+        };
+      }
+
+      const firstDroppedGid = removedStoredReferenceGids[0];
+      return {
+        valid: false,
+        code: "existing_reference_assignment_dropped",
+        reason: `Proposal for "${contract.destinationKey}" is missing existing assigned Metaobject ${firstDroppedGid}. Existing reference assignments are preserved and never silently removed.`
+      };
+    }
+
     if (!refEvidence.evidenceLoaded || !refEvidence.isComplete) {
       return {
         valid: false,
@@ -1136,6 +1168,36 @@ export function validateBatch1ProposedValue({
           reason: `Metaobject "${proposedGid}" belongs to definition "${verifiedEntry.definitionId}", but "${contract.destinationKey}" requires "${baselineObs.restrictedMetaobjectDefinitionId}".`
         };
       }
+    }
+
+    if (
+      !isExplicitReplacementAllowed &&
+      baselineObs.presence === "present" &&
+      storedCheck.gids.length > 0 &&
+      areReferenceGidSetsSemanticallyEquivalent(
+        parsedArray,
+        storedCheck.gids,
+        refEvidence.entriesByGid,
+        baselineObs.restrictedMetaobjectDefinitionId
+      )
+    ) {
+      const preservedBaselineRaw =
+        typeof baselineObs.rawValue === "string" && baselineObs.rawValue.trim() !== ""
+          ? baselineObs.rawValue.trim()
+          : JSON.stringify(storedCheck.gids);
+      return {
+        valid: true,
+        code: "unchanged_from_baseline",
+        normalizedValue: preservedBaselineRaw,
+        isUnchangedFromStored: true,
+        allowExplicitReferenceListReplacement: false,
+        removedStoredReferenceGids: Object.freeze([]),
+        verifiedActualType,
+        observedShopifyType: typeAndCompleteness.observedShopifyType,
+        typeEvidenceSource: typeAndCompleteness.typeEvidenceSource,
+        baselineObservation: baselineObs,
+        reason: "Proposed reference list is canonically equivalent to the current stored baseline."
+      };
     }
 
     const hasRemovedSavedMembers = removedStoredReferenceGids.length > 0;

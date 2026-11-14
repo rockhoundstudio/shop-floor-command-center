@@ -10,6 +10,9 @@ import {
   extractEntryGid,
   extractEntryLabel,
   extractEntryDefinitionId,
+  extractEntryDefinitionType,
+  extractEntryTaxonomyRef,
+  areReferenceGidSetsSemanticallyEquivalent,
   formatDisplayFieldValue
 } from "./meta-injector.standardized.jsx";
 import {
@@ -104,7 +107,7 @@ export function inspectStoredReferenceListRawValue(rawVal) {
  * - `evidenceLoaded`: true when a read-only resolution payload for the active product is present
  * - `isComplete`: true when enumeration and category/definition checks completed without error
  * - `restrictedMetaobjectDefinitionId`: verified MetaobjectDefinition GID
- * - `entriesByGid`: Map of verified Metaobject GID -> `{ id, label, definitionId }` where `definitionId === restrictedMetaobjectDefinitionId`
+ * - `entriesByGid`: Map of verified Metaobject GID -> `{ id, label, definitionId, definitionType, taxonomyRef }` where `definitionId === restrictedMetaobjectDefinitionId`
  */
 export function inspectVerifiedReferenceEvidenceForDestination(
   baselineSnapshot,
@@ -376,6 +379,15 @@ export function inspectVerifiedReferenceEvidenceForDestination(
     };
   }
 
+  const fallbackResolutionDefType =
+    resolutionEntry.restrictedMetaobjectDefinition &&
+    typeof resolutionEntry.restrictedMetaobjectDefinition === "object" &&
+    resolutionEntry.restrictedMetaobjectDefinition.id === resolvedDefId &&
+    typeof resolutionEntry.restrictedMetaobjectDefinition.type === "string" &&
+    resolutionEntry.restrictedMetaobjectDefinition.type.trim() !== ""
+      ? resolutionEntry.restrictedMetaobjectDefinition.type.trim()
+      : "";
+
   const entriesByGid = new Map();
   const rawEntries = Array.isArray(resolutionEntry.availableEntries)
     ? resolutionEntry.availableEntries
@@ -389,11 +401,23 @@ export function inspectVerifiedReferenceEvidenceForDestination(
     const defId = extractEntryDefinitionId(item);
     if (!isExactMetaobjectGid(gid)) continue;
     if (!isExactMetaobjectDefinitionGid(defId) || defId !== resolvedDefId) continue;
-    const label = extractEntryLabel(item) || gid;
+    const existing = entriesByGid.get(gid) || {};
+    const label = extractEntryLabel(item) || existing.label || gid;
+    const definitionType =
+      extractEntryDefinitionType(item) ||
+      existing.definitionType ||
+      fallbackResolutionDefType ||
+      "";
+    const taxonomyRef =
+      extractEntryTaxonomyRef(item) ||
+      existing.taxonomyRef ||
+      "";
     entriesByGid.set(gid, {
       id: gid,
       label,
-      definitionId: defId
+      definitionId: defId,
+      definitionType,
+      taxonomyRef
     });
   }
 
@@ -404,10 +428,23 @@ export function inspectVerifiedReferenceEvidenceForDestination(
       const gid = typeof key === "string" ? key.trim() : extractEntryGid(val);
       const defId = extractEntryDefinitionId(val);
       if (isExactMetaobjectGid(gid) && defId === resolvedDefId) {
+        const existing = entriesByGid.get(gid) || {};
+        const label = extractEntryLabel(val) || existing.label || gid;
+        const definitionType =
+          extractEntryDefinitionType(val) ||
+          existing.definitionType ||
+          fallbackResolutionDefType ||
+          "";
+        const taxonomyRef =
+          extractEntryTaxonomyRef(val) ||
+          existing.taxonomyRef ||
+          "";
         entriesByGid.set(gid, {
           id: gid,
-          label: extractEntryLabel(val) || gid,
-          definitionId: defId
+          label,
+          definitionId: defId,
+          definitionType,
+          taxonomyRef
         });
       }
     });
@@ -628,16 +665,38 @@ export function getContractOptionsForObservation(
       isUsingActiveDraft = true;
     }
 
+    const expectedDefIdForOptions =
+      refEvidence.restrictedMetaobjectDefinitionId ||
+      baselineObs?.restrictedMetaobjectDefinitionId ||
+      null;
+
     const options = [];
     refEvidence.entriesByGid.forEach((entry) => {
       const mergedGids = [...seedGids];
       if (!mergedGids.includes(entry.id)) {
         mergedGids.push(entry.id);
       }
-      const serializedValue = JSON.stringify(mergedGids);
+
+      const isSemanticallyEquivalentToSeed =
+        seedGids.length > 0 &&
+        !seedGids.includes(entry.id) &&
+        Boolean(expectedDefIdForOptions) &&
+        areReferenceGidSetsSemanticallyEquivalent(
+          seedGids,
+          mergedGids,
+          refEvidence.entriesByGid,
+          expectedDefIdForOptions
+        );
+
+      const effectiveOptionGids = isSemanticallyEquivalentToSeed
+        ? seedGids
+        : mergedGids;
+      const serializedValue = JSON.stringify(effectiveOptionGids);
       const countLabel = isUsingActiveDraft ? "selected" : "existing";
       const displayLabel =
-        seedGids.length > 0 && !seedGids.includes(entry.id)
+        seedGids.length > 0 &&
+        !seedGids.includes(entry.id) &&
+        !isSemanticallyEquivalentToSeed
           ? `${entry.label} (${entry.id}) — append to [${seedGids.length} ${countLabel}]`
           : `${entry.label} (${entry.id})`;
       options.push(

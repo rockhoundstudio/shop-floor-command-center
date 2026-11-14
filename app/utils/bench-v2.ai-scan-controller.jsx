@@ -34,6 +34,7 @@ import {
   ALLOWED_VISION_CANDIDATE_KEYS,
   isExactMetaobjectGid,
   collectVerifiedEntriesForResolution,
+  areReferenceGidSetsSemanticallyEquivalent,
   evaluateCandidateLabelResolution
 } from "./meta-injector.standardized.jsx";
 import {
@@ -290,6 +291,32 @@ export function resolveProducerBackedGeologyReferenceCandidate({
       status: "held_unmatched_or_ambiguous",
       displayLabel,
       reason: `Candidate "${displayLabel}" resolved to 0 verified Metaobject entries on ${destKey}.`
+    };
+  }
+
+  const isSemanticallyEquivalentToSaved = Boolean(
+    baselineObs.presence === "present" &&
+      storedCheck.gids.length > 0 &&
+      areReferenceGidSetsSemanticallyEquivalent(
+        resolvedOnlyGids,
+        storedCheck.gids,
+        strictVerifiedEntriesMap,
+        baselineObs.restrictedMetaobjectDefinitionId
+      )
+  );
+
+  if (isSemanticallyEquivalentToSaved) {
+    const preservedStoredRaw =
+      typeof baselineObs.rawValue === "string" && baselineObs.rawValue.trim() !== ""
+        ? baselineObs.rawValue.trim()
+        : JSON.stringify(storedCheck.gids);
+    return {
+      status: "unchanged_from_baseline",
+      displayLabel,
+      serializedValue: preservedStoredRaw,
+      allowExplicitReferenceListReplacement: false,
+      matchedSummary: matchedLabelsList.join(", "),
+      reason: "Resolved reference candidate is canonically equivalent to the current saved reference list."
     };
   }
 
@@ -1242,7 +1269,6 @@ export function useBenchV2AiScanController({
       );
 
       if (
-        !directProposalReplacementIntent &&
         contract.namespace === "shopify" &&
         contract.expectedType === "list.metaobject_reference" &&
         targetBaseline
@@ -1252,7 +1278,48 @@ export function useBenchV2AiScanController({
           baselineObsForDirect.rawValue
         );
         const proposedCheckForDirect = inspectStoredReferenceListRawValue(rawValue);
+        const refEvidenceForDirect = inspectVerifiedReferenceEvidenceForDestination(
+          targetBaseline,
+          destKey,
+          baselineObsForDirect.restrictedMetaobjectDefinitionId
+        );
+
+        const isDirectEquivalentToSaved = Boolean(
+          baselineObsForDirect.presence === "present" &&
+            storedCheckForDirect.valid &&
+            storedCheckForDirect.gids.length > 0 &&
+            proposedCheckForDirect.valid &&
+            proposedCheckForDirect.gids.length > 0 &&
+            refEvidenceForDirect.evidenceLoaded &&
+            refEvidenceForDirect.isComplete &&
+            areReferenceGidSetsSemanticallyEquivalent(
+              proposedCheckForDirect.gids,
+              storedCheckForDirect.gids,
+              refEvidenceForDirect.entriesByGid,
+              baselineObsForDirect.restrictedMetaobjectDefinitionId
+            )
+        );
+
+        if (isDirectEquivalentToSaved) {
+          const preservedDirectRaw =
+            typeof baselineObsForDirect.rawValue === "string" &&
+            baselineObsForDirect.rawValue.trim() !== ""
+              ? baselineObsForDirect.rawValue.trim()
+              : JSON.stringify(storedCheckForDirect.gids);
+          unchangedSkippedCount++;
+          proposalsByDestination[destKey] = {
+            value: preservedDirectRaw,
+            source: reportedSource,
+            disposition: "Matches saved value (not staged)"
+          };
+          details.push(
+            `[${destKey}] Matches current saved reference list (${preservedDirectRaw}) — Source: ${reportedSource}; not staged.`
+          );
+          continue;
+        }
+
         if (
+          !directProposalReplacementIntent &&
           storedCheckForDirect.valid &&
           proposedCheckForDirect.valid &&
           proposedCheckForDirect.gids.length > 0
