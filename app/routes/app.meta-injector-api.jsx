@@ -3,19 +3,14 @@ import { executeAutofill } from "../utils/meta-injector.autofill.server.jsx";
 import { action as loaderAction } from "../utils/meta-injector.loader.jsx";
 import {
   ALLOWED_VISION_CANDIDATE_KEYS as ALLOWED_STANDARDIZED_CANDIDATE_KEYS,
-  SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
   isExactMetaobjectGid
 } from "../utils/meta-injector.standardized.jsx";
 import {
-  RETIRED_KEYS,
   CATALOG_STANDARDIZED_META_KEYS,
   executeLoadProductData,
   executeResolveStandardizedCandidates
 } from "../utils/meta-injector.read-actions.server.jsx";
 import {
-  REMOVED_PARKED_CANONICAL_IDENTITIES,
-  REMOVED_PARKED_DESTINATIONS,
-  REMOVED_PARKED_CUSTOM_INPUT_ALIASES,
   BENCH_V2_WRITER_OPT_IN_FIELD,
   BENCH_V2_WRITER_OPT_IN_VALUE,
   BENCH_V2_CONNECTED_VARIANT_DESTINATIONS as BENCH_V2_OPT_IN_VARIANT_DESTINATIONS,
@@ -25,7 +20,6 @@ import {
   inspectStoredReferenceListRawValue,
   buildBaselineObservation,
   isPlainTextProposalRejectedForContract,
-  validateAgainstLiveTextDefinitionValidations,
   evaluateBenchV2OptInCustomProductWrite
 } from "../utils/bench-v2.contract.jsx";
 import {
@@ -36,6 +30,22 @@ import {
   paginateOwnerMetafieldsConnection,
   readSingleVariantMetafields as fetchSingleVariantMetafieldsForWriter
 } from "../utils/bench-v2.baseline.server.jsx";
+import {
+  ALLOWED_TAB3_KEYS,
+  STRICT_CUSTOM_KEYS,
+  BENCH_V2_OPT_IN_SUPPORTED_STANDARDIZED_KEY_SET,
+  CANONICAL_DECIMAL_NUMBER_REGEX,
+  CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX,
+  isRetiredProductMetafieldDestination,
+  normalizeMetafieldValue,
+  sanitizeDescription,
+  parsePriceToCentsBigInt,
+  stageNativeAndShippingAndMediaChanges,
+  evaluateBenchV2VariantDestinationWrite
+} from "../utils/meta-injector.repair-helpers.server.jsx";
+import {
+  executeStagedRepairMutationsAndReadBack
+} from "../utils/meta-injector.repair-mutations.server.jsx";
 
 // 🟢 Structural Engine — No Prisma Import Here
 // Note: Non-framework exports (BENCH_V2_WRITER_OPT_IN_FIELD, BENCH_V2_WRITER_OPT_IN_VALUE,
@@ -43,324 +53,6 @@ import {
 // by browser-safe ../utils/bench-v2.contract.jsx) so React Router treats this route as a
 // pure server resource route (exporting only `action`) without generating a client chunk
 // that fails on `../utils/bench-v2.baseline.server.jsx`.
-
-const ALLOWED_TAB3_KEYS = [
-  "shopify_title", "piece_name", "stone_family", "price", "weight_grams",
-  "whole_product_weight_grams", "custom.whole_product_weight_grams",
-  "shipping_weight_oz", "is_ooak", "dimensions_mm",
-  "surface_finish", "primary_color", "color_pattern", "honest_flaws_and_character",
-  "jewelry_type", "wire_material",
-  "primary_medium", "secondary_medium", "setting_ready", "bail_included",
-  "chain_material", "jewelry_finding_type", "mohs_hardness", "specific_gravity",
-  "crystal_system", "fracture_pattern", "cleavage", "luster", "diaphaneity",
-  "mineral_class", "geological_era", "rock_formation", "origin_location",
-  "origin_handle", "collection_name", "collection_location", "origin_story",
-  "seo_title", "alt_text",
-  "google_product_category", "generated_description",
-
-  // EXACT CUSTOM DESTINATIONS
-  "is_one_of_a_kind", "origin_page_handle",
-  "treatment_status", "treated", "chain_link_type",
-  "rock_composition", "geological_age", "target_gender",
-  "cut_type", "secondary_colors",
-  "tenacity",
-  "found_object", "collection_date",
-  "custom.cut_type", "custom.secondary_colors",
-  "custom.tenacity",
-  "custom.found_object", "custom.collection_date", "custom.wire_material", "custom.jewelry_type",
-
-  // NATIVE CONTRACT TARGETS (ACCEPTED FOR ROUTING, EXCLUDED FROM CUSTOM NAMESPACE)
-  "native_title", "native_price", "native_shipping_weight", "native_image_alts", "native_seo_description",
-  "native_seo_title", "native_description",
-
-  // STANDARDIZED TAXONOMY LIST
-  "age-group", "chain-link-type", "color-pattern", "shopify.condition", "construction", "crystal-system",
-  "geological-era", "jewelry-finding-type", "jewelry-material", "jewelry-type",
-  "material", "material-origin", "mineral-class",
-  "product-classification", "product-use", "rock-composition", "rock-formation",
-  "target-gender"
-];
-
-// Strictly enforce these specific keys reside only in the custom namespace
-const STRICT_CUSTOM_KEYS = [
-  "is_one_of_a_kind", "origin_page_handle", "rescued_by", "character_marks",
-  "treatment_status", "treated", "necklace_design", "chain_link_type",
-  "rock_composition", "geological_age", "target_gender",
-  "official_name", "stone_story", "cut_type", "secondary_colors",
-  "tenacity", "age_group", "condition", "custom_product",
-  "found_object", "collection_date", "wire_material",
-  "whole_product_weight_grams"
-];
-
-const BENCH_V2_OPT_IN_SUPPORTED_STANDARDIZED_KEY_SET = new Set(
-  SUPPORTED_STANDARDIZED_REFERENCE_KEYS
-);
-
-function isRetiredProductMetafieldDestination(ns, key, fullKey, canonicalDestinationKey) {
-  if (
-    RETIRED_KEYS.includes(key) ||
-    RETIRED_KEYS.includes(fullKey) ||
-    RETIRED_KEYS.includes(canonicalDestinationKey) ||
-    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCT:${canonicalDestinationKey}`) ||
-    REMOVED_PARKED_CANONICAL_IDENTITIES.has(`PRODUCTVARIANT:${canonicalDestinationKey}`) ||
-    REMOVED_PARKED_DESTINATIONS.has(canonicalDestinationKey) ||
-    REMOVED_PARKED_DESTINATIONS.has(fullKey)
-  ) {
-    return true;
-  }
-
-  if (
-    ns === "custom" &&
-    (REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(key) ||
-      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(fullKey) ||
-      REMOVED_PARKED_CUSTOM_INPUT_ALIASES.has(canonicalDestinationKey))
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-const CANONICAL_DECIMAL_NUMBER_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
-const CANONICAL_USD_TWO_DECIMAL_MONEY_REGEX = /^(?:0|[1-9]\d*)\.\d{2}$/;
-
-function chunkArray(arr, size) {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
-  return chunks;
-}
-
-function normalizeMetafieldValue(key, value) {
-  let val = String(value).replace(/^⚠️\s*/, "");
-  return val;
-}
-
-function sanitizeDescription(html) {
-  if (!html || typeof html !== "string") return html;
-  let safeHtml = html;
-  const targets = ["/pages/the-shopped-rock", "/collections/the-shopped-rock", "/pages/the-shocked-rock", "/collections/the-shocked-rock"];
-  for (const target of targets) {
-    const regexNormal = new RegExp(`<a[^>]*href=["']?[^"'>]*${target.replace(/\//g, '\\/')}["']?[^>]*>.*?<\\/a>`, 'gi');
-    safeHtml = safeHtml.replace(regexNormal, "");
-    const regexEscaped = new RegExp(`&lt;a[^&]*href=[&quot;']?[^&quot;'>]*${target.replace(/\//g, '\\/')}[&quot;']?[^&]*&gt;.*?&lt;\\/a&gt;`, 'gi');
-    safeHtml = safeHtml.replace(regexEscaped, "");
-  }
-  return safeHtml;
-}
-
-const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title", "xmp"]);
-
-function normalizeBareAmpersandsInOrdinaryText(textSegment) {
-  return textSegment.replace(/&(?!(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#[xX][0-9a-fA-F]+);)/g, "&amp;");
-}
-
-function canonicalizeDescriptionHtmlForReadBack(html) {
-  if (typeof html !== "string") return null;
-  let out = "";
-  let i = 0;
-  const len = html.length;
-  let rawTextTag = null;
-
-  while (i < len) {
-    if (rawTextTag !== null) {
-      const rest = html.slice(i);
-      const closeRe = new RegExp(`^<\\/${rawTextTag}(?=[\\t\\n\\f\\r />])`, "i");
-      const m = closeRe.exec(rest);
-      if (m) {
-        let j = i + m[0].length;
-        while (j < len && html[j] !== ">") {
-          if (html[j] === "<" || html[j] === '"' || html[j] === "'") return null;
-          j++;
-        }
-        if (j >= len) return null;
-        out += html.slice(i, j + 1);
-        rawTextTag = null;
-        i = j + 1;
-        continue;
-      }
-      const nextLt = html.indexOf("<", i + 1);
-      if (nextLt === -1) {
-        out += html.slice(i);
-        break;
-      }
-      out += html.slice(i, nextLt);
-      i = nextLt;
-      continue;
-    }
-
-    const lt = html.indexOf("<", i);
-    if (lt === -1) {
-      out += normalizeBareAmpersandsInOrdinaryText(html.slice(i));
-      break;
-    }
-
-    if (lt > i) {
-      out += normalizeBareAmpersandsInOrdinaryText(html.slice(i, lt));
-      i = lt;
-    }
-
-    if (html.startsWith("<!--", i)) {
-      const endComment = html.indexOf("-->", i + 4);
-      if (endComment === -1) return null;
-      out += html.slice(i, endComment + 3);
-      i = endComment + 3;
-      continue;
-    }
-
-    if (html.startsWith("<![CDATA[", i)) {
-      const endCdata = html.indexOf("]]>", i + 9);
-      if (endCdata === -1) return null;
-      out += html.slice(i, endCdata + 3);
-      i = endCdata + 3;
-      continue;
-    }
-
-    if (/^<![a-zA-Z]/.test(html.slice(i, i + 3)) || html.startsWith("<?", i)) {
-      let j = i + 2;
-      let quote = null;
-      while (j < len) {
-        const ch = html[j];
-        if (quote) {
-          if (ch === quote) quote = null;
-        } else {
-          if (ch === '"' || ch === "'") quote = ch;
-          else if (ch === ">") break;
-        }
-        j++;
-      }
-      if (j >= len) return null;
-      out += html.slice(i, j + 1);
-      i = j + 1;
-      continue;
-    }
-
-    const tagMatch = /^<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?=[\t\n\f\r />])/.exec(html.slice(i));
-    if (!tagMatch) {
-      return null;
-    }
-
-    const isClosing = tagMatch[1] === "/";
-    const tagNameLower = tagMatch[2].toLowerCase();
-    let j = i + tagMatch[0].length;
-    let quote = null;
-    while (j < len) {
-      const ch = html[j];
-      if (quote) {
-        if (ch === quote) quote = null;
-      } else {
-        if (ch === '"' || ch === "'") quote = ch;
-        else if (ch === "<") return null;
-        else if (ch === ">") break;
-      }
-      j++;
-    }
-    if (j >= len) return null;
-
-    const fullTag = html.slice(i, j + 1);
-    const isSelfClosing = !isClosing && /\/\s*>$/.test(fullTag);
-    out += fullTag;
-    i = j + 1;
-
-    if (!isClosing && !isSelfClosing && RAW_TEXT_ELEMENTS.has(tagNameLower)) {
-      rawTextTag = tagNameLower;
-    }
-  }
-
-  if (rawTextTag !== null) return null;
-  return out;
-}
-
-function areDescriptionHtmlEquivalentOnReadBack(expectedHtml, actualHtml) {
-  if (typeof expectedHtml !== "string" || typeof actualHtml !== "string") return false;
-  if (expectedHtml === actualHtml) return true;
-  const canonExpected = canonicalizeDescriptionHtmlForReadBack(expectedHtml);
-  if (canonExpected === null) return false;
-  const canonActual = canonicalizeDescriptionHtmlForReadBack(actualHtml);
-  if (canonActual === null) return false;
-  return canonExpected === canonActual;
-}
-
-function parseIndexedMutationFieldIndex(fieldProp, rootFieldName) {
-  if (Array.isArray(fieldProp)) {
-    const rootIdx = fieldProp.findIndex(part => String(part) === rootFieldName);
-    if (rootIdx !== -1 && fieldProp.length > rootIdx + 1) {
-      const parsed = Number.parseInt(String(fieldProp[rootIdx + 1]), 10);
-      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
-    }
-    if (fieldProp.length >= 2 && String(fieldProp[0]) === "input") {
-      const parsed = Number.parseInt(String(fieldProp[1]), 10);
-      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
-    }
-  } else if (typeof fieldProp === "string") {
-    const trimmed = fieldProp.trim();
-    const regex = new RegExp(`(?:^|\\.|\\[)${rootFieldName}(?:\\.|\\[)(\\d+)(?:\\]|\\.|$)`);
-    const match = trimmed.match(regex);
-    if (match && match[1] !== undefined) {
-      const parsed = Number.parseInt(match[1], 10);
-      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
-    }
-  }
-  return null;
-}
-
-function attachChunkDestinationToUserErrors(userErrors, chunkItems, rootFieldName = "metafields") {
-  if (!Array.isArray(userErrors)) return [];
-  return userErrors.map(err => {
-    if (!err || typeof err !== "object") return err;
-    const idx = parseIndexedMutationFieldIndex(err.field, rootFieldName);
-    const targetItem = idx !== null && Array.isArray(chunkItems) ? chunkItems[idx] : null;
-    if (targetItem && targetItem.namespace && targetItem.key) {
-      const destination = `${targetItem.namespace}.${targetItem.key}`;
-      return {
-        ...err,
-        destination,
-        ownerId: targetItem.ownerId || null,
-        namespace: targetItem.namespace,
-        key: targetItem.key
-      };
-    }
-    return { ...err };
-  });
-}
-
-function attachNativeDestinationToUserErrors(userErrors, nativeInput) {
-  if (!Array.isArray(userErrors)) return [];
-  const attemptedNativeKeys = [];
-  if (nativeInput?.title !== undefined) attemptedNativeKeys.push("native_title");
-  if (nativeInput?.descriptionHtml !== undefined) attemptedNativeKeys.push("native_description");
-  if (nativeInput?.seo?.title !== undefined) attemptedNativeKeys.push("native_seo_title");
-  if (nativeInput?.seo?.description !== undefined) attemptedNativeKeys.push("native_seo_description");
-
-  return userErrors.map(err => {
-    if (!err || typeof err !== "object") return err;
-    if (err.destination) return { ...err };
-    const pathStr = Array.isArray(err.field)
-      ? err.field.map(p => String(p)).join(".")
-      : (typeof err.field === "string" ? err.field : "");
-
-    let destination = null;
-    if (/(?:^|\.)seo\.title(?:$|\.)/i.test(pathStr)) {
-      destination = "native_seo_title";
-    } else if (/(?:^|\.)seo\.description(?:$|\.)/i.test(pathStr)) {
-      destination = "native_seo_description";
-    } else if (/(?:^|\.)descriptionHtml(?:$|\.)/i.test(pathStr)) {
-      destination = "native_description";
-    } else if (/(?:^|\.)title(?:$|\.)/i.test(pathStr) && !/seo/i.test(pathStr)) {
-      destination = "native_title";
-    } else if (attemptedNativeKeys.length === 1) {
-      destination = attemptedNativeKeys[0];
-    }
-
-    return destination ? { ...err, destination } : { ...err };
-  });
-}
-
-function parsePriceToCentsBigInt(str) {
-  const parts = (str || "0").split(".");
-  const dollars = parts[0];
-  const cents = (parts[1] || "00").padEnd(2, "0").slice(0, 2);
-  return BigInt(dollars + cents);
-}
 
 export const action = async ({ request }) => {
   let matchingContext = null;
@@ -639,199 +331,46 @@ export const action = async ({ request }) => {
       const unresolvedChanges = {};
 
       const nativeInput = { id: productGid };
-      let doNativeUpdate = false;
 
       let doPriceUpdate = false;
       let priceDestinationKey = "price";
       let priceVariantGid = null;
       let newPriceString = null;
-      let priceReadBackVerified = false;
       let attemptedVariantMetafieldWrite = false;
 
-      // Native Changes Integration (Decoupled from custom.* metafields)
-      let nativeTitleUpdated = false;
-      if (nativeChanges.title !== undefined) {
-        const titleStr = String(nativeChanges.title ?? "").trim();
-        if (!hasNativeTitleBaseline) {
-          blockedFields["native_title"] = "Native product title baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (titleStr === "") {
-          blockedFields["native_title"] = "Native product title cannot be empty.";
-        } else if (titleStr.length > 255) {
-          blockedFields["native_title"] = "Native product title exceeds 255 characters limit.";
-        } else if (titleStr !== currentNativeTitle) {
-          nativeInput.title = titleStr;
-          doNativeUpdate = true;
-          nativeTitleUpdated = true;
-          proposedChanges["native_title"] = { from: currentNativeTitle, to: titleStr };
-          attemptedDestinations.push("native_title");
-        } else {
-          unchanged.push("native_title");
-        }
-      }
+      const stagedNativeAndMedia = await stageNativeAndShippingAndMediaChanges({
+        admin,
+        nativeChanges,
+        lookupData,
+        hasNativeTitleBaseline,
+        hasNativeBodyBaseline,
+        hasNativeSeoTitleBaseline,
+        hasNativeSeoDescriptionBaseline,
+        currentNativeTitle,
+        currentNativeBodyHtml,
+        currentNativeSeoTitle,
+        currentNativeSeoDescription,
+        nativeInput,
+        blockedFields,
+        proposedChanges,
+        attemptedDestinations,
+        unchanged
+      });
 
-      let nativeDescriptionUpdated = false;
-      const evaluateAndStageNativeDescription = (rawDescStr, allowEmptyBlock) => {
-        const sanitizedDescStr = sanitizeDescription(rawDescStr);
-        if (!hasNativeBodyBaseline) {
-          blockedFields["native_description"] = "Native product description baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (allowEmptyBlock && rawDescStr === "") {
-          blockedFields["native_description"] = "Native product description cannot be empty.";
-        } else if (sanitizedDescStr !== rawDescStr) {
-          blockedFields["native_description"] = "Native product description contains disallowed anchor links that alter approved content; remove disallowed links and re-approve before saving.";
-        } else if (sanitizedDescStr.length > 10000) {
-          blockedFields["native_description"] = "Native product description exceeds 10,000 characters limit.";
-        } else if (sanitizedDescStr !== currentNativeBodyHtml) {
-          nativeInput.descriptionHtml = sanitizedDescStr;
-          doNativeUpdate = true;
-          nativeDescriptionUpdated = true;
-          proposedChanges["native_description"] = { from: currentNativeBodyHtml, to: sanitizedDescStr };
-          attemptedDestinations.push("native_description");
-        } else {
-          unchanged.push("native_description");
-        }
-      };
-
-      if (nativeChanges.description !== undefined) {
-        evaluateAndStageNativeDescription(String(nativeChanges.description ?? "").trim(), true);
-      }
-
-      let nativeSeoTitleUpdated = false;
-      const evaluateAndStageNativeSeoTitle = (rawSeoTitleStr, allowEmptyBlock) => {
-        const normalizedSeoTitleStr = normalizeMetafieldValue("seo_title", rawSeoTitleStr).trim();
-        if (!hasNativeSeoTitleBaseline) {
-          blockedFields["native_seo_title"] = "Native SEO title baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (allowEmptyBlock && normalizedSeoTitleStr === "") {
-          blockedFields["native_seo_title"] = "Native SEO title cannot be empty.";
-        } else if (normalizedSeoTitleStr !== rawSeoTitleStr) {
-          blockedFields["native_seo_title"] = "Native SEO title contains warning prefixes that alter approved content; edit and re-approve before saving.";
-        } else if (normalizedSeoTitleStr.length > 70) {
-          blockedFields["native_seo_title"] = "Native SEO title exceeds 70 characters limit.";
-        } else if (normalizedSeoTitleStr !== currentNativeSeoTitle) {
-          nativeInput.seo = nativeInput.seo || {};
-          nativeInput.seo.title = normalizedSeoTitleStr;
-          doNativeUpdate = true;
-          nativeSeoTitleUpdated = true;
-          proposedChanges["native_seo_title"] = { from: currentNativeSeoTitle, to: normalizedSeoTitleStr };
-          attemptedDestinations.push("native_seo_title");
-        } else {
-          unchanged.push("native_seo_title");
-        }
-      };
-
-      if (nativeChanges.seoTitle !== undefined) {
-        evaluateAndStageNativeSeoTitle(String(nativeChanges.seoTitle ?? "").trim(), true);
-      }
-
-      let nativeSeoDescriptionUpdated = false;
-      const evaluateAndStageNativeSeoDescription = (seoDescStr, allowEmptyBlock) => {
-        if (!hasNativeSeoDescriptionBaseline) {
-          blockedFields["native_seo_description"] = "Native SEO description baseline could not be loaded from Shopify; reload product data before saving.";
-        } else if (allowEmptyBlock && seoDescStr === "") {
-          blockedFields["native_seo_description"] = "Native SEO description cannot be empty.";
-        } else if (seoDescStr.length > 160) {
-          blockedFields["native_seo_description"] = "SEO description exceeds 160 characters limit.";
-        } else if (seoDescStr !== currentNativeSeoDescription) {
-          nativeInput.seo = nativeInput.seo || {};
-          nativeInput.seo.description = seoDescStr;
-          doNativeUpdate = true;
-          nativeSeoDescriptionUpdated = true;
-          proposedChanges["native_seo_description"] = { from: currentNativeSeoDescription, to: seoDescStr };
-          attemptedDestinations.push("native_seo_description");
-        } else {
-          unchanged.push("native_seo_description");
-        }
-      };
-
-      if (nativeChanges.seoDescription !== undefined) {
-        evaluateAndStageNativeSeoDescription(String(nativeChanges.seoDescription ?? "").trim(), true);
-      }
-
-      let doShippingWeightUpdate = false;
-      let shippingWeightInput = null;
-
-      if (nativeChanges.shippingWeight) {
-         const sw = nativeChanges.shippingWeight;
-         const valStr = String(sw.value !== null && sw.value !== undefined ? sw.value : "").trim();
-
-         if (valStr !== "") {
-            const parsedNum = parseFloat(valStr);
-            if (isNaN(parsedNum) || parsedNum < 0) {
-               blockedFields["native_shipping_weight"] = "Shipping weight must be a positive number.";
-            } else if (!sw.variantId || !isExactProductVariantGid(sw.variantId)) {
-               blockedFields["native_shipping_weight"] = "Missing or invalid variant ID for shipping weight.";
-            } else if (sw.unit !== "OUNCES") {
-               blockedFields["native_shipping_weight"] = "Shipping weight unit must be exactly 'OUNCES'.";
-            } else {
-               try {
-                  const invRes = await admin.graphql(`
-                     query getInventoryItem($id: ID!) {
-                        productVariant(id: $id) {
-                           inventoryItem { id measurement { weight { value unit } } }
-                        }
-                     }
-                  `, { variables: { id: sw.variantId }});
-                  const invJson = await invRes.json();
-                  const invItem = invJson.data?.productVariant?.inventoryItem;
-
-                  if (!invItem) {
-                     blockedFields["native_shipping_weight"] = "Failed to resolve inventory item for variant.";
-                  } else {
-                     const currentWeight = invItem.measurement?.weight?.value;
-                     const currentUnit = invItem.measurement?.weight?.unit;
-
-                     if (parseFloat(currentWeight) !== parsedNum || currentUnit !== sw.unit) {
-                        doShippingWeightUpdate = true;
-                        shippingWeightInput = {
-                           id: invItem.id,
-                           measurement: { weight: { value: parsedNum, unit: sw.unit } }
-                        };
-                        proposedChanges["native_shipping_weight"] = {
-                           from: `${currentWeight} ${currentUnit}`,
-                           to: `${parsedNum} ${sw.unit}`
-                        };
-                        attemptedDestinations.push("native_shipping_weight");
-                     } else {
-                        unchanged.push("native_shipping_weight");
-                     }
-                  }
-               } catch (e) {
-                  blockedFields["native_shipping_weight"] = "Failed to fetch inventory item details.";
-               }
-            }
-         }
-      }
-
-      let doImageAltUpdates = false;
-      const imageAltInputs = [];
-
-      if (nativeChanges.imageAlts && Array.isArray(nativeChanges.imageAlts)) {
-         const currentMedia = lookupData?.data?.product?.media?.edges || [];
-
-         for (const imgReq of nativeChanges.imageAlts) {
-            if (!imgReq.imageId || !/^gid:\/\/shopify\/MediaImage\/\d+$/.test(imgReq.imageId)) {
-               blockedFields[`native_image_alts_${imgReq.imageId || 'unknown'}`] = "Invalid image ID.";
-               continue;
-            }
-
-            const match = currentMedia.find(m => m.node.id === imgReq.imageId);
-            if (!match) {
-               blockedFields[`native_image_alts_${imgReq.imageId}`] = "Image ID not found on this product.";
-               continue;
-            }
-
-            if (match.node.alt !== imgReq.altText) {
-               doImageAltUpdates = true;
-               imageAltInputs.push({
-                  id: imgReq.imageId,
-                  alt: imgReq.altText || ""
-               });
-               proposedChanges[`native_image_alts_${imgReq.imageId}`] = { from: match.node.alt, to: imgReq.altText };
-               attemptedDestinations.push(`native_image_alts_${imgReq.imageId}`);
-            } else {
-               unchanged.push(`native_image_alts_${imgReq.imageId}`);
-            }
-         }
-      }
+      const {
+        getDoNativeUpdate,
+        getNativeTitleUpdated,
+        getNativeDescriptionUpdated,
+        getNativeSeoTitleUpdated,
+        getNativeSeoDescriptionUpdated,
+        evaluateAndStageNativeDescription,
+        evaluateAndStageNativeSeoTitle,
+        evaluateAndStageNativeSeoDescription,
+        doShippingWeightUpdate,
+        shippingWeightInput,
+        doImageAltUpdates,
+        imageAltInputs
+      } = stagedNativeAndMedia;
 
       const moValidationCache = new Map();
       const hasBothPriceAndNativePriceInPlan = Boolean(
@@ -844,7 +383,7 @@ export const action = async ({ request }) => {
 
       for (const [fullKey, val] of Object.entries(repairPlan)) {
         if (fullKey === "shopify_title" || fullKey === "native_title") {
-           if (!nativeTitleUpdated && nativeChanges.title === undefined) {
+           if (!getNativeTitleUpdated() && nativeChanges.title === undefined) {
                skippedKeys.push(fullKey);
            }
            continue;
@@ -852,9 +391,9 @@ export const action = async ({ request }) => {
 
         if (fullKey === "native_description") {
            const rawDescStr = String(val !== null && val !== undefined ? val : "").trim();
-           if (!nativeDescriptionUpdated && nativeChanges.description === undefined && rawDescStr !== "") {
+           if (!getNativeDescriptionUpdated() && nativeChanges.description === undefined && rawDescStr !== "") {
               evaluateAndStageNativeDescription(rawDescStr, false);
-           } else if (!nativeDescriptionUpdated) {
+           } else if (!getNativeDescriptionUpdated()) {
               skippedKeys.push(fullKey);
            }
            continue;
@@ -862,9 +401,9 @@ export const action = async ({ request }) => {
 
         if (fullKey === "native_seo_title") {
            const rawSeoTitleStr = String(val !== null && val !== undefined ? val : "").trim();
-           if (!nativeSeoTitleUpdated && nativeChanges.seoTitle === undefined && rawSeoTitleStr !== "") {
+           if (!getNativeSeoTitleUpdated() && nativeChanges.seoTitle === undefined && rawSeoTitleStr !== "") {
               evaluateAndStageNativeSeoTitle(rawSeoTitleStr, false);
-           } else if (!nativeSeoTitleUpdated) {
+           } else if (!getNativeSeoTitleUpdated()) {
               skippedKeys.push(fullKey);
            }
            continue;
@@ -872,9 +411,9 @@ export const action = async ({ request }) => {
 
         if (fullKey === "native_seo_description") {
            const valStr = String(val !== null && val !== undefined ? val : "").trim();
-           if (!nativeSeoDescriptionUpdated && nativeChanges.seoDescription === undefined && valStr !== "") {
+           if (!getNativeSeoDescriptionUpdated() && nativeChanges.seoDescription === undefined && valStr !== "") {
               evaluateAndStageNativeSeoDescription(valStr, false);
-           } else if (!nativeSeoDescriptionUpdated) {
+           } else if (!getNativeSeoDescriptionUpdated()) {
               skippedKeys.push(fullKey);
            }
            continue;
@@ -1028,145 +567,33 @@ export const action = async ({ request }) => {
         // SCOPED BENCH V2 OPT-IN VARIANT-OWNED DESTINATION PATH
         // ====================================================================
         if (BENCH_V2_OPT_IN_VARIANT_DESTINATIONS.has(canonicalDestinationKey)) {
-          if (!isBenchV2OptIn || fullKey !== canonicalDestinationKey) {
-            unsupportedKeys.push(fullKey);
-            continue;
-          }
-
-          if (!callerVariantTargetId || !isExactProductVariantGid(callerVariantTargetId)) {
-            blockedFields[fullKey] = `Missing or invalid caller variantTargetId for variant-owned destination ${canonicalDestinationKey}; exact Shopify ProductVariant GID is required.`;
-            continue;
-          }
-
-          if (!productLookupComplete) {
-            blockedFields[fullKey] = `Product lookup did not complete for ${productGid}; cannot verify single-variant membership for ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          if (variantTargetStatus === "multiple_variants_ambiguous") {
-            blockedFields[fullKey] = `Ambiguous variant destination on ${canonicalDestinationKey}: product has multiple variants; single-variant target is required.`;
-            continue;
-          }
-
-          if (variantTargetStatus === "zero_variants") {
-            blockedFields[fullKey] = `Invalid variant destination on ${canonicalDestinationKey}: product has zero variants.`;
-            continue;
-          }
-
-          if (variantTargetStatus !== "single_variant_verified" || !verifiedSingleVariantGid) {
-            blockedFields[fullKey] = `Single-variant enumeration could not be verified on ${canonicalDestinationKey} (status: ${variantTargetStatus}).`;
-            continue;
-          }
-
-          if (callerVariantTargetId !== verifiedSingleVariantGid) {
-            blockedFields[fullKey] = `Caller variantTargetId (${callerVariantTargetId}) does not match the product's verified single variant (${verifiedSingleVariantGid}) for ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          if (!variantMetafieldsReadComplete || !currentVariantMetafields) {
-            blockedFields[fullKey] = variantMetafieldsReadError
-              ? `Variant metafields baseline read failed on ${verifiedSingleVariantGid}: ${variantMetafieldsReadError}`
-              : `Variant metafields baseline read did not complete on ${verifiedSingleVariantGid} for ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          if (!variantDefsReadComplete) {
-            blockedFields[fullKey] = variantDefReadErrors.length > 0
-              ? `Live PRODUCTVARIANT metafield definition read did not complete for ${canonicalDestinationKey}: ${variantDefReadErrors.join("; ")}`
-              : `Live PRODUCTVARIANT metafield definition read did not complete for ${canonicalDestinationKey}; reload product data before saving.`;
-            continue;
-          }
-
-          const varDef = variantDefs[canonicalDestinationKey] || null;
-          const varStoredType = currentVariantMetafieldTypes?.[canonicalDestinationKey] || null;
-
-          if (varDef?.constraints && (varDef.constraints.hasConstraints || varDef.constraints.isComplete !== true || varDef.constraints.error)) {
-            if (varDef.constraints.isComplete !== true || varDef.constraints.error) {
-              blockedFields[fullKey] = varDef.constraints.error || `Incomplete constraint enumeration on PRODUCTVARIANT definition ${canonicalDestinationKey}.`;
-              continue;
-            }
-          }
-
-          if (!varDef?.type && !varStoredType) {
-            blockedFields[fullKey] = `Neither live PRODUCTVARIANT metafield definition nor stored variant metafield type is available for ${canonicalDestinationKey}; guessing a type is forbidden.`;
-            continue;
-          }
-
-          if (varDef?.type && varStoredType && varDef.type !== varStoredType) {
-            blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: live PRODUCTVARIANT definition is ${varDef.type} but stored variant metafield is ${varStoredType}.`;
-            continue;
-          }
-
-          const resolvedVarType = varDef?.type || varStoredType;
-          if (resolvedVarType !== "single_line_text_field") {
-            blockedFields[fullKey] = `Type conflict on ${canonicalDestinationKey}: observed PRODUCTVARIANT type is ${resolvedVarType}, expected single_line_text_field.`;
-            continue;
-          }
-
-          if (typeof val !== "string") {
-            blockedFields[fullKey] = `Rejected non-string proposal for ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          const rawUntrimmedVal = val;
-          const valStr = rawUntrimmedVal.trim();
-          if (valStr === "") {
-            blockedFields[fullKey] = `Blank or whitespace-only proposals are forbidden for ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          const normalizedVarVal = normalizeMetafieldValue(key, valStr);
-          if (normalizedVarVal !== rawUntrimmedVal) {
-            blockedFields[fullKey] = `Proposal for ${canonicalDestinationKey} contains leading/trailing whitespace or warning prefixes that would alter the exact approved value.`;
-            continue;
-          }
-
-          if (isPlainTextProposalRejectedForContract(rawUntrimmedVal, normalizedVarVal)) {
-            blockedFields[fullKey] = `Rejected non-text or reference-shaped proposal for plain-text variant destination ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          if (normalizedVarVal.length > 255) {
-            blockedFields[fullKey] = `Value exceeds 255 characters limit for ${canonicalDestinationKey}.`;
-            continue;
-          }
-
-          const liveValidationCheck = validateAgainstLiveTextDefinitionValidations(
-            varDef,
-            normalizedVarVal,
-            canonicalDestinationKey
-          );
-          if (!liveValidationCheck.valid) {
-            blockedFields[fullKey] = liveValidationCheck.reason;
-            continue;
-          }
-
-          const hasCurrentVarProp = Object.prototype.hasOwnProperty.call(
+          const varEval = evaluateBenchV2VariantDestinationWrite({
+            isBenchV2OptIn,
+            fullKey,
+            ns,
+            key,
+            canonicalDestinationKey,
+            val,
+            productGid,
+            callerVariantTargetId,
+            productLookupComplete,
+            variantTargetStatus,
+            verifiedSingleVariantGid,
+            variantMetafieldsReadComplete,
             currentVariantMetafields,
-            canonicalDestinationKey
-          );
-          const currentVarVal = hasCurrentVarProp
-            ? currentVariantMetafields[canonicalDestinationKey]
-            : null;
-
-          if (hasCurrentVarProp && typeof currentVarVal === "string" && currentVarVal === normalizedVarVal) {
-            unchanged.push(canonicalDestinationKey);
-          } else {
-            setToShopify.push({
-              ownerId: verifiedSingleVariantGid,
-              ownerType: "PRODUCTVARIANT",
-              namespace: ns,
-              key: key,
-              type: resolvedVarType,
-              value: normalizedVarVal
-            });
-            proposedChanges[canonicalDestinationKey] = {
-              owner: "PRODUCTVARIANT",
-              variantId: verifiedSingleVariantGid,
-              from: currentVarVal,
-              to: normalizedVarVal
-            };
-            attemptedDestinations.push(canonicalDestinationKey);
+            variantMetafieldsReadError,
+            variantDefsReadComplete,
+            variantDefReadErrors,
+            variantDefs,
+            currentVariantMetafieldTypes,
+            unsupportedKeys,
+            blockedFields,
+            unchanged,
+            setToShopify,
+            proposedChanges,
+            attemptedDestinations
+          });
+          if (varEval.attemptedVariantMetafieldWrite) {
             attemptedVariantMetafieldWrite = true;
           }
           continue;
@@ -1817,764 +1244,47 @@ export const action = async ({ request }) => {
           });
       }
 
-      const allErrors = [];
-
-      if (deleteFromShopify.length > 0) {
-        const uniqueDel = new Map();
-        deleteFromShopify.forEach(m => uniqueDel.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
-        const chunks = chunkArray(Array.from(uniqueDel.values()), 250);
-        for (let i = 0; i < chunks.length; i++) {
-          try {
-            const deleteResponse = await admin.graphql(
-              `#graphql
-              mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
-                metafieldsDelete(metafields: $metafields) { userErrors { message field } }
-              }`,
-              { variables: { metafields: chunks[i] } }
-            );
-            const deleteJson = await deleteResponse.json();
-            if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
-              allErrors.push(...attachChunkDestinationToUserErrors(deleteJson.data.metafieldsDelete.userErrors, chunks[i], "metafields"));
-            }
-          } catch (delErr) { allErrors.push({ message: `API Error on Delete: ${delErr.message}` }); }
-        }
-      }
-
-      if (setToShopify.length > 0) {
-        const uniqueSet = new Map();
-        setToShopify.forEach(m => uniqueSet.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
-        const dedupedItems = Array.from(uniqueSet.values());
-        const chunks = chunkArray(dedupedItems, 25);
-        for (let i = 0; i < chunks.length; i++) {
-          const gqlChunkInput = chunks[i].map(({ ownerId, namespace, key, type, value }) => ({
-            ownerId,
-            namespace,
-            key,
-            type,
-            value
-          }));
-          try {
-            const setResponse = await admin.graphql(
-              `#graphql
-              mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-                metafieldsSet(metafields: $metafields) { userErrors { field message } }
-              }`,
-              { variables: { metafields: gqlChunkInput } }
-            );
-            const setJson = await setResponse.json();
-            if (setJson?.data?.metafieldsSet?.userErrors?.length) {
-              allErrors.push(...attachChunkDestinationToUserErrors(setJson.data.metafieldsSet.userErrors, chunks[i], "metafields"));
-            }
-          } catch (setErr) { allErrors.push({ message: `API Error on Set: ${setErr.message}` }); }
-        }
-      }
-
-      let nativeWriteSucceeded = false;
-      if (doNativeUpdate) {
-        try {
-          const nativeResponse = await admin.graphql(
-            `#graphql
-            mutation productUpdate($input: ProductInput!) {
-              productUpdate(input: $input) {
-                product { id }
-                userErrors { field message }
-              }
-            }`,
-            { variables: { input: nativeInput } }
-          );
-          const nativeJson = await nativeResponse.json();
-          if (nativeJson?.data?.productUpdate?.userErrors?.length) {
-            allErrors.push(...attachNativeDestinationToUserErrors(nativeJson.data.productUpdate.userErrors, nativeInput));
-          } else {
-            nativeWriteSucceeded = true;
-          }
-        } catch (nativeErr) {
-          allErrors.push({ message: `API Error on Native Update: ${nativeErr.message}` });
-        }
-      }
-
-      let priceWriteSucceeded = false;
-      if (doPriceUpdate) {
-        try {
-          const priceResponse = await admin.graphql(
-            `#graphql
-            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                product { id }
-                productVariants { id price }
-                userErrors { field message }
-              }
-            }`,
-            { variables: { productId: productGid, variants: [{ id: priceVariantGid, price: newPriceString }] } }
-          );
-          const priceJson = await priceResponse.json();
-          const bulkData = priceJson?.data?.productVariantsBulkUpdate;
-          if (bulkData?.userErrors?.length) {
-            allErrors.push(...bulkData.userErrors.map(uErr => ({ ...uErr, destination: priceDestinationKey })));
-          } else if (!bulkData?.productVariants || !bulkData.productVariants.some(v => v.id === priceVariantGid)) {
-            allErrors.push({ destination: priceDestinationKey, message: "Price update accepted by API but variant was not returned in success payload." });
-          } else {
-            priceWriteSucceeded = true;
-          }
-        } catch (priceErr) {
-          allErrors.push({ destination: priceDestinationKey, message: `API Error on Price Update: ${priceErr.message}` });
-        }
-      }
-
-      let shippingWeightSucceeded = false;
-      if (doShippingWeightUpdate) {
-         try {
-            const swResponse = await admin.graphql(`
-               #graphql
-               mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
-                  inventoryItemUpdate(id: $id, input: $input) {
-                     inventoryItem { id measurement { weight { value unit } } }
-                     userErrors { field message }
-                  }
-               }
-            `, { variables: { id: shippingWeightInput.id, input: { measurement: shippingWeightInput.measurement } } });
-
-            const swJson = await swResponse.json();
-            const swData = swJson?.data?.inventoryItemUpdate;
-            if (swData?.userErrors?.length) {
-               allErrors.push(...swData.userErrors.map(uErr => ({ ...uErr, destination: "native_shipping_weight" })));
-            } else {
-               shippingWeightSucceeded = true;
-            }
-         } catch (swErr) {
-            allErrors.push({ destination: "native_shipping_weight", message: `API Error on Shipping Weight Update: ${swErr.message}` });
-         }
-      }
-
-      let imageAltUpdatesSucceeded = 0;
-      if (doImageAltUpdates) {
-         for (const imgInput of imageAltInputs) {
-            try {
-               const imgResponse = await admin.graphql(`
-                  #graphql
-                  mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
-                     productUpdateMedia(media: $media, productId: $productId) {
-                        media { ... on MediaImage { id alt } }
-                        userErrors { field message }
-                     }
-                  }
-               `, { variables: { productId: productGid, media: [{ id: imgInput.id, alt: imgInput.alt }] } });
-
-               const imgJson = await imgResponse.json();
-               const imgData = imgJson?.data?.productUpdateMedia;
-
-               if (imgData?.userErrors?.length) {
-                  allErrors.push(...imgData.userErrors.map(uErr => ({
-                     ...uErr,
-                     destination: `native_image_alts_${imgInput.id}`
-                  })));
-               } else {
-                  imageAltUpdatesSucceeded++;
-               }
-            } catch (imgErr) {
-               allErrors.push({
-                  destination: `native_image_alts_${imgInput.id}`,
-                  message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}`
-               });
-            }
-         }
-      }
-
-      if (allErrors.length > 0) {
-         allErrors.forEach(errObj => {
-           if (errObj?.destination && !blockedFields[errObj.destination]) {
-             blockedFields[errObj.destination] = errObj.message || "Shopify write error.";
-           }
-         });
-         return Response.json({
-            intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-            errors: allErrors,
-            currentMetafields,
-            currentMetafieldTypes: currentMetafieldsTypes,
-            metafieldsReadComplete: hasMetafieldsBaseline,
-            primaryVariantId: verifiedSingleVariantGid,
-            variantCount,
-            variantTargetStatus,
-            currentVariantMetafields,
-            currentVariantMetafieldTypes,
-            currentVariantMetafieldIds,
-            variantMetafieldsReadComplete,
-            variantMetafieldsReadError,
-            repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
-            conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced unhandled errors.",
-            variantTarget: resolvedVariantTargetForResponse
-         });
-      }
-
-      await new Promise(r => setTimeout(r, 600));
-
-      let readBackVariantId = null;
-      if (doPriceUpdate) readBackVariantId = priceVariantGid;
-      if (doShippingWeightUpdate && nativeChanges.shippingWeight?.variantId) readBackVariantId = nativeChanges.shippingWeight.variantId;
-      if (attemptedVariantMetafieldWrite && verifiedSingleVariantGid) readBackVariantId = verifiedSingleVariantGid;
-
-      const readBackQuery = `
-        query getProductAndVariant($id: ID!${readBackVariantId ? ', $variantId: ID!' : ''}) {
-          product(id: $id) { 
-            id
-            title 
-            descriptionHtml 
-            seo { title description }
-            category { id fullName }
-            media(first: 50) { edges { node { ... on MediaImage { id alt } } } }
-            metafields(first: 250) {
-              pageInfo { hasNextPage endCursor }
-              edges { node { id namespace key value type } }
-            } 
-          }
-          ${readBackVariantId ? `
-          node(id: $variantId) {
-            ... on ProductVariant { 
-               id 
-               price 
-               product { id } 
-               inventoryItem { measurement { weight { value unit } } }
-               metafields(first: 250) {
-                 pageInfo { hasNextPage endCursor }
-                 edges { node { id namespace key value type } }
-               }
-            }
-          }
-          ` : ''}
-        }
-      `;
-      const readBackVars = { id: productGid };
-      if (readBackVariantId) readBackVars.variantId = readBackVariantId;
-
-      let readBackData = null;
-      let readBackError = null;
-      try {
-        const readBackResponse = await admin.graphql(readBackQuery, { variables: readBackVars });
-        readBackData = await readBackResponse.json();
-        if (readBackData?.errors?.length) {
-          readBackError = readBackData.errors.map(e => e.message).join("; ");
-        }
-      } catch (rbErr) {
-        readBackError = rbErr.message || "Read-back query failed.";
-      }
-
-      const readBackProductNode = readBackData?.data?.product || null;
-      const hasProductReadBack = Boolean(
-        readBackProductNode &&
-        readBackProductNode.id === productGid &&
-        !readBackError
-      );
-
-      const hasTitleReadBack = hasProductReadBack && typeof readBackProductNode.title === "string";
-      const hasBodyReadBack = hasProductReadBack && typeof readBackProductNode.descriptionHtml === "string";
-      const hasSeoReadBack =
-        hasProductReadBack &&
-        readBackProductNode.seo !== null &&
-        readBackProductNode.seo !== undefined &&
-        typeof readBackProductNode.seo === "object" &&
-        !Array.isArray(readBackProductNode.seo) &&
-        Object.prototype.hasOwnProperty.call(readBackProductNode.seo, "title") &&
-        Object.prototype.hasOwnProperty.call(readBackProductNode.seo, "description");
-      const hasMediaReadBack = hasProductReadBack && Array.isArray(readBackProductNode.media?.edges);
-
-      let newMetaList = [];
-      let hasMetafieldsReadBack = false;
-      if (hasProductReadBack && Array.isArray(readBackProductNode.metafields?.edges)) {
-        const rbMfPageInfo = readBackProductNode.metafields.pageInfo;
-        if (rbMfPageInfo && rbMfPageInfo.hasNextPage === true) {
-          const rbMfPaginated = await paginateOwnerMetafieldsConnection({
-            admin,
-            ownerGid: productGid,
-            connectionLabel: "Product metafields read-back",
-            initialEdges: readBackProductNode.metafields.edges,
-            initialPageInfo: rbMfPageInfo,
-            maxPages: 10,
-            buildPageQuery: () => `
-              query getMoreProductMetafieldsReadBack($id: ID!, $cursor: String!) {
-                product(id: $id) {
-                  metafields(first: 250, after: $cursor) {
-                    pageInfo { hasNextPage endCursor }
-                    edges { node { id namespace key value type } }
-                  }
-                }
-              }
-            `,
-            extractConnection: (json) => json?.data?.product?.metafields
-          });
-          newMetaList = rbMfPaginated.edges;
-          hasMetafieldsReadBack = rbMfPaginated.isComplete === true;
-        } else if (!rbMfPageInfo || rbMfPageInfo.hasNextPage === false) {
-          newMetaList = readBackProductNode.metafields.edges;
-          hasMetafieldsReadBack = true;
-        }
-      }
-
-      const actualTitle = hasTitleReadBack ? readBackProductNode.title : undefined;
-      const actualBodyHtml = hasBodyReadBack ? readBackProductNode.descriptionHtml : undefined;
-      const actualSeoTitle = hasSeoReadBack && (typeof readBackProductNode.seo.title === "string" || readBackProductNode.seo.title === null)
-        ? (readBackProductNode.seo.title ?? "")
-        : undefined;
-      const actualSeoDescription = hasSeoReadBack && (typeof readBackProductNode.seo.description === "string" || readBackProductNode.seo.description === null)
-        ? (readBackProductNode.seo.description ?? "")
-        : undefined;
-      const actualMedia = hasMediaReadBack
-        ? readBackProductNode.media.edges.filter(e => e && e.node && e.node.id)
-        : [];
-
-      const newMetafields = {};
-      const newMetafieldTypes = {};
-      newMetaList.forEach(e => {
-        if (e?.node?.namespace && e?.node?.key) {
-          const dotKey = `${e.node.namespace}.${e.node.key}`;
-          newMetafields[dotKey] = e.node.value;
-          newMetafieldTypes[dotKey] = typeof e.node.type === "string" ? e.node.type : null;
-        }
-      });
-
-      const readBackVariantNode = readBackVariantId ? readBackData?.data?.node : null;
-      const hasValidVariantNodeReadBack = Boolean(
-        readBackVariantId &&
-        readBackVariantNode &&
-        readBackVariantNode.id === readBackVariantId &&
-        readBackVariantNode.product?.id === productGid &&
-        !readBackError
-      );
-
-      let hasVariantMetafieldsReadBack = false;
-      let newVariantMetafields = currentVariantMetafields;
-      let newVariantMetafieldTypes = currentVariantMetafieldTypes;
-      let newVariantMetafieldIds = currentVariantMetafieldIds;
-      let readBackVariantMetafieldsError = null;
-
-      if (attemptedVariantMetafieldWrite) {
-        if (!hasValidVariantNodeReadBack || !Array.isArray(readBackVariantNode?.metafields?.edges)) {
-          hasVariantMetafieldsReadBack = false;
-          readBackVariantMetafieldsError = readBackError || `Variant node ${String(readBackVariantId)} missing or owner mismatch on read-back.`;
-        } else {
-          const rbVarPageInfo = readBackVariantNode.metafields.pageInfo;
-          let rbVarEdges = readBackVariantNode.metafields.edges;
-          if (rbVarPageInfo && rbVarPageInfo.hasNextPage === true) {
-            const rbVarPaginated = await paginateOwnerMetafieldsConnection({
-              admin,
-              ownerGid: readBackVariantId,
-              connectionLabel: "Variant metafields read-back",
-              initialEdges: readBackVariantNode.metafields.edges,
-              initialPageInfo: rbVarPageInfo,
-              maxPages: 10,
-              buildPageQuery: () => `
-                query getMoreVariantMetafieldsReadBack($id: ID!, $cursor: String!) {
-                  productVariant(id: $id) {
-                    id
-                    metafields(first: 250, after: $cursor) {
-                      pageInfo { hasNextPage endCursor }
-                      edges { node { id namespace key value type } }
-                    }
-                  }
-                }
-              `,
-              extractConnection: (json) => json?.data?.productVariant?.metafields
-            });
-            rbVarEdges = rbVarPaginated.edges;
-            hasVariantMetafieldsReadBack = rbVarPaginated.isComplete === true;
-            readBackVariantMetafieldsError = rbVarPaginated.error || null;
-          } else if (!rbVarPageInfo || rbVarPageInfo.hasNextPage === false) {
-            hasVariantMetafieldsReadBack = true;
-          }
-
-          if (hasVariantMetafieldsReadBack) {
-            newVariantMetafields = {};
-            newVariantMetafieldTypes = {};
-            newVariantMetafieldIds = {};
-            for (const edge of rbVarEdges) {
-              const node = edge?.node;
-              if (!node || typeof node.namespace !== "string" || typeof node.key !== "string") continue;
-              const dotKey = `${node.namespace}.${node.key}`;
-              newVariantMetafields[dotKey] = node.value;
-              newVariantMetafieldTypes[dotKey] = typeof node.type === "string" ? node.type : null;
-              newVariantMetafieldIds[dotKey] = node.id || null;
-            }
-          }
-        }
-      }
-
-      const unverifiedNativeFields = [];
-      if (!hasTitleReadBack) unverifiedNativeFields.push("productTitle");
-      if (!hasBodyReadBack) unverifiedNativeFields.push("descriptionHtml");
-      if (!hasSeoReadBack) unverifiedNativeFields.push("seo");
-      if (!hasMediaReadBack) unverifiedNativeFields.push("media");
-
-      let readBackVerified = Boolean(
-        hasProductReadBack &&
-        hasMetafieldsReadBack &&
-        (!attemptedVariantMetafieldWrite || hasVariantMetafieldsReadBack)
-      );
-      const conflicts = {};
-      let verifiedReadBackPriceString = undefined;
-
-      if (doPriceUpdate) {
-         if (!priceWriteSucceeded) {
-             readBackVerified = false;
-             unverifiedNativeFields.push("price");
-             unresolvedChanges[priceDestinationKey] = {
-               ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-               reason: "API mutation failed",
-               expected: newPriceString,
-               actual: "Unchanged"
-             };
-         } else {
-             const variantNode = readBackData?.data?.node;
-             const variantMatchesProductAndTarget = Boolean(
-               variantNode &&
-               variantNode.id === priceVariantGid &&
-               variantNode.product?.id === productGid &&
-               typeof variantNode.price === "string" &&
-               !readBackError
-             );
-             if (!variantMatchesProductAndTarget) {
-                 readBackVerified = false;
-                 unverifiedNativeFields.push("price");
-                 unresolvedChanges[priceDestinationKey] = {
-                   ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-                   reason: "Missing, detached, or malformed variant node",
-                   expected: newPriceString,
-                   actual: "Unknown"
-                 };
-                 conflicts[priceDestinationKey] = {
-                   ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-                   expected: newPriceString,
-                   actual: "Missing, detached, or malformed variant node"
-                 };
-             } else {
-                 const isExactPriceMatch =
-                   priceDestinationKey === "native_price"
-                     ? variantNode.price === newPriceString &&
-                       parsePriceToCentsBigInt(variantNode.price) === parsePriceToCentsBigInt(newPriceString)
-                     : parsePriceToCentsBigInt(variantNode.price) === parsePriceToCentsBigInt(newPriceString);
-
-                 if (!isExactPriceMatch) {
-                     readBackVerified = false;
-                     unverifiedNativeFields.push("price");
-                     unresolvedChanges[priceDestinationKey] = {
-                       ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-                       reason: "Read-back mismatch",
-                       expected: newPriceString,
-                       actual: variantNode.price
-                     };
-                     conflicts[priceDestinationKey] = {
-                       ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-                       expected: newPriceString,
-                       actual: variantNode.price
-                     };
-                 } else {
-                     priceReadBackVerified = true;
-                     verifiedReadBackPriceString = variantNode.price;
-                     verifiedDestinations.push(priceDestinationKey);
-                 }
-             }
-         }
-      }
-
-      const readBackNativeComplete = hasProductReadBack && unverifiedNativeFields.length === 0;
-      const readBackNativeTargets = {
-        productId: productGid,
-        productTitle: hasTitleReadBack ? actualTitle : undefined,
-        descriptionHtml: hasBodyReadBack ? actualBodyHtml : undefined,
-        seo: hasSeoReadBack
-          ? {
-              title: actualSeoTitle,
-              description: actualSeoDescription
-            }
-          : undefined,
-        ...(priceReadBackVerified && typeof verifiedReadBackPriceString === "string"
-          ? { price: verifiedReadBackPriceString }
-          : {}),
-        category: hasProductReadBack && readBackProductNode.category
-          ? {
-              id: readBackProductNode.category.id || null,
-              fullName: readBackProductNode.category.fullName || null
-            }
-          : productCategory,
-        media: hasMediaReadBack
-          ? {
-              edges: actualMedia.map(e => ({
-                node: {
-                  id: e.node.id,
-                  alt: typeof e.node.alt === "string" ? e.node.alt : ""
-                }
-              }))
-            }
-          : undefined,
-        isComplete: readBackNativeComplete,
-        loadError: readBackError || (unverifiedNativeFields.length > 0 ? `Unverified native read-back fields: ${unverifiedNativeFields.join(", ")}` : null),
-        unverifiedFields: unverifiedNativeFields
-      };
-
-      if (doNativeUpdate) {
-          if (!nativeWriteSucceeded) {
-              readBackVerified = false;
-              if (nativeInput.descriptionHtml !== undefined) unresolvedChanges["native_description"] = { reason: "API mutation failed", expected: nativeInput.descriptionHtml, actual: "Unchanged" };
-              if (nativeInput.seo?.title !== undefined) unresolvedChanges["native_seo_title"] = { reason: "API mutation failed", expected: nativeInput.seo.title, actual: "Unchanged" };
-              if (nativeInput.seo?.description !== undefined) unresolvedChanges["native_seo_description"] = { reason: "API mutation failed", expected: nativeInput.seo.description, actual: "Unchanged" };
-              if (nativeInput.title !== undefined) unresolvedChanges["native_title"] = { reason: "API mutation failed", expected: nativeInput.title, actual: "Unchanged" };
-          } else {
-              const verifyNativeFieldReadBack = (destKey, expectedVal, actualVal, hasFieldReadBack, missingFieldLabel, eqFn = (a, b) => a === b) => {
-                if (expectedVal === undefined) return;
-                if (!hasFieldReadBack) {
-                  readBackVerified = false;
-                  unresolvedChanges[destKey] = { reason: `Unverified native read-back (${missingFieldLabel} missing)`, expected: expectedVal, actual: "Unverified" };
-                  conflicts[destKey] = { expected: expectedVal, actual: "Unverified (missing from read-back)" };
-                } else if (!eqFn(expectedVal, actualVal)) {
-                  readBackVerified = false;
-                  unresolvedChanges[destKey] = { reason: "Read-back mismatch", expected: expectedVal, actual: actualVal };
-                  conflicts[destKey] = { expected: expectedVal, actual: actualVal };
-                } else {
-                  verifiedDestinations.push(destKey);
-                }
-              };
-
-              verifyNativeFieldReadBack("native_description", nativeInput.descriptionHtml, actualBodyHtml, hasBodyReadBack, "descriptionHtml", areDescriptionHtmlEquivalentOnReadBack);
-              verifyNativeFieldReadBack("native_seo_title", nativeInput.seo?.title, actualSeoTitle, actualSeoTitle !== undefined, "seo.title");
-              verifyNativeFieldReadBack("native_seo_description", nativeInput.seo?.description, actualSeoDescription, actualSeoDescription !== undefined, "seo.description");
-              verifyNativeFieldReadBack("native_title", nativeInput.title, actualTitle, hasTitleReadBack, "title");
-          }
-      }
-
-      if (doShippingWeightUpdate) {
-         if (!shippingWeightSucceeded) {
-             readBackVerified = false;
-             unresolvedChanges["native_shipping_weight"] = { reason: "API mutation failed", expected: shippingWeightInput.measurement.weight.value, actual: "Unchanged" };
-         } else {
-             const variantNode = readBackData?.data?.node;
-             if (!variantNode || variantNode.id !== nativeChanges.shippingWeight.variantId) {
-                readBackVerified = false;
-                unresolvedChanges["native_shipping_weight"] = { reason: "Missing variant node", expected: shippingWeightInput.measurement.weight.value, actual: "Unknown" };
-                conflicts["native_shipping_weight"] = { expected: shippingWeightInput.measurement.weight.value, actual: "Missing variant node" };
-             } else {
-                const actualWeight = variantNode.inventoryItem?.measurement?.weight?.value;
-                const actualUnit = variantNode.inventoryItem?.measurement?.weight?.unit;
-                const expectedWeight = shippingWeightInput.measurement.weight.value;
-                const expectedUnit = shippingWeightInput.measurement.weight.unit;
-
-                if (parseFloat(actualWeight) !== parseFloat(expectedWeight) || actualUnit !== expectedUnit) {
-                   readBackVerified = false;
-                   unresolvedChanges["native_shipping_weight"] = { reason: "Read-back mismatch", expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
-                   conflicts["native_shipping_weight"] = { expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
-                } else {
-                   verifiedDestinations.push("native_shipping_weight");
-                }
-             }
-         }
-      }
-
-      if (doImageAltUpdates) {
-         for (const imgInput of imageAltInputs) {
-            if (!hasMediaReadBack) {
-               readBackVerified = false;
-               unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Unverified native read-back (media missing)", expected: imgInput.alt, actual: "Unverified" };
-               conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: "Unverified (missing from read-back)" };
-               continue;
-            }
-            const match = actualMedia.find(m => m.node.id === imgInput.id);
-            if (!match || typeof match.node.alt !== "string" || match.node.alt !== imgInput.alt) {
-               readBackVerified = false;
-               unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Read-back mismatch", expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
-               conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
-            } else {
-               verifiedDestinations.push(`native_image_alts_${imgInput.id}`);
-            }
-         }
-      }
-
-      setToShopify.forEach(m => {
-         const dotKey = `${m.namespace}.${m.key}`;
-         const isVariantItem = m.ownerType === "PRODUCTVARIANT" || m.ownerId !== productGid;
-
-         if (isVariantItem) {
-             if (!hasValidVariantNodeReadBack || !hasVariantMetafieldsReadBack || !newVariantMetafields) {
-                 readBackVerified = false;
-                 const reasonMsg = readBackVariantMetafieldsError || "Unverified variant metafield read-back";
-                 unresolvedChanges[dotKey] = {
-                     owner: "PRODUCTVARIANT",
-                     variantId: m.ownerId,
-                     reason: reasonMsg,
-                     expected: String(m.value),
-                     actual: "Unverified"
-                 };
-                 conflicts[dotKey] = {
-                     owner: "PRODUCTVARIANT",
-                     variantId: m.ownerId,
-                     expected: String(m.value),
-                     actual: `Unverified (${reasonMsg})`
-                 };
-                 return;
-             }
-
-             const actualVarVal = newVariantMetafields[dotKey];
-             const actualVarType = newVariantMetafieldTypes?.[dotKey] || null;
-             const expVarStr = String(m.value);
-             const actVarStr = actualVarVal !== undefined && actualVarVal !== null ? String(actualVarVal) : null;
-
-             if (actualVarType !== m.type) {
-                 readBackVerified = false;
-                 unresolvedChanges[dotKey] = {
-                     owner: "PRODUCTVARIANT",
-                     variantId: m.ownerId,
-                     reason: `Read-back type mismatch (expected ${m.type}, got ${actualVarType || "none"})`,
-                     expected: expVarStr,
-                     actual: actVarStr ?? "Missing"
-                 };
-                 conflicts[dotKey] = {
-                     owner: "PRODUCTVARIANT",
-                     variantId: m.ownerId,
-                     expected: expVarStr,
-                     actual: actVarStr ?? "Missing"
-                 };
-                 return;
-             }
-
-             if (actVarStr === null || expVarStr !== actVarStr) {
-                 readBackVerified = false;
-                 unresolvedChanges[dotKey] = {
-                     owner: "PRODUCTVARIANT",
-                     variantId: m.ownerId,
-                     reason: "Read-back value mismatch",
-                     expected: expVarStr,
-                     actual: actVarStr ?? "Missing"
-                 };
-                 conflicts[dotKey] = {
-                     owner: "PRODUCTVARIANT",
-                     variantId: m.ownerId,
-                     expected: expVarStr,
-                     actual: actVarStr ?? "Missing"
-                 };
-             } else {
-                 verifiedDestinations.push(dotKey);
-             }
-             return;
-         }
-
-         if (!hasMetafieldsReadBack) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = { reason: "Unverified metafield read-back", expected: String(m.value).trim(), actual: "Unverified" };
-             conflicts[dotKey] = { expected: String(m.value).trim(), actual: "Unverified (missing from read-back)" };
-             return;
-         }
-         const actual = newMetafields[dotKey];
-         const actualProdType = newMetafieldTypes[dotKey] || null;
-         let expStr = String(m.value).trim();
-         let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
-
-         if ((isBenchV2OptIn || dotKey === "custom.whole_product_weight_grams") && actualProdType !== m.type) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = {
-                 owner: "PRODUCT",
-                 reason: `Read-back type mismatch (expected ${m.type}, got ${actualProdType || "none"})`,
-                 expected: expStr,
-                 actual: actStr || "Missing"
-             };
-             conflicts[dotKey] = {
-                 owner: "PRODUCT",
-                 expected: expStr,
-                 actual: actStr || "Missing"
-             };
-             return;
-         }
-
-         if (m.type === "number_decimal") {
-             if (parseFloat(expStr) !== parseFloat(actStr)) {
-                 readBackVerified = false;
-                 unresolvedChanges[dotKey] = { reason: "Read-back mismatch", expected: expStr, actual: actStr };
-                 conflicts[dotKey] = { expected: expStr, actual: actStr };
-             } else {
-                 verifiedDestinations.push(dotKey);
-             }
-         } else {
-             if (expStr !== actStr) {
-                 readBackVerified = false;
-                 unresolvedChanges[dotKey] = { reason: "Read-back mismatch", expected: expStr, actual: actStr };
-                 conflicts[dotKey] = { expected: expStr, actual: actStr };
-             } else {
-                 verifiedDestinations.push(dotKey);
-             }
-         }
-      });
-
-      deleteFromShopify.forEach(m => {
-         const dotKey = `${m.namespace}.${m.key}`;
-         if (!hasMetafieldsReadBack) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = { reason: "Unverified deletion read-back", expected: null, actual: "Unverified" };
-             return;
-         }
-         if (newMetafields[dotKey] !== undefined) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = { reason: "Deletion failed", expected: null, actual: newMetafields[dotKey] };
-         } else {
-             verifiedDestinations.push(dotKey);
-         }
-      });
-
-      const verifiedSetCount = setToShopify.filter(m => verifiedDestinations.includes(`${m.namespace}.${m.key}`)).length;
-      const verifiedImageAltCount = imageAltInputs.filter(img => verifiedDestinations.includes(`native_image_alts_${img.id}`)).length;
-      const verifiedNativeTitleCount = verifiedDestinations.includes("native_title") ? 1 : 0;
-      const verifiedNativeDescCount = verifiedDestinations.includes("native_description") ? 1 : 0;
-      const verifiedNativeSeoTitleCount = verifiedDestinations.includes("native_seo_title") ? 1 : 0;
-      const verifiedNativeSeoDescCount = verifiedDestinations.includes("native_seo_description") ? 1 : 0;
-      const verifiedShippingWeightCount = verifiedDestinations.includes("native_shipping_weight") ? 1 : 0;
-      const totalFieldsUpdated =
-        verifiedSetCount +
-        (priceReadBackVerified ? 1 : 0) +
-        verifiedNativeTitleCount +
-        verifiedNativeDescCount +
-        verifiedNativeSeoTitleCount +
-        verifiedNativeSeoDescCount +
-        verifiedShippingWeightCount +
-        verifiedImageAltCount;
-
-      const hasUnresolved = Object.keys(unresolvedChanges).length > 0 || Object.keys(conflicts).length > 0;
-      const hasExcluded = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
-
-      let finalStatus = "REPAIRED";
-      let finalSuccess = true;
-
-      if (hasUnresolved || hasExcluded) {
-          finalStatus = "PARTIAL_SUCCESS";
-          finalSuccess = false;
-      }
-
-      const diagnosticMsg = finalStatus === "PARTIAL_SUCCESS"
-          ? `Partial execution: ${verifiedDestinations.length} verified. ${Object.keys(unresolvedChanges).length} unresolved, ${Object.keys(blockedFields).length} blocked, ${unsupportedKeys.length} unsupported.`
-          : `Repair successful: ${verifiedDestinations.length} verified destinations.`;
-
-      return Response.json({
-        intent: "executeRepairPlan", pieceId, success: finalSuccess, status: finalStatus,
-        fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
-        message: diagnosticMsg,
-        currentMetafields: hasMetafieldsReadBack ? newMetafields : currentMetafields,
-        currentMetafieldTypes: hasMetafieldsReadBack ? newMetafieldTypes : currentMetafieldsTypes,
-        metafieldsReadComplete: hasMetafieldsBaseline,
-        primaryVariantId: verifiedSingleVariantGid,
+      return await executeStagedRepairMutationsAndReadBack({
+        admin,
+        pieceId,
+        productGid,
+        isBenchV2OptIn,
+        repairPlan,
+        nativeChanges,
+        nativeInput,
+        doNativeUpdate: getDoNativeUpdate(),
+        doPriceUpdate,
+        priceDestinationKey,
+        priceVariantGid,
+        newPriceString,
+        doShippingWeightUpdate,
+        shippingWeightInput,
+        doImageAltUpdates,
+        imageAltInputs,
+        attemptedVariantMetafieldWrite,
+        verifiedSingleVariantGid,
         variantCount,
         variantTargetStatus,
-        currentVariantMetafields: attemptedVariantMetafieldWrite
-          ? (hasVariantMetafieldsReadBack ? newVariantMetafields : null)
-          : currentVariantMetafields,
-        currentVariantMetafieldTypes: attemptedVariantMetafieldWrite
-          ? (hasVariantMetafieldsReadBack ? newVariantMetafieldTypes : null)
-          : currentVariantMetafieldTypes,
-        currentVariantMetafieldIds: attemptedVariantMetafieldWrite
-          ? (hasVariantMetafieldsReadBack ? newVariantMetafieldIds : null)
-          : currentVariantMetafieldIds,
-        variantMetafieldsReadComplete: attemptedVariantMetafieldWrite
-          ? hasVariantMetafieldsReadBack
-          : variantMetafieldsReadComplete,
-        variantMetafieldsReadError: attemptedVariantMetafieldWrite
-          ? readBackVariantMetafieldsError
-          : variantMetafieldsReadError,
-        nativeTargets: readBackNativeTargets,
-        productCategory: readBackNativeTargets.category || productCategory,
-        repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified,
-        variantTarget: resolvedVariantTargetForResponse
+        resolvedVariantTargetForResponse,
+        productCategory,
+        hasMetafieldsBaseline,
+        currentMetafields,
+        currentMetafieldsTypes,
+        currentVariantMetafields,
+        currentVariantMetafieldTypes,
+        currentVariantMetafieldIds,
+        variantMetafieldsReadComplete,
+        variantMetafieldsReadError,
+        proposedChanges,
+        setToShopify,
+        deleteFromShopify,
+        blockedFields,
+        skippedKeys,
+        unsupportedKeys,
+        unchanged,
+        attemptedDestinations,
+        verifiedDestinations,
+        unresolvedChanges
       });
     }
 
