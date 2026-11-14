@@ -603,7 +603,8 @@ export default function BenchV2Route() {
     keepOriginalByProduct,
     setBaselineByProduct,
     setKnownProductsById,
-    setClientPrevalidationBanner
+    setClientPrevalidationBanner,
+    setOpenDrawersById
   });
 
   // 9. Explicit AI Scan Request, Candidate Resolution & Held Alternatives Controller Hook

@@ -14,6 +14,24 @@ import {
   parsePriceToCentsBigInt
 } from "./meta-injector.repair-helpers.server.jsx";
 
+function isFatalAuthOrTransportFailure(rawMessage) {
+  if (typeof rawMessage !== "string") return false;
+  const msg = rawMessage.trim();
+  if (!msg) return false;
+  return /\b(401|403|unauthorized|forbidden|invalid\s+api\s+key|access\s+token|expired\s+token|authentication|unauthenticated|econnreset|econnrefused|etimedout|enotfound|socket\s+hang\s+up|fetch\s+failed|network\s+error)\b/i.test(
+    msg
+  );
+}
+
+function isGlobalOwnerIdentityFailure(rawMessage) {
+  if (typeof rawMessage !== "string") return false;
+  const msg = rawMessage.trim();
+  if (!msg) return false;
+  return /\b(owner\s+does\s+not\s+exist|product\s+does\s+not\s+exist|product\s+not\s+found|owner\s+id\s+is\s+invalid)\b/i.test(
+    msg
+  );
+}
+
 export async function executeStagedRepairMutationsAndReadBack(ctx) {
   const {
     admin,
@@ -60,25 +78,99 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
 
   let priceReadBackVerified = false;
   const allErrors = [];
+  const rejectedMetafieldSetDestinations = new Map();
+  const uncertainMetafieldSetDestinations = new Map();
+  const notSubmittedMetafieldSetDestinations = new Map();
+  const rejectedDeleteDestinations = new Map();
+  const uncertainDeleteDestinations = new Map();
+  const notSubmittedDeleteDestinations = new Map();
+  let globalPrerequisiteAbortReason = null;
+
+  const recordDestinationBlockedReason = (destKey, reasonMsg) => {
+    if (!destKey) return;
+    const cleanReason =
+      typeof reasonMsg === "string" && reasonMsg.trim() !== ""
+        ? reasonMsg.trim()
+        : "Shopify rejected this destination.";
+    if (!blockedFields[destKey]) {
+      blockedFields[destKey] = cleanReason;
+    } else if (!blockedFields[destKey].includes(cleanReason)) {
+      blockedFields[destKey] = `${blockedFields[destKey]} | ${cleanReason}`;
+    }
+  };
 
   if (deleteFromShopify.length > 0) {
     const uniqueDel = new Map();
     deleteFromShopify.forEach(m => uniqueDel.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
-    const chunks = chunkArray(Array.from(uniqueDel.values()), 250);
+    const chunks = chunkArray(Array.from(uniqueDel.values()), 1);
     for (let i = 0; i < chunks.length; i++) {
+      const currentChunk = chunks[i];
+      const item = currentChunk[0];
+      const dotKey = item ? `${item.namespace}.${item.key}` : null;
+
+      if (globalPrerequisiteAbortReason) {
+        if (dotKey) {
+          notSubmittedDeleteDestinations.set(
+            dotKey,
+            `Write skipped after global prerequisite/transport failure: ${globalPrerequisiteAbortReason}`
+          );
+        }
+        continue;
+      }
+
       try {
         const deleteResponse = await admin.graphql(
           `#graphql
           mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
             metafieldsDelete(metafields: $metafields) { userErrors { message field } }
           }`,
-          { variables: { metafields: chunks[i] } }
+          { variables: { metafields: currentChunk } }
         );
         const deleteJson = await deleteResponse.json();
-        if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
-          allErrors.push(...attachChunkDestinationToUserErrors(deleteJson.data.metafieldsDelete.userErrors, chunks[i], "metafields"));
+        if (Array.isArray(deleteJson?.errors) && deleteJson.errors.length > 0) {
+          const gqlMsg = deleteJson.errors.map(e => e?.message || "GraphQL error").join("; ");
+          allErrors.push({
+            ...(dotKey ? { destination: dotKey } : {}),
+            message: `GraphQL Error on Delete${dotKey ? ` (${dotKey})` : ""}: ${gqlMsg}`
+          });
+          if (dotKey) {
+            uncertainDeleteDestinations.set(dotKey, `GraphQL error during delete: ${gqlMsg}`);
+          }
+          if (isFatalAuthOrTransportFailure(gqlMsg) || isGlobalOwnerIdentityFailure(gqlMsg)) {
+            globalPrerequisiteAbortReason = gqlMsg;
+          }
+          continue;
         }
-      } catch (delErr) { allErrors.push({ message: `API Error on Delete: ${delErr.message}` }); }
+
+        if (deleteJson?.data?.metafieldsDelete?.userErrors?.length) {
+          const attachedDelErrors = attachChunkDestinationToUserErrors(
+            deleteJson.data.metafieldsDelete.userErrors,
+            currentChunk,
+            "metafields"
+          ).map(errObj => (dotKey && !errObj.destination ? { ...errObj, destination: dotKey } : errObj));
+          allErrors.push(...attachedDelErrors);
+          const combinedMsg = attachedDelErrors.map(e => e?.message || "Shopify delete userError").join("; ");
+          if (dotKey) {
+            rejectedDeleteDestinations.set(dotKey, combinedMsg);
+            recordDestinationBlockedReason(dotKey, combinedMsg);
+          }
+          if (isGlobalOwnerIdentityFailure(combinedMsg)) {
+            globalPrerequisiteAbortReason = combinedMsg;
+          }
+        }
+      } catch (delErr) {
+        const errMsg = delErr?.message || "Unknown transport error on delete";
+        allErrors.push({
+          ...(dotKey ? { destination: dotKey } : {}),
+          message: `API Error on Delete${dotKey ? ` (${dotKey})` : ""}: ${errMsg}`
+        });
+        if (dotKey) {
+          uncertainDeleteDestinations.set(dotKey, `API transport error on delete: ${errMsg}`);
+        }
+        if (isFatalAuthOrTransportFailure(errMsg)) {
+          globalPrerequisiteAbortReason = errMsg;
+        }
+      }
     }
   }
 
@@ -86,9 +178,25 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
     const uniqueSet = new Map();
     setToShopify.forEach(m => uniqueSet.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
     const dedupedItems = Array.from(uniqueSet.values());
-    const chunks = chunkArray(dedupedItems, 25);
+    const chunks = chunkArray(dedupedItems, 1);
     for (let i = 0; i < chunks.length; i++) {
-      const gqlChunkInput = chunks[i].map(({ ownerId, namespace, key, type, value }) => ({
+      const currentChunk = chunks[i];
+      const item = currentChunk[0];
+      const dotKey = item ? `${item.namespace}.${item.key}` : null;
+
+      if (globalPrerequisiteAbortReason) {
+        const skipMsg = `Write not attempted because an earlier fatal transport/authentication/owner error occurred: ${globalPrerequisiteAbortReason}`;
+        if (dotKey) {
+          notSubmittedMetafieldSetDestinations.set(dotKey, skipMsg);
+        }
+        allErrors.push({
+          ...(dotKey ? { destination: dotKey, ownerId: item.ownerId || null, namespace: item.namespace, key: item.key } : {}),
+          message: skipMsg
+        });
+        continue;
+      }
+
+      const gqlChunkInput = currentChunk.map(({ ownerId, namespace, key, type, value }) => ({
         ownerId,
         namespace,
         key,
@@ -104,68 +212,197 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
           { variables: { metafields: gqlChunkInput } }
         );
         const setJson = await setResponse.json();
-        if (setJson?.data?.metafieldsSet?.userErrors?.length) {
-          allErrors.push(...attachChunkDestinationToUserErrors(setJson.data.metafieldsSet.userErrors, chunks[i], "metafields"));
+        if (Array.isArray(setJson?.errors) && setJson.errors.length > 0) {
+          const gqlMsg = setJson.errors.map(e => e?.message || "GraphQL error").join("; ");
+          allErrors.push({
+            ...(dotKey ? { destination: dotKey, ownerId: item.ownerId || null, namespace: item.namespace, key: item.key } : {}),
+            message: `GraphQL Error on Set${dotKey ? ` (${dotKey})` : ""}: ${gqlMsg}`
+          });
+          if (dotKey) {
+            uncertainMetafieldSetDestinations.set(dotKey, `GraphQL error on metafieldsSet: ${gqlMsg}`);
+          }
+          if (isFatalAuthOrTransportFailure(gqlMsg) || isGlobalOwnerIdentityFailure(gqlMsg)) {
+            globalPrerequisiteAbortReason = gqlMsg;
+          }
+          continue;
         }
-      } catch (setErr) { allErrors.push({ message: `API Error on Set: ${setErr.message}` }); }
+
+        if (setJson?.data?.metafieldsSet?.userErrors?.length) {
+          const attachedSetErrors = attachChunkDestinationToUserErrors(
+            setJson.data.metafieldsSet.userErrors,
+            currentChunk,
+            "metafields"
+          ).map(errObj =>
+            dotKey && !errObj.destination
+              ? {
+                  ...errObj,
+                  destination: dotKey,
+                  ownerId: item.ownerId || null,
+                  namespace: item.namespace,
+                  key: item.key
+                }
+              : errObj
+          );
+          allErrors.push(...attachedSetErrors);
+          const combinedMsg = attachedSetErrors.map(e => e?.message || "Shopify write error.").join("; ");
+          if (dotKey) {
+            rejectedMetafieldSetDestinations.set(dotKey, combinedMsg);
+            recordDestinationBlockedReason(dotKey, combinedMsg);
+          }
+          if (isGlobalOwnerIdentityFailure(combinedMsg)) {
+            globalPrerequisiteAbortReason = combinedMsg;
+          }
+        } else if (!setJson?.data?.metafieldsSet) {
+          const missingPayloadMsg = `Missing metafieldsSet payload from Shopify${dotKey ? ` for ${dotKey}` : ""}.`;
+          allErrors.push({
+            ...(dotKey ? { destination: dotKey, ownerId: item.ownerId || null, namespace: item.namespace, key: item.key } : {}),
+            message: missingPayloadMsg
+          });
+          if (dotKey) {
+            uncertainMetafieldSetDestinations.set(dotKey, missingPayloadMsg);
+          }
+        }
+      } catch (setErr) {
+        const errMsg = setErr?.message || "Unknown transport error on metafieldsSet";
+        allErrors.push({
+          ...(dotKey ? { destination: dotKey, ownerId: item.ownerId || null, namespace: item.namespace, key: item.key } : {}),
+          message: `API Error on Set${dotKey ? ` (${dotKey})` : ""}: ${errMsg}`
+        });
+        if (dotKey) {
+          uncertainMetafieldSetDestinations.set(dotKey, `API transport error on Set: ${errMsg}`);
+        }
+        if (isFatalAuthOrTransportFailure(errMsg)) {
+          globalPrerequisiteAbortReason = errMsg;
+        }
+      }
     }
   }
 
   let nativeWriteSucceeded = false;
+  let nativeWriteUncertain = false;
+  let nativeWriteErrorMessage = null;
   if (doNativeUpdate) {
-    try {
-      const nativeResponse = await admin.graphql(
-        `#graphql
-        mutation productUpdate($input: ProductInput!) {
-          productUpdate(input: $input) {
-            product { id }
-            userErrors { field message }
+    if (globalPrerequisiteAbortReason) {
+      nativeWriteErrorMessage = `Write not attempted because an earlier fatal transport/authentication/owner error occurred: ${globalPrerequisiteAbortReason}`;
+      allErrors.push({ message: nativeWriteErrorMessage });
+    } else {
+      try {
+        const nativeResponse = await admin.graphql(
+          `#graphql
+          mutation productUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product { id }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { input: nativeInput } }
+        );
+        const nativeJson = await nativeResponse.json();
+        if (Array.isArray(nativeJson?.errors) && nativeJson.errors.length > 0) {
+          const gqlMsg = nativeJson.errors.map(e => e?.message || "GraphQL error").join("; ");
+          nativeWriteUncertain = true;
+          nativeWriteErrorMessage = `GraphQL Error on Native Update: ${gqlMsg}`;
+          allErrors.push({ message: nativeWriteErrorMessage });
+          if (isFatalAuthOrTransportFailure(gqlMsg) || isGlobalOwnerIdentityFailure(gqlMsg)) {
+            globalPrerequisiteAbortReason = gqlMsg;
           }
-        }`,
-        { variables: { input: nativeInput } }
-      );
-      const nativeJson = await nativeResponse.json();
-      if (nativeJson?.data?.productUpdate?.userErrors?.length) {
-        allErrors.push(...attachNativeDestinationToUserErrors(nativeJson.data.productUpdate.userErrors, nativeInput));
-      } else {
-        nativeWriteSucceeded = true;
+        } else if (nativeJson?.data?.productUpdate?.userErrors?.length) {
+          const attachedNativeErrors = attachNativeDestinationToUserErrors(
+            nativeJson.data.productUpdate.userErrors,
+            nativeInput
+          );
+          allErrors.push(...attachedNativeErrors);
+          nativeWriteErrorMessage = attachedNativeErrors.map(e => e?.message || "Native product update error").join("; ");
+          attachedNativeErrors.forEach(errObj => {
+            if (errObj?.destination) {
+              recordDestinationBlockedReason(errObj.destination, errObj.message || "Native product update error.");
+            }
+          });
+          if (isGlobalOwnerIdentityFailure(nativeWriteErrorMessage)) {
+            globalPrerequisiteAbortReason = nativeWriteErrorMessage;
+          }
+        } else if (nativeJson?.data?.productUpdate?.product?.id === productGid) {
+          nativeWriteSucceeded = true;
+        } else {
+          nativeWriteUncertain = true;
+          nativeWriteErrorMessage = "Native productUpdate returned without userErrors but product ID was missing or mismatched.";
+          allErrors.push({ message: nativeWriteErrorMessage });
+        }
+      } catch (nativeErr) {
+        const errMsg = nativeErr?.message || "Unknown transport error on Native Update";
+        nativeWriteUncertain = true;
+        nativeWriteErrorMessage = `API Error on Native Update: ${errMsg}`;
+        allErrors.push({ message: nativeWriteErrorMessage });
+        if (isFatalAuthOrTransportFailure(errMsg)) {
+          globalPrerequisiteAbortReason = errMsg;
+        }
       }
-    } catch (nativeErr) {
-      allErrors.push({ message: `API Error on Native Update: ${nativeErr.message}` });
     }
   }
 
   let priceWriteSucceeded = false;
+  let priceWriteUncertain = false;
+  let priceWriteRejectedReason = null;
   if (doPriceUpdate) {
-    try {
-      const priceResponse = await admin.graphql(
-        `#graphql
-        mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            product { id }
-            productVariants { id price }
-            userErrors { field message }
+    if (globalPrerequisiteAbortReason) {
+      priceWriteRejectedReason = `Write not attempted because an earlier fatal transport/authentication/owner error occurred: ${globalPrerequisiteAbortReason}`;
+      allErrors.push({ destination: priceDestinationKey, message: priceWriteRejectedReason });
+    } else {
+      try {
+        const priceResponse = await admin.graphql(
+          `#graphql
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              product { id }
+              productVariants { id price }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { productId: productGid, variants: [{ id: priceVariantGid, price: newPriceString }] } }
+        );
+        const priceJson = await priceResponse.json();
+        const bulkData = priceJson?.data?.productVariantsBulkUpdate;
+        if (Array.isArray(priceJson?.errors) && priceJson.errors.length > 0) {
+          const gqlMsg = priceJson.errors.map(e => e?.message || "GraphQL error").join("; ");
+          priceWriteUncertain = true;
+          priceWriteRejectedReason = `GraphQL Error on Price Update: ${gqlMsg}`;
+          allErrors.push({ destination: priceDestinationKey, message: priceWriteRejectedReason });
+          if (isFatalAuthOrTransportFailure(gqlMsg) || isGlobalOwnerIdentityFailure(gqlMsg)) {
+            globalPrerequisiteAbortReason = gqlMsg;
           }
-        }`,
-        { variables: { productId: productGid, variants: [{ id: priceVariantGid, price: newPriceString }] } }
-      );
-      const priceJson = await priceResponse.json();
-      const bulkData = priceJson?.data?.productVariantsBulkUpdate;
-      if (bulkData?.userErrors?.length) {
-        allErrors.push(...bulkData.userErrors.map(uErr => ({ ...uErr, destination: priceDestinationKey })));
-      } else if (!bulkData?.productVariants || !bulkData.productVariants.some(v => v.id === priceVariantGid)) {
-        allErrors.push({ destination: priceDestinationKey, message: "Price update accepted by API but variant was not returned in success payload." });
-      } else {
-        priceWriteSucceeded = true;
+        } else if (bulkData?.userErrors?.length) {
+          const mappedPriceErrors = bulkData.userErrors.map(uErr => ({ ...uErr, destination: priceDestinationKey }));
+          allErrors.push(...mappedPriceErrors);
+          priceWriteRejectedReason = mappedPriceErrors.map(e => e?.message || "Price update rejected").join("; ");
+          recordDestinationBlockedReason(priceDestinationKey, priceWriteRejectedReason);
+        } else if (!bulkData?.productVariants || !bulkData.productVariants.some(v => v.id === priceVariantGid)) {
+          priceWriteUncertain = true;
+          priceWriteRejectedReason = "Price update accepted by API but variant was not returned in success payload.";
+          allErrors.push({ destination: priceDestinationKey, message: priceWriteRejectedReason });
+        } else {
+          priceWriteSucceeded = true;
+        }
+      } catch (priceErr) {
+        const errMsg = priceErr?.message || "Unknown transport error on Price Update";
+        priceWriteUncertain = true;
+        priceWriteRejectedReason = `API Error on Price Update: ${errMsg}`;
+        allErrors.push({ destination: priceDestinationKey, message: priceWriteRejectedReason });
+        if (isFatalAuthOrTransportFailure(errMsg)) {
+          globalPrerequisiteAbortReason = errMsg;
+        }
       }
-    } catch (priceErr) {
-      allErrors.push({ destination: priceDestinationKey, message: `API Error on Price Update: ${priceErr.message}` });
     }
   }
 
   let shippingWeightSucceeded = false;
+  let shippingWeightUncertain = false;
+  let shippingWeightErrorReason = null;
   if (doShippingWeightUpdate) {
-     try {
+    if (globalPrerequisiteAbortReason) {
+      shippingWeightErrorReason = `Write not attempted because an earlier fatal transport/authentication/owner error occurred: ${globalPrerequisiteAbortReason}`;
+      allErrors.push({ destination: "native_shipping_weight", message: shippingWeightErrorReason });
+    } else {
+      try {
         const swResponse = await admin.graphql(`
            #graphql
            mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
@@ -178,75 +415,116 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
 
         const swJson = await swResponse.json();
         const swData = swJson?.data?.inventoryItemUpdate;
-        if (swData?.userErrors?.length) {
-           allErrors.push(...swData.userErrors.map(uErr => ({ ...uErr, destination: "native_shipping_weight" })));
+        if (Array.isArray(swJson?.errors) && swJson.errors.length > 0) {
+          const gqlMsg = swJson.errors.map(e => e?.message || "GraphQL error").join("; ");
+          shippingWeightUncertain = true;
+          shippingWeightErrorReason = `GraphQL Error on Shipping Weight Update: ${gqlMsg}`;
+          allErrors.push({ destination: "native_shipping_weight", message: shippingWeightErrorReason });
+          if (isFatalAuthOrTransportFailure(gqlMsg) || isGlobalOwnerIdentityFailure(gqlMsg)) {
+            globalPrerequisiteAbortReason = gqlMsg;
+          }
+        } else if (swData?.userErrors?.length) {
+          const mappedSwErrors = swData.userErrors.map(uErr => ({ ...uErr, destination: "native_shipping_weight" }));
+          allErrors.push(...mappedSwErrors);
+          shippingWeightErrorReason = mappedSwErrors.map(e => e?.message || "Shipping weight update rejected").join("; ");
+          recordDestinationBlockedReason("native_shipping_weight", shippingWeightErrorReason);
+        } else if (swData?.inventoryItem?.id) {
+          shippingWeightSucceeded = true;
         } else {
-           shippingWeightSucceeded = true;
+          shippingWeightUncertain = true;
+          shippingWeightErrorReason = "Shipping weight mutation returned without userErrors or inventoryItem payload.";
+          allErrors.push({ destination: "native_shipping_weight", message: shippingWeightErrorReason });
         }
-     } catch (swErr) {
-        allErrors.push({ destination: "native_shipping_weight", message: `API Error on Shipping Weight Update: ${swErr.message}` });
-     }
+      } catch (swErr) {
+        const errMsg = swErr?.message || "Unknown transport error on Shipping Weight Update";
+        shippingWeightUncertain = true;
+        shippingWeightErrorReason = `API Error on Shipping Weight Update: ${errMsg}`;
+        allErrors.push({ destination: "native_shipping_weight", message: shippingWeightErrorReason });
+        if (isFatalAuthOrTransportFailure(errMsg)) {
+          globalPrerequisiteAbortReason = errMsg;
+        }
+      }
+    }
   }
 
   let imageAltUpdatesSucceeded = 0;
+  const rejectedImageAltDestinations = new Map();
+  const uncertainImageAltDestinations = new Map();
   if (doImageAltUpdates) {
-     for (const imgInput of imageAltInputs) {
-        try {
-           const imgResponse = await admin.graphql(`
-              #graphql
-              mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
-                 productUpdateMedia(media: $media, productId: $productId) {
-                    media { ... on MediaImage { id alt } }
-                    userErrors { field message }
-                 }
+    for (const imgInput of imageAltInputs) {
+      const imgDestKey = `native_image_alts_${imgInput.id}`;
+      if (globalPrerequisiteAbortReason) {
+        const skipMsg = `Write not attempted because an earlier fatal transport/authentication/owner error occurred: ${globalPrerequisiteAbortReason}`;
+        uncertainImageAltDestinations.set(imgDestKey, skipMsg);
+        allErrors.push({ destination: imgDestKey, message: skipMsg });
+        continue;
+      }
+
+      try {
+        const imgResponse = await admin.graphql(`
+           #graphql
+           mutation productUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
+              productUpdateMedia(media: $media, productId: $productId) {
+                 media { ... on MediaImage { id alt } }
+                 userErrors { field message }
               }
-           `, { variables: { productId: productGid, media: [{ id: imgInput.id, alt: imgInput.alt }] } });
-
-           const imgJson = await imgResponse.json();
-           const imgData = imgJson?.data?.productUpdateMedia;
-
-           if (imgData?.userErrors?.length) {
-              allErrors.push(...imgData.userErrors.map(uErr => ({
-                 ...uErr,
-                 destination: `native_image_alts_${imgInput.id}`
-              })));
-           } else {
-              imageAltUpdatesSucceeded++;
            }
-        } catch (imgErr) {
-           allErrors.push({
-              destination: `native_image_alts_${imgInput.id}`,
-              message: `API Error on Image Alt Update for ${imgInput.id}: ${imgErr.message}`
-           });
+        `, { variables: { productId: productGid, media: [{ id: imgInput.id, alt: imgInput.alt }] } });
+
+        const imgJson = await imgResponse.json();
+        const imgData = imgJson?.data?.productUpdateMedia;
+
+        if (Array.isArray(imgJson?.errors) && imgJson.errors.length > 0) {
+          const gqlMsg = imgJson.errors.map(e => e?.message || "GraphQL error").join("; ");
+          uncertainImageAltDestinations.set(imgDestKey, `GraphQL Error on Image Alt Update: ${gqlMsg}`);
+          allErrors.push({
+            destination: imgDestKey,
+            message: `GraphQL Error on Image Alt Update for ${imgInput.id}: ${gqlMsg}`
+          });
+          if (isFatalAuthOrTransportFailure(gqlMsg) || isGlobalOwnerIdentityFailure(gqlMsg)) {
+            globalPrerequisiteAbortReason = gqlMsg;
+          }
+        } else if (imgData?.userErrors?.length) {
+          const mappedImgErrors = imgData.userErrors.map(uErr => ({
+            ...uErr,
+            destination: imgDestKey
+          }));
+          allErrors.push(...mappedImgErrors);
+          const combinedImgErr = mappedImgErrors.map(e => e?.message || "Image alt update rejected").join("; ");
+          rejectedImageAltDestinations.set(imgDestKey, combinedImgErr);
+          recordDestinationBlockedReason(imgDestKey, combinedImgErr);
+        } else {
+          imageAltUpdatesSucceeded++;
         }
-     }
+      } catch (imgErr) {
+        const errMsg = imgErr?.message || "Unknown transport error on Image Alt Update";
+        uncertainImageAltDestinations.set(imgDestKey, `API Error on Image Alt Update: ${errMsg}`);
+        allErrors.push({
+          destination: imgDestKey,
+          message: `API Error on Image Alt Update for ${imgInput.id}: ${errMsg}`
+        });
+        if (isFatalAuthOrTransportFailure(errMsg)) {
+          globalPrerequisiteAbortReason = errMsg;
+        }
+      }
+    }
   }
 
-  if (allErrors.length > 0) {
-     allErrors.forEach(errObj => {
-       if (errObj?.destination && !blockedFields[errObj.destination]) {
-         blockedFields[errObj.destination] = errObj.message || "Shopify write error.";
-       }
-     });
-     return Response.json({
-       intent: "executeRepairPlan", pieceId, success: false, status: "REPAIR_FAILED",
-       errors: allErrors,
-       currentMetafields,
-       currentMetafieldTypes: currentMetafieldsTypes,
-       metafieldsReadComplete: hasMetafieldsBaseline,
-       primaryVariantId: verifiedSingleVariantGid,
-       variantCount,
-       variantTargetStatus,
-       currentVariantMetafields,
-       currentVariantMetafieldTypes,
-       currentVariantMetafieldIds,
-       variantMetafieldsReadComplete,
-       variantMetafieldsReadError,
-       repairPlan, proposedChanges, fieldsUpdated: 0, legacyKeysRemoved: 0,
-       conflicts: {}, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified: false, message: "Shopify write produced unhandled errors.",
-       variantTarget: resolvedVariantTargetForResponse
-     });
-  }
+  allErrors.forEach(errObj => {
+    if (
+      errObj?.destination &&
+      !blockedFields[errObj.destination] &&
+      !uncertainMetafieldSetDestinations.has(errObj.destination) &&
+      !notSubmittedMetafieldSetDestinations.has(errObj.destination) &&
+      !uncertainDeleteDestinations.has(errObj.destination) &&
+      !notSubmittedDeleteDestinations.has(errObj.destination) &&
+      !(errObj.destination === priceDestinationKey && priceWriteUncertain) &&
+      !(errObj.destination === "native_shipping_weight" && shippingWeightUncertain) &&
+      !uncertainImageAltDestinations.has(errObj.destination)
+    ) {
+      blockedFields[errObj.destination] = errObj.message || "Shopify write error.";
+    }
+  });
 
   await new Promise(r => setTimeout(r, 600));
 
@@ -454,66 +732,72 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
   let verifiedReadBackPriceString = undefined;
 
   if (doPriceUpdate) {
-     if (!priceWriteSucceeded) {
-         readBackVerified = false;
-         unverifiedNativeFields.push("price");
-         unresolvedChanges[priceDestinationKey] = {
-           ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-           reason: "API mutation failed",
-           expected: newPriceString,
-           actual: "Unchanged"
-         };
-     } else {
-         const variantNode = readBackData?.data?.node;
-         const variantMatchesProductAndTarget = Boolean(
-           variantNode &&
-           variantNode.id === priceVariantGid &&
-           variantNode.product?.id === productGid &&
-           typeof variantNode.price === "string" &&
-           !readBackError
-         );
-         if (!variantMatchesProductAndTarget) {
-             readBackVerified = false;
-             unverifiedNativeFields.push("price");
-             unresolvedChanges[priceDestinationKey] = {
-               ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-               reason: "Missing, detached, or malformed variant node",
-               expected: newPriceString,
-               actual: "Unknown"
-             };
-             conflicts[priceDestinationKey] = {
-               ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-               expected: newPriceString,
-               actual: "Missing, detached, or malformed variant node"
-             };
-         } else {
-             const isExactPriceMatch =
-               priceDestinationKey === "native_price"
-                 ? variantNode.price === newPriceString &&
-                   parsePriceToCentsBigInt(variantNode.price) === parsePriceToCentsBigInt(newPriceString)
-                 : parsePriceToCentsBigInt(variantNode.price) === parsePriceToCentsBigInt(newPriceString);
+    const variantNode = readBackData?.data?.node;
+    const variantMatchesProductAndTarget = Boolean(
+      variantNode &&
+      variantNode.id === priceVariantGid &&
+      variantNode.product?.id === productGid &&
+      typeof variantNode.price === "string" &&
+      !readBackError
+    );
 
-             if (!isExactPriceMatch) {
-                 readBackVerified = false;
-                 unverifiedNativeFields.push("price");
-                 unresolvedChanges[priceDestinationKey] = {
-                   ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-                   reason: "Read-back mismatch",
-                   expected: newPriceString,
-                   actual: variantNode.price
-                 };
-                 conflicts[priceDestinationKey] = {
-                   ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
-                   expected: newPriceString,
-                   actual: variantNode.price
-                 };
-             } else {
-                 priceReadBackVerified = true;
-                 verifiedReadBackPriceString = variantNode.price;
-                 verifiedDestinations.push(priceDestinationKey);
-             }
-         }
-     }
+    if (!priceWriteSucceeded && !priceWriteUncertain) {
+      readBackVerified = false;
+      unverifiedNativeFields.push("price");
+      const actualPriceAfterReject = variantMatchesProductAndTarget ? variantNode.price : "Unchanged";
+      unresolvedChanges[priceDestinationKey] = {
+        ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
+        reason: priceWriteRejectedReason || "API mutation failed",
+        expected: newPriceString,
+        actual: actualPriceAfterReject
+      };
+    } else if (!variantMatchesProductAndTarget) {
+      readBackVerified = false;
+      unverifiedNativeFields.push("price");
+      const missingVarReason = priceWriteUncertain && priceWriteRejectedReason
+        ? `${priceWriteRejectedReason}; variant read-back missing or unverified`
+        : "Missing, detached, or malformed variant node";
+      unresolvedChanges[priceDestinationKey] = {
+        ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
+        reason: missingVarReason,
+        expected: newPriceString,
+        actual: "Unknown"
+      };
+      conflicts[priceDestinationKey] = {
+        ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
+        expected: newPriceString,
+        actual: "Missing, detached, or malformed variant node"
+      };
+    } else {
+      const isExactPriceMatch =
+        priceDestinationKey === "native_price"
+          ? variantNode.price === newPriceString &&
+            parsePriceToCentsBigInt(variantNode.price) === parsePriceToCentsBigInt(newPriceString)
+          : parsePriceToCentsBigInt(variantNode.price) === parsePriceToCentsBigInt(newPriceString);
+
+      if (!isExactPriceMatch) {
+        readBackVerified = false;
+        unverifiedNativeFields.push("price");
+        const mismatchReason = priceWriteUncertain && priceWriteRejectedReason
+          ? `${priceWriteRejectedReason} (read-back price is ${variantNode.price})`
+          : "Read-back mismatch";
+        unresolvedChanges[priceDestinationKey] = {
+          ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
+          reason: mismatchReason,
+          expected: newPriceString,
+          actual: variantNode.price
+        };
+        conflicts[priceDestinationKey] = {
+          ...(priceDestinationKey === "native_price" ? { owner: "PRODUCTVARIANT", variantId: priceVariantGid } : {}),
+          expected: newPriceString,
+          actual: variantNode.price
+        };
+      } else {
+        priceReadBackVerified = true;
+        verifiedReadBackPriceString = variantNode.price;
+        verifiedDestinations.push(priceDestinationKey);
+      }
+    }
   }
 
   const readBackNativeComplete = hasProductReadBack && unverifiedNativeFields.length === 0;
@@ -552,211 +836,344 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
   };
 
   if (doNativeUpdate) {
-      if (!nativeWriteSucceeded) {
-          readBackVerified = false;
-          if (nativeInput.descriptionHtml !== undefined) unresolvedChanges["native_description"] = { reason: "API mutation failed", expected: nativeInput.descriptionHtml, actual: "Unchanged" };
-          if (nativeInput.seo?.title !== undefined) unresolvedChanges["native_seo_title"] = { reason: "API mutation failed", expected: nativeInput.seo.title, actual: "Unchanged" };
-          if (nativeInput.seo?.description !== undefined) unresolvedChanges["native_seo_description"] = { reason: "API mutation failed", expected: nativeInput.seo.description, actual: "Unchanged" };
-          if (nativeInput.title !== undefined) unresolvedChanges["native_title"] = { reason: "API mutation failed", expected: nativeInput.title, actual: "Unchanged" };
-      } else {
-          const verifyNativeFieldReadBack = (destKey, expectedVal, actualVal, hasFieldReadBack, missingFieldLabel, eqFn = (a, b) => a === b) => {
-            if (expectedVal === undefined) return;
-            if (!hasFieldReadBack) {
-              readBackVerified = false;
-              unresolvedChanges[destKey] = { reason: `Unverified native read-back (${missingFieldLabel} missing)`, expected: expectedVal, actual: "Unverified" };
-              conflicts[destKey] = { expected: expectedVal, actual: "Unverified (missing from read-back)" };
-            } else if (!eqFn(expectedVal, actualVal)) {
-              readBackVerified = false;
-              unresolvedChanges[destKey] = { reason: "Read-back mismatch", expected: expectedVal, actual: actualVal };
-              conflicts[destKey] = { expected: expectedVal, actual: actualVal };
-            } else {
-              verifiedDestinations.push(destKey);
-            }
-          };
-
-          verifyNativeFieldReadBack("native_description", nativeInput.descriptionHtml, actualBodyHtml, hasBodyReadBack, "descriptionHtml", areDescriptionHtmlEquivalentOnReadBack);
-          verifyNativeFieldReadBack("native_seo_title", nativeInput.seo?.title, actualSeoTitle, actualSeoTitle !== undefined, "seo.title");
-          verifyNativeFieldReadBack("native_seo_description", nativeInput.seo?.description, actualSeoDescription, actualSeoDescription !== undefined, "seo.description");
-          verifyNativeFieldReadBack("native_title", nativeInput.title, actualTitle, hasTitleReadBack, "title");
+    if (!nativeWriteSucceeded && !nativeWriteUncertain) {
+      readBackVerified = false;
+      const failReason = nativeWriteErrorMessage || "API mutation failed";
+      if (nativeInput.descriptionHtml !== undefined) {
+        unresolvedChanges["native_description"] = {
+          reason: blockedFields["native_description"] || failReason,
+          expected: nativeInput.descriptionHtml,
+          actual: hasBodyReadBack ? actualBodyHtml : "Unchanged"
+        };
       }
+      if (nativeInput.seo?.title !== undefined) {
+        unresolvedChanges["native_seo_title"] = {
+          reason: blockedFields["native_seo_title"] || failReason,
+          expected: nativeInput.seo.title,
+          actual: actualSeoTitle !== undefined ? actualSeoTitle : "Unchanged"
+        };
+      }
+      if (nativeInput.seo?.description !== undefined) {
+        unresolvedChanges["native_seo_description"] = {
+          reason: blockedFields["native_seo_description"] || failReason,
+          expected: nativeInput.seo.description,
+          actual: actualSeoDescription !== undefined ? actualSeoDescription : "Unchanged"
+        };
+      }
+      if (nativeInput.title !== undefined) {
+        unresolvedChanges["native_title"] = {
+          reason: blockedFields["native_title"] || failReason,
+          expected: nativeInput.title,
+          actual: hasTitleReadBack ? actualTitle : "Unchanged"
+        };
+      }
+    } else {
+      const verifyNativeFieldReadBack = (destKey, expectedVal, actualVal, hasFieldReadBack, missingFieldLabel, eqFn = (a, b) => a === b) => {
+        if (expectedVal === undefined) return;
+        if (!hasFieldReadBack) {
+          readBackVerified = false;
+          const unvReason = nativeWriteUncertain && nativeWriteErrorMessage
+            ? `${nativeWriteErrorMessage}; native read-back (${missingFieldLabel}) missing`
+            : `Unverified native read-back (${missingFieldLabel} missing)`;
+          unresolvedChanges[destKey] = { reason: unvReason, expected: expectedVal, actual: "Unverified" };
+          conflicts[destKey] = { expected: expectedVal, actual: "Unverified (missing from read-back)" };
+        } else if (!eqFn(expectedVal, actualVal)) {
+          readBackVerified = false;
+          const mismatchReason = nativeWriteUncertain && nativeWriteErrorMessage
+            ? `${nativeWriteErrorMessage} (read-back did not match)`
+            : "Read-back mismatch";
+          unresolvedChanges[destKey] = { reason: mismatchReason, expected: expectedVal, actual: actualVal };
+          conflicts[destKey] = { expected: expectedVal, actual: actualVal };
+        } else {
+          verifiedDestinations.push(destKey);
+        }
+      };
+
+      verifyNativeFieldReadBack("native_description", nativeInput.descriptionHtml, actualBodyHtml, hasBodyReadBack, "descriptionHtml", areDescriptionHtmlEquivalentOnReadBack);
+      verifyNativeFieldReadBack("native_seo_title", nativeInput.seo?.title, actualSeoTitle, actualSeoTitle !== undefined, "seo.title");
+      verifyNativeFieldReadBack("native_seo_description", nativeInput.seo?.description, actualSeoDescription, actualSeoDescription !== undefined, "seo.description");
+      verifyNativeFieldReadBack("native_title", nativeInput.title, actualTitle, hasTitleReadBack, "title");
+    }
   }
 
   if (doShippingWeightUpdate) {
-     if (!shippingWeightSucceeded) {
-         readBackVerified = false;
-         unresolvedChanges["native_shipping_weight"] = { reason: "API mutation failed", expected: shippingWeightInput.measurement.weight.value, actual: "Unchanged" };
-     } else {
-         const variantNode = readBackData?.data?.node;
-         if (!variantNode || variantNode.id !== nativeChanges.shippingWeight.variantId) {
-            readBackVerified = false;
-            unresolvedChanges["native_shipping_weight"] = { reason: "Missing variant node", expected: shippingWeightInput.measurement.weight.value, actual: "Unknown" };
-            conflicts["native_shipping_weight"] = { expected: shippingWeightInput.measurement.weight.value, actual: "Missing variant node" };
-         } else {
-            const actualWeight = variantNode.inventoryItem?.measurement?.weight?.value;
-            const actualUnit = variantNode.inventoryItem?.measurement?.weight?.unit;
-            const expectedWeight = shippingWeightInput.measurement.weight.value;
-            const expectedUnit = shippingWeightInput.measurement.weight.unit;
+    if (!shippingWeightSucceeded && !shippingWeightUncertain) {
+      readBackVerified = false;
+      unresolvedChanges["native_shipping_weight"] = {
+        reason: shippingWeightErrorReason || "API mutation failed",
+        expected: shippingWeightInput.measurement.weight.value,
+        actual: "Unchanged"
+      };
+    } else {
+      const variantNode = readBackData?.data?.node;
+      if (!variantNode || variantNode.id !== nativeChanges.shippingWeight.variantId) {
+        readBackVerified = false;
+        const missingReason = shippingWeightUncertain && shippingWeightErrorReason
+          ? `${shippingWeightErrorReason}; variant node missing on read-back`
+          : "Missing variant node";
+        unresolvedChanges["native_shipping_weight"] = { reason: missingReason, expected: shippingWeightInput.measurement.weight.value, actual: "Unknown" };
+        conflicts["native_shipping_weight"] = { expected: shippingWeightInput.measurement.weight.value, actual: "Missing variant node" };
+      } else {
+        const actualWeight = variantNode.inventoryItem?.measurement?.weight?.value;
+        const actualUnit = variantNode.inventoryItem?.measurement?.weight?.unit;
+        const expectedWeight = shippingWeightInput.measurement.weight.value;
+        const expectedUnit = shippingWeightInput.measurement.weight.unit;
 
-            if (parseFloat(actualWeight) !== parseFloat(expectedWeight) || actualUnit !== expectedUnit) {
-               readBackVerified = false;
-               unresolvedChanges["native_shipping_weight"] = { reason: "Read-back mismatch", expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
-               conflicts["native_shipping_weight"] = { expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
-            } else {
-               verifiedDestinations.push("native_shipping_weight");
-            }
-         }
-     }
+        if (parseFloat(actualWeight) !== parseFloat(expectedWeight) || actualUnit !== expectedUnit) {
+          readBackVerified = false;
+          const swMismatchReason = shippingWeightUncertain && shippingWeightErrorReason
+            ? `${shippingWeightErrorReason} (read-back weight mismatch)`
+            : "Read-back mismatch";
+          unresolvedChanges["native_shipping_weight"] = { reason: swMismatchReason, expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
+          conflicts["native_shipping_weight"] = { expected: `${expectedWeight} ${expectedUnit}`, actual: `${actualWeight} ${actualUnit}` };
+        } else {
+          verifiedDestinations.push("native_shipping_weight");
+        }
+      }
+    }
   }
 
   if (doImageAltUpdates) {
-     for (const imgInput of imageAltInputs) {
-        if (!hasMediaReadBack) {
-           readBackVerified = false;
-           unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Unverified native read-back (media missing)", expected: imgInput.alt, actual: "Unverified" };
-           conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: "Unverified (missing from read-back)" };
-           continue;
-        }
-        const match = actualMedia.find(m => m.node.id === imgInput.id);
-        if (!match || typeof match.node.alt !== "string" || match.node.alt !== imgInput.alt) {
-           readBackVerified = false;
-           unresolvedChanges[`native_image_alts_${imgInput.id}`] = { reason: "Read-back mismatch", expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
-           conflicts[`native_image_alts_${imgInput.id}`] = { expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
-        } else {
-           verifiedDestinations.push(`native_image_alts_${imgInput.id}`);
-        }
-     }
+    for (const imgInput of imageAltInputs) {
+      const imgDestKey = `native_image_alts_${imgInput.id}`;
+      if (rejectedImageAltDestinations.has(imgDestKey)) {
+        readBackVerified = false;
+        const rejReason = rejectedImageAltDestinations.get(imgDestKey);
+        const matchAfterRej = hasMediaReadBack ? actualMedia.find(m => m.node.id === imgInput.id) : null;
+        unresolvedChanges[imgDestKey] = {
+          reason: rejReason,
+          expected: imgInput.alt,
+          actual: matchAfterRej?.node?.alt ?? "Unchanged"
+        };
+        continue;
+      }
+      if (!hasMediaReadBack) {
+        readBackVerified = false;
+        const unvImgReason = uncertainImageAltDestinations.get(imgDestKey)
+          ? `${uncertainImageAltDestinations.get(imgDestKey)}; media read-back missing`
+          : "Unverified native read-back (media missing)";
+        unresolvedChanges[imgDestKey] = { reason: unvImgReason, expected: imgInput.alt, actual: "Unverified" };
+        conflicts[imgDestKey] = { expected: imgInput.alt, actual: "Unverified (missing from read-back)" };
+        continue;
+      }
+      const match = actualMedia.find(m => m.node.id === imgInput.id);
+      if (!match || typeof match.node.alt !== "string" || match.node.alt !== imgInput.alt) {
+        readBackVerified = false;
+        const mismatchImgReason = uncertainImageAltDestinations.get(imgDestKey) || "Read-back mismatch";
+        unresolvedChanges[imgDestKey] = { reason: mismatchImgReason, expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
+        conflicts[imgDestKey] = { expected: imgInput.alt, actual: match?.node?.alt ?? "Missing node" };
+      } else {
+        verifiedDestinations.push(imgDestKey);
+      }
+    }
   }
 
-  setToShopify.forEach(m => {
-     const dotKey = `${m.namespace}.${m.key}`;
-     const isVariantItem = m.ownerType === "PRODUCTVARIANT" || m.ownerId !== productGid;
+  const uniqueSetForVerification = new Map();
+  setToShopify.forEach(m => uniqueSetForVerification.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
 
-     if (isVariantItem) {
-         if (!hasValidVariantNodeReadBack || !hasVariantMetafieldsReadBack || !newVariantMetafields) {
-             readBackVerified = false;
-             const reasonMsg = readBackVariantMetafieldsError || "Unverified variant metafield read-back";
-             unresolvedChanges[dotKey] = {
-                 owner: "PRODUCTVARIANT",
-                 variantId: m.ownerId,
-                 reason: reasonMsg,
-                 expected: String(m.value),
-                 actual: "Unverified"
-             };
-             conflicts[dotKey] = {
-                 owner: "PRODUCTVARIANT",
-                 variantId: m.ownerId,
-                 expected: String(m.value),
-                 actual: `Unverified (${reasonMsg})`
-             };
-             return;
-         }
+  Array.from(uniqueSetForVerification.values()).forEach(m => {
+    const dotKey = `${m.namespace}.${m.key}`;
+    const isVariantItem = m.ownerType === "PRODUCTVARIANT" || m.ownerId !== productGid;
+    const explicitRejectionReason = rejectedMetafieldSetDestinations.get(dotKey) || null;
+    const uncertainSetReason = uncertainMetafieldSetDestinations.get(dotKey) || null;
+    const notSubmittedSetReason = notSubmittedMetafieldSetDestinations.get(dotKey) || null;
 
-         const actualVarVal = newVariantMetafields[dotKey];
-         const actualVarType = newVariantMetafieldTypes?.[dotKey] || null;
-         const expVarStr = String(m.value);
-         const actVarStr = actualVarVal !== undefined && actualVarVal !== null ? String(actualVarVal) : null;
+    if (explicitRejectionReason) {
+      readBackVerified = false;
+      recordDestinationBlockedReason(dotKey, explicitRejectionReason);
+      return;
+    }
 
-         if (actualVarType !== m.type) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = {
-                 owner: "PRODUCTVARIANT",
-                 variantId: m.ownerId,
-                 reason: `Read-back type mismatch (expected ${m.type}, got ${actualVarType || "none"})`,
-                 expected: expVarStr,
-                 actual: actVarStr ?? "Missing"
-             };
-             conflicts[dotKey] = {
-                 owner: "PRODUCTVARIANT",
-                 variantId: m.ownerId,
-                 expected: expVarStr,
-                 actual: actVarStr ?? "Missing"
-             };
-             return;
-         }
+    if (notSubmittedSetReason) {
+      readBackVerified = false;
+      unresolvedChanges[dotKey] = {
+        ...(isVariantItem ? { owner: "PRODUCTVARIANT", variantId: m.ownerId } : { owner: "PRODUCT" }),
+        reason: notSubmittedSetReason,
+        expected: String(m.value),
+        actual: "Not submitted (prior fatal transport/authentication/owner failure)"
+      };
+      return;
+    }
 
-         if (actVarStr === null || expVarStr !== actVarStr) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = {
-                 owner: "PRODUCTVARIANT",
-                 variantId: m.ownerId,
-                 reason: "Read-back value mismatch",
-                 expected: expVarStr,
-                 actual: actVarStr ?? "Missing"
-             };
-             conflicts[dotKey] = {
-                 owner: "PRODUCTVARIANT",
-                 variantId: m.ownerId,
-                 expected: expVarStr,
-                 actual: actVarStr ?? "Missing"
-             };
-         } else {
-             verifiedDestinations.push(dotKey);
-         }
-         return;
-     }
+    if (isVariantItem) {
+      if (!hasValidVariantNodeReadBack || !hasVariantMetafieldsReadBack || !newVariantMetafields) {
+        readBackVerified = false;
+        const baseVarReason = readBackVariantMetafieldsError || "Unverified variant metafield read-back";
+        const reasonMsg = uncertainSetReason
+          ? `${uncertainSetReason}; ${baseVarReason}`
+          : baseVarReason;
+        unresolvedChanges[dotKey] = {
+          owner: "PRODUCTVARIANT",
+          variantId: m.ownerId,
+          reason: reasonMsg,
+          expected: String(m.value),
+          actual: "Unverified"
+        };
+        conflicts[dotKey] = {
+          owner: "PRODUCTVARIANT",
+          variantId: m.ownerId,
+          expected: String(m.value),
+          actual: `Unverified (${reasonMsg})`
+        };
+        return;
+      }
 
-     if (!hasMetafieldsReadBack) {
-         readBackVerified = false;
-         unresolvedChanges[dotKey] = { reason: "Unverified metafield read-back", expected: String(m.value).trim(), actual: "Unverified" };
-         conflicts[dotKey] = { expected: String(m.value).trim(), actual: "Unverified (missing from read-back)" };
-         return;
-     }
-     const actual = newMetafields[dotKey];
-     const actualProdType = newMetafieldTypes[dotKey] || null;
-     let expStr = String(m.value).trim();
-     let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
+      const actualVarVal = newVariantMetafields[dotKey];
+      const actualVarType = newVariantMetafieldTypes?.[dotKey] || null;
+      const expVarStr = String(m.value);
+      const actVarStr = actualVarVal !== undefined && actualVarVal !== null ? String(actualVarVal) : null;
 
-     if ((isBenchV2OptIn || dotKey === "custom.whole_product_weight_grams") && actualProdType !== m.type) {
-         readBackVerified = false;
-         unresolvedChanges[dotKey] = {
-             owner: "PRODUCT",
-             reason: `Read-back type mismatch (expected ${m.type}, got ${actualProdType || "none"})`,
-             expected: expStr,
-             actual: actStr || "Missing"
-         };
-         conflicts[dotKey] = {
-             owner: "PRODUCT",
-             expected: expStr,
-             actual: actStr || "Missing"
-         };
-         return;
-     }
+      if (actualVarType !== m.type) {
+        readBackVerified = false;
+        const typeMismatchReason = uncertainSetReason
+          ? `${uncertainSetReason} (read-back type ${actualVarType || "none"}, expected ${m.type})`
+          : `Read-back type mismatch (expected ${m.type}, got ${actualVarType || "none"})`;
+        unresolvedChanges[dotKey] = {
+          owner: "PRODUCTVARIANT",
+          variantId: m.ownerId,
+          reason: typeMismatchReason,
+          expected: expVarStr,
+          actual: actVarStr ?? "Missing"
+        };
+        conflicts[dotKey] = {
+          owner: "PRODUCTVARIANT",
+          variantId: m.ownerId,
+          expected: expVarStr,
+          actual: actVarStr ?? "Missing"
+        };
+        return;
+      }
 
-     if (m.type === "number_decimal") {
-         if (parseFloat(expStr) !== parseFloat(actStr)) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = { reason: "Read-back mismatch", expected: expStr, actual: actStr };
-             conflicts[dotKey] = { expected: expStr, actual: actStr };
-         } else {
-             verifiedDestinations.push(dotKey);
-         }
-     } else {
-         if (expStr !== actStr) {
-             readBackVerified = false;
-             unresolvedChanges[dotKey] = { reason: "Read-back mismatch", expected: expStr, actual: actStr };
-             conflicts[dotKey] = { expected: expStr, actual: actStr };
-         } else {
-             verifiedDestinations.push(dotKey);
-         }
-     }
+      if (actVarStr === null || expVarStr !== actVarStr) {
+        readBackVerified = false;
+        const valMismatchReason = uncertainSetReason
+          ? `${uncertainSetReason} (read-back value did not match expected proposal)`
+          : "Read-back value mismatch";
+        unresolvedChanges[dotKey] = {
+          owner: "PRODUCTVARIANT",
+          variantId: m.ownerId,
+          reason: valMismatchReason,
+          expected: expVarStr,
+          actual: actVarStr ?? "Missing"
+        };
+        conflicts[dotKey] = {
+          owner: "PRODUCTVARIANT",
+          variantId: m.ownerId,
+          expected: expVarStr,
+          actual: actVarStr ?? "Missing"
+        };
+      } else {
+        verifiedDestinations.push(dotKey);
+      }
+      return;
+    }
+
+    if (!hasMetafieldsReadBack) {
+      readBackVerified = false;
+      const unvProdReason = uncertainSetReason
+        ? `${uncertainSetReason}; unverified metafield read-back`
+        : "Unverified metafield read-back";
+      unresolvedChanges[dotKey] = { reason: unvProdReason, expected: String(m.value).trim(), actual: "Unverified" };
+      conflicts[dotKey] = { expected: String(m.value).trim(), actual: "Unverified (missing from read-back)" };
+      return;
+    }
+    const actual = newMetafields[dotKey];
+    const actualProdType = newMetafieldTypes[dotKey] || null;
+    let expStr = String(m.value).trim();
+    let actStr = String(actual !== undefined && actual !== null ? actual : "").trim();
+
+    if ((isBenchV2OptIn || dotKey === "custom.whole_product_weight_grams") && actualProdType !== m.type) {
+      readBackVerified = false;
+      const prodTypeMismatchReason = uncertainSetReason
+        ? `${uncertainSetReason} (read-back type ${actualProdType || "none"}, expected ${m.type})`
+        : `Read-back type mismatch (expected ${m.type}, got ${actualProdType || "none"})`;
+      unresolvedChanges[dotKey] = {
+        owner: "PRODUCT",
+        reason: prodTypeMismatchReason,
+        expected: expStr,
+        actual: actStr || "Missing"
+      };
+      conflicts[dotKey] = {
+        owner: "PRODUCT",
+        expected: expStr,
+        actual: actStr || "Missing"
+      };
+      return;
+    }
+
+    if (m.type === "number_decimal") {
+      if (parseFloat(expStr) !== parseFloat(actStr)) {
+        readBackVerified = false;
+        const decMismatchReason = uncertainSetReason
+          ? `${uncertainSetReason} (read-back decimal mismatch)`
+          : "Read-back mismatch";
+        unresolvedChanges[dotKey] = { reason: decMismatchReason, expected: expStr, actual: actStr };
+        conflicts[dotKey] = { expected: expStr, actual: actStr };
+      } else {
+        verifiedDestinations.push(dotKey);
+      }
+    } else {
+      if (expStr !== actStr) {
+        readBackVerified = false;
+        const strMismatchReason = uncertainSetReason
+          ? `${uncertainSetReason} (read-back value mismatch)`
+          : "Read-back mismatch";
+        unresolvedChanges[dotKey] = { reason: strMismatchReason, expected: expStr, actual: actStr };
+        conflicts[dotKey] = { expected: expStr, actual: actStr };
+      } else {
+        verifiedDestinations.push(dotKey);
+      }
+    }
   });
 
-  deleteFromShopify.forEach(m => {
-     const dotKey = `${m.namespace}.${m.key}`;
-     if (!hasMetafieldsReadBack) {
-         readBackVerified = false;
-         unresolvedChanges[dotKey] = { reason: "Unverified deletion read-back", expected: null, actual: "Unverified" };
-         return;
-     }
-     if (newMetafields[dotKey] !== undefined) {
-         readBackVerified = false;
-         unresolvedChanges[dotKey] = { reason: "Deletion failed", expected: null, actual: newMetafields[dotKey] };
-     } else {
-         verifiedDestinations.push(dotKey);
-     }
+  const uniqueDelForVerification = new Map();
+  deleteFromShopify.forEach(m => uniqueDelForVerification.set(`${m.ownerId}:${m.namespace}:${m.key}`, m));
+
+  Array.from(uniqueDelForVerification.values()).forEach(m => {
+    const dotKey = `${m.namespace}.${m.key}`;
+    const explicitDelReject = rejectedDeleteDestinations.get(dotKey) || null;
+    const uncertainDelReason = uncertainDeleteDestinations.get(dotKey) || null;
+    const notSubmittedDelReason = notSubmittedDeleteDestinations.get(dotKey) || null;
+
+    if (explicitDelReject) {
+      readBackVerified = false;
+      recordDestinationBlockedReason(dotKey, explicitDelReject);
+      return;
+    }
+
+    if (notSubmittedDelReason) {
+      readBackVerified = false;
+      unresolvedChanges[dotKey] = {
+        reason: notSubmittedDelReason,
+        expected: null,
+        actual: "Not submitted (prior fatal transport/authentication/owner failure)"
+      };
+      return;
+    }
+
+    if (!hasMetafieldsReadBack) {
+      readBackVerified = false;
+      const unvDelReason = uncertainDelReason
+        ? `${uncertainDelReason}; unverified deletion read-back`
+        : "Unverified deletion read-back";
+      unresolvedChanges[dotKey] = { reason: unvDelReason, expected: null, actual: "Unverified" };
+      return;
+    }
+    if (newMetafields[dotKey] !== undefined) {
+      readBackVerified = false;
+      const delFailReason = uncertainDelReason || "Deletion failed";
+      unresolvedChanges[dotKey] = { reason: delFailReason, expected: null, actual: newMetafields[dotKey] };
+    } else {
+      verifiedDestinations.push(dotKey);
+    }
   });
 
-  const verifiedSetCount = setToShopify.filter(m => verifiedDestinations.includes(`${m.namespace}.${m.key}`)).length;
+  const verifiedSetCount = Array.from(uniqueSetForVerification.values()).filter(m =>
+    verifiedDestinations.includes(`${m.namespace}.${m.key}`)
+  ).length;
+  const verifiedDeleteCount = Array.from(uniqueDelForVerification.values()).filter(m =>
+    verifiedDestinations.includes(`${m.namespace}.${m.key}`)
+  ).length;
   const verifiedImageAltCount = imageAltInputs.filter(img => verifiedDestinations.includes(`native_image_alts_${img.id}`)).length;
   const verifiedNativeTitleCount = verifiedDestinations.includes("native_title") ? 1 : 0;
   const verifiedNativeDescCount = verifiedDestinations.includes("native_description") ? 1 : 0;
@@ -775,26 +1192,38 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
 
   const hasUnresolved = Object.keys(unresolvedChanges).length > 0 || Object.keys(conflicts).length > 0;
   const hasExcluded = Object.keys(blockedFields).length > 0 || unsupportedKeys.length > 0;
+  const hasAnyErrors = allErrors.length > 0;
 
   let finalStatus = "REPAIRED";
   let finalSuccess = true;
 
-  if (hasUnresolved || hasExcluded) {
-      finalStatus = "PARTIAL_SUCCESS";
-      finalSuccess = false;
+  if (verifiedDestinations.length === 0 && (hasUnresolved || hasExcluded || hasAnyErrors)) {
+    finalStatus = "REPAIR_FAILED";
+    finalSuccess = false;
+  } else if (hasUnresolved || hasExcluded || hasAnyErrors) {
+    finalStatus = "PARTIAL_SUCCESS";
+    finalSuccess = false;
   }
 
-  const diagnosticMsg = finalStatus === "PARTIAL_SUCCESS"
-      ? `Partial execution: ${verifiedDestinations.length} verified. ${Object.keys(unresolvedChanges).length} unresolved, ${Object.keys(blockedFields).length} blocked, ${unsupportedKeys.length} unsupported.`
-      : `Repair successful: ${verifiedDestinations.length} verified destinations.`;
+  let diagnosticMsg = `Repair successful: ${verifiedDestinations.length} verified destinations.`;
+  if (finalStatus === "PARTIAL_SUCCESS") {
+    diagnosticMsg = `Partial execution: ${verifiedDestinations.length} verified. ${Object.keys(unresolvedChanges).length} unresolved, ${Object.keys(blockedFields).length} blocked, ${unsupportedKeys.length} unsupported.`;
+  } else if (finalStatus === "REPAIR_FAILED") {
+    diagnosticMsg = `No destinations were verified on read-back (${Object.keys(blockedFields).length} blocked, ${Object.keys(unresolvedChanges).length} unresolved, ${unsupportedKeys.length} unsupported).`;
+  }
 
   return Response.json({
-    intent: "executeRepairPlan", pieceId, success: finalSuccess, status: finalStatus,
-    fieldsUpdated: totalFieldsUpdated, legacyKeysRemoved: deleteFromShopify.length,
+    intent: "executeRepairPlan",
+    pieceId,
+    success: finalSuccess,
+    status: finalStatus,
+    errors: allErrors,
+    fieldsUpdated: totalFieldsUpdated,
+    legacyKeysRemoved: verifiedDeleteCount,
     message: diagnosticMsg,
     currentMetafields: hasMetafieldsReadBack ? newMetafields : currentMetafields,
     currentMetafieldTypes: hasMetafieldsReadBack ? newMetafieldTypes : currentMetafieldsTypes,
-    metafieldsReadComplete: hasMetafieldsBaseline,
+    metafieldsReadComplete: hasMetafieldsReadBack ? true : hasMetafieldsBaseline,
     primaryVariantId: verifiedSingleVariantGid,
     variantCount,
     variantTargetStatus,
@@ -815,7 +1244,19 @@ export async function executeStagedRepairMutationsAndReadBack(ctx) {
       : variantMetafieldsReadError,
     nativeTargets: readBackNativeTargets,
     productCategory: readBackNativeTargets.category || productCategory,
-    repairPlan, proposedChanges, conflicts, blockedFields, skippedKeys, unsupportedKeys, unchanged, attemptedDestinations, verifiedDestinations, unresolvedChanges, missingFields: [], unknownFields: [], readBackVerified,
+    repairPlan,
+    proposedChanges,
+    conflicts,
+    blockedFields,
+    skippedKeys,
+    unsupportedKeys,
+    unchanged,
+    attemptedDestinations,
+    verifiedDestinations,
+    unresolvedChanges,
+    missingFields: [],
+    unknownFields: [],
+    readBackVerified,
     variantTarget: resolvedVariantTargetForResponse
   });
 }

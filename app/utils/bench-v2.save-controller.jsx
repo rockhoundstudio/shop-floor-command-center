@@ -9,7 +9,7 @@
 // & draft/approval clearing.
 // ==========================================================================
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useFetcher } from "react-router";
 import {
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
@@ -27,6 +27,19 @@ import {
   hasExplicitReferenceReplacementFlag
 } from "./bench-v2.json-draft-importer.jsx";
 
+function collectDrawerIdsForDestinations(destinationList) {
+  const drawerIds = new Set();
+  if (!Array.isArray(destinationList)) return drawerIds;
+  for (const destKey of destinationList) {
+    if (typeof destKey !== "string" || !destKey.trim()) continue;
+    const contract = getFieldContractByDestination(destKey.trim());
+    if (contract && typeof contract.drawerId === "string" && contract.drawerId.trim() !== "") {
+      drawerIds.add(contract.drawerId.trim());
+    }
+  }
+  return drawerIds;
+}
+
 export function useBenchV2SaveController({
   activeProductId,
   activeProductTitle,
@@ -42,7 +55,8 @@ export function useBenchV2SaveController({
   keepOriginalByProduct,
   setBaselineByProduct,
   setKnownProductsById,
-  setClientPrevalidationBanner
+  setClientPrevalidationBanner,
+  setOpenDrawersById = null
 }) {
   const writerFetcher = useFetcher();
 
@@ -62,6 +76,27 @@ export function useBenchV2SaveController({
   const currentApprovalsMap = approvalsByProduct[activeProductId] || {};
   const currentKeepOriginalMap = keepOriginalByProduct[activeProductId] || {};
 
+  const openDrawersForDestinations = useCallback(
+    (destinationKeys) => {
+      if (typeof setOpenDrawersById !== "function") return;
+      const drawerIds = collectDrawerIdsForDestinations(destinationKeys);
+      if (drawerIds.size === 0) return;
+      setOpenDrawersById((prev) => {
+        const baseMap = prev && typeof prev === "object" ? prev : {};
+        let didChange = false;
+        const nextMap = { ...baseMap };
+        drawerIds.forEach((drawerId) => {
+          if (nextMap[drawerId] !== true) {
+            nextMap[drawerId] = true;
+            didChange = true;
+          }
+        });
+        return didChange ? nextMap : prev;
+      });
+    },
+    [setOpenDrawersById]
+  );
+
   useEffect(() => {
     if (writerFetcher.state !== "idle") return;
     const pendingSub = activeSaveSubmissionRef.current;
@@ -78,8 +113,25 @@ export function useBenchV2SaveController({
     const submittedVariantTargetId = pendingSub.variantTargetId || null;
     const submittedDestinations = pendingSub.submittedDestinations || [];
     const submittedValuesByDest = pendingSub.submittedValuesByDestination || {};
+    const localBlockedFields =
+      pendingSub.localBlockedFields &&
+      typeof pendingSub.localBlockedFields === "object" &&
+      !Array.isArray(pendingSub.localBlockedFields)
+        ? { ...pendingSub.localBlockedFields }
+        : {};
+    const localBlockedKeys = Object.keys(localBlockedFields);
 
     const recordAbortedSaveReport = (overallOutcome, writerStatus, message, errors) => {
+      const mergedErrors = [
+        ...localBlockedKeys.map((dest) => ({
+          destination: dest,
+          message: `[Client Preflight Blocked — Not Sent] ${localBlockedFields[dest]}`
+        })),
+        ...(Array.isArray(errors) ? errors : [])
+      ];
+
+      openDrawersForDestinations([...submittedDestinations, ...localBlockedKeys]);
+
       setLastSaveReport({
         submissionId: pendingSub.submissionId,
         productId: submittedProductId,
@@ -89,14 +141,15 @@ export function useBenchV2SaveController({
         writerStatus,
         message,
         submittedDestinations,
+        submittedValuesByDestination: submittedValuesByDest,
         verifiedDestinations: [],
-        blockedFields: {},
+        blockedFields: localBlockedFields,
         skippedKeys: [],
         unsupportedKeys: [],
         unchanged: [],
         unresolvedChanges: {},
         conflicts: {},
-        errors,
+        errors: mergedErrors,
         unconfirmedDestinations: [...submittedDestinations],
         readBackVerified: false
       });
@@ -128,11 +181,14 @@ export function useBenchV2SaveController({
     const verifiedList = Array.isArray(rawResponse.verifiedDestinations)
       ? rawResponse.verifiedDestinations
       : [];
-    const verifiedSet = new Set(verifiedList);
-    const blockedFields =
+    const serverBlockedFields =
       rawResponse.blockedFields && typeof rawResponse.blockedFields === "object"
         ? rawResponse.blockedFields
         : {};
+    const blockedFields = {
+      ...localBlockedFields,
+      ...serverBlockedFields
+    };
     const skippedKeys = Array.isArray(rawResponse.skippedKeys) ? rawResponse.skippedKeys : [];
     const unsupportedKeys = Array.isArray(rawResponse.unsupportedKeys)
       ? rawResponse.unsupportedKeys
@@ -140,29 +196,27 @@ export function useBenchV2SaveController({
     const unchangedList = Array.isArray(rawResponse.unchanged) ? rawResponse.unchanged : [];
     const unresolvedChanges =
       rawResponse.unresolvedChanges && typeof rawResponse.unresolvedChanges === "object"
-        ? rawResponse.unresolvedChanges
+        ? { ...rawResponse.unresolvedChanges }
         : {};
     const conflicts =
       rawResponse.conflicts && typeof rawResponse.conflicts === "object"
-        ? rawResponse.conflicts
+        ? { ...rawResponse.conflicts }
         : {};
-    const errorsList = Array.isArray(rawResponse.errors)
+    const serverErrorsList = Array.isArray(rawResponse.errors)
       ? rawResponse.errors
       : rawResponse.error
         ? [{ message: String(rawResponse.error) }]
         : [];
+    const errorsList = [
+      ...localBlockedKeys.map((dest) => ({
+        destination: dest,
+        message: `[Client Preflight Blocked — Not Sent] ${localBlockedFields[dest]}`
+      })),
+      ...serverErrorsList
+    ];
     const readBackVerified = rawResponse.readBackVerified === true;
     const responseVariantTarget =
       rawResponse.primaryVariantId || rawResponse.variantTarget || null;
-
-    const unconfirmedDestinations = submittedDestinations.filter(
-      (dest) =>
-        !verifiedSet.has(dest) &&
-        !Object.prototype.hasOwnProperty.call(blockedFields, dest) &&
-        !skippedKeys.includes(dest) &&
-        !unsupportedKeys.includes(dest) &&
-        !unchangedList.includes(dest)
-    );
 
     const hasReturnedProductMetafields = Boolean(
       rawResponse.currentMetafields &&
@@ -185,11 +239,121 @@ export function useBenchV2SaveController({
         rawResponse.nativeTargets.productId === submittedProductId)
         ? rawResponse.nativeTargets
         : null;
-    const hasVerifiedNativeDestination = verifiedList.some(
+
+    const canConfirmClientSideVerifiedDest = (vDest) => {
+      const contract = getFieldContractByDestination(vDest);
+      if (vDest === "native_price") {
+        if (!returnedNativeTargets) return false;
+        const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
+          ? returnedNativeTargets.unverifiedFields
+          : [];
+        return Boolean(
+          submittedVariantTargetId &&
+          responseVariantTarget === submittedVariantTargetId &&
+          !unverifiedNativeList.includes("price") &&
+          typeof returnedNativeTargets.price === "string" &&
+          returnedNativeTargets.price === submittedValuesByDest["native_price"]
+        );
+      }
+      const isVariantMetafieldDest =
+        (contract?.owner === "PRODUCTVARIANT" && contract?.namespace !== "native") ||
+        BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
+      if (isVariantMetafieldDest) {
+        return Boolean(
+          submittedVariantTargetId &&
+          responseVariantTarget === submittedVariantTargetId &&
+          rawResponse.variantMetafieldsReadComplete === true &&
+          hasReturnedVariantMetafields &&
+          Object.prototype.hasOwnProperty.call(rawResponse.currentVariantMetafields, vDest)
+        );
+      }
+      if (BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)) {
+        if (!returnedNativeTargets) return false;
+        const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
+          ? returnedNativeTargets.unverifiedFields
+          : [];
+        if (vDest === "native_title") {
+          return (
+            !unverifiedNativeList.includes("productTitle") &&
+            typeof returnedNativeTargets.productTitle === "string"
+          );
+        }
+        if (vDest === "native_description") {
+          return (
+            !unverifiedNativeList.includes("descriptionHtml") &&
+            typeof returnedNativeTargets.descriptionHtml === "string"
+          );
+        }
+        if (vDest === "native_seo_title") {
+          return (
+            !unverifiedNativeList.includes("seo") &&
+            typeof returnedNativeTargets.seo?.title === "string"
+          );
+        }
+        if (vDest === "native_seo_description") {
+          return (
+            !unverifiedNativeList.includes("seo") &&
+            typeof returnedNativeTargets.seo?.description === "string"
+          );
+        }
+      }
+      return Boolean(
+        hasReturnedProductMetafields &&
+        rawResponse.metafieldsReadComplete === true &&
+        Object.prototype.hasOwnProperty.call(rawResponse.currentMetafields, vDest)
+      );
+    };
+
+    const confirmedVerifiedList = verifiedList.filter((vDest) =>
+      canConfirmClientSideVerifiedDest(vDest)
+    );
+    const confirmedVerifiedSet = new Set(confirmedVerifiedList);
+
+    const hasVerifiedNativeDestination = confirmedVerifiedList.some(
       (vDest) =>
         BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest) ||
         vDest === "native_price"
     );
+
+    const unconfirmedDestinations = submittedDestinations.filter(
+      (dest) =>
+        !confirmedVerifiedSet.has(dest) &&
+        !Object.prototype.hasOwnProperty.call(blockedFields, dest) &&
+        !Object.prototype.hasOwnProperty.call(unresolvedChanges, dest) &&
+        !Object.prototype.hasOwnProperty.call(conflicts, dest) &&
+        !skippedKeys.includes(dest) &&
+        !unsupportedKeys.includes(dest) &&
+        !unchangedList.includes(dest)
+    );
+
+    for (const unsupportedDest of unsupportedKeys) {
+      if (
+        typeof unsupportedDest === "string" &&
+        unsupportedDest.trim() !== "" &&
+        !Object.prototype.hasOwnProperty.call(blockedFields, unsupportedDest) &&
+        !Object.prototype.hasOwnProperty.call(unresolvedChanges, unsupportedDest)
+      ) {
+        blockedFields[unsupportedDest] =
+          "Destination reported as unsupported by the writer endpoint.";
+      }
+    }
+
+    for (const skippedDest of skippedKeys) {
+      if (
+        typeof skippedDest === "string" &&
+        skippedDest.trim() !== "" &&
+        submittedDestinations.includes(skippedDest) &&
+        !confirmedVerifiedSet.has(skippedDest) &&
+        !Object.prototype.hasOwnProperty.call(blockedFields, skippedDest) &&
+        !Object.prototype.hasOwnProperty.call(unresolvedChanges, skippedDest)
+      ) {
+        unresolvedChanges[skippedDest] = {
+          reason: "Destination was skipped by the writer endpoint without saving.",
+          expected: submittedValuesByDest[skippedDest] ?? "Submitted proposal",
+          actual: "Skipped"
+        };
+      }
+    }
 
     if (
       hasReturnedProductMetafields ||
@@ -227,7 +391,7 @@ export function useBenchV2SaveController({
         };
         let nextProductTitle = existingSnap.productTitle;
 
-        for (const vDest of verifiedList) {
+        for (const vDest of confirmedVerifiedList) {
           const contract = getFieldContractByDestination(vDest);
           const isVariantMetafieldDest =
             (contract?.owner === "PRODUCTVARIANT" && contract?.namespace !== "native") ||
@@ -366,7 +530,7 @@ export function useBenchV2SaveController({
       });
 
       if (
-        verifiedSet.has("native_title") &&
+        confirmedVerifiedSet.has("native_title") &&
         returnedNativeTargets &&
         typeof returnedNativeTargets.productTitle === "string" &&
         returnedNativeTargets.productTitle.trim() !== ""
@@ -389,69 +553,10 @@ export function useBenchV2SaveController({
       }
     }
 
-    if (verifiedSet.size > 0) {
-      const canClearVerifiedDest = (vDest) => {
-        const contract = getFieldContractByDestination(vDest);
-        if (vDest === "native_price") {
-          if (!returnedNativeTargets) return false;
-          const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
-            ? returnedNativeTargets.unverifiedFields
-            : [];
-          return Boolean(
-            submittedVariantTargetId &&
-            responseVariantTarget === submittedVariantTargetId &&
-            !unverifiedNativeList.includes("price") &&
-            typeof returnedNativeTargets.price === "string" &&
-            returnedNativeTargets.price === submittedValuesByDest["native_price"]
-          );
-        }
-        const isVariantMetafieldDest =
-          (contract?.owner === "PRODUCTVARIANT" && contract?.namespace !== "native") ||
-          BENCH_V2_CONNECTED_VARIANT_DESTINATIONS.has(vDest);
-        if (isVariantMetafieldDest) {
-          return Boolean(
-            submittedVariantTargetId &&
-            responseVariantTarget === submittedVariantTargetId &&
-            rawResponse.variantMetafieldsReadComplete === true
-          );
-        }
-        if (BENCH_V2_CONNECTED_NATIVE_PRODUCT_DESTINATIONS.has(vDest)) {
-          if (!returnedNativeTargets) return false;
-          const unverifiedNativeList = Array.isArray(returnedNativeTargets.unverifiedFields)
-            ? returnedNativeTargets.unverifiedFields
-            : [];
-          if (vDest === "native_title") {
-            return (
-              !unverifiedNativeList.includes("productTitle") &&
-              typeof returnedNativeTargets.productTitle === "string"
-            );
-          }
-          if (vDest === "native_description") {
-            return (
-              !unverifiedNativeList.includes("descriptionHtml") &&
-              typeof returnedNativeTargets.descriptionHtml === "string"
-            );
-          }
-          if (vDest === "native_seo_title") {
-            return (
-              !unverifiedNativeList.includes("seo") &&
-              typeof returnedNativeTargets.seo?.title === "string"
-            );
-          }
-          if (vDest === "native_seo_description") {
-            return (
-              !unverifiedNativeList.includes("seo") &&
-              typeof returnedNativeTargets.seo?.description === "string"
-            );
-          }
-        }
-        return true;
-      };
-
+    if (confirmedVerifiedSet.size > 0) {
       setProposedByProduct((prev) => {
         const prodMap = { ...(prev[submittedProductId] || {}) };
-        for (const vDest of verifiedSet) {
-          if (!canClearVerifiedDest(vDest)) continue;
+        for (const vDest of confirmedVerifiedSet) {
           const currentEntry = prodMap[vDest];
           const currentVal =
             currentEntry && typeof currentEntry === "object"
@@ -466,8 +571,7 @@ export function useBenchV2SaveController({
 
       setApprovalsByProduct((prev) => {
         const prodApprovals = { ...(prev[submittedProductId] || {}) };
-        for (const vDest of verifiedSet) {
-          if (!canClearVerifiedDest(vDest)) continue;
+        for (const vDest of confirmedVerifiedSet) {
           const rec = prodApprovals[vDest];
           if (rec && rec.approvedValue === submittedValuesByDest[vDest]) {
             delete prodApprovals[vDest];
@@ -477,29 +581,66 @@ export function useBenchV2SaveController({
       });
     }
 
+    const nonVerifiedProblemDestinations = [
+      ...Object.keys(blockedFields),
+      ...Object.keys(unresolvedChanges),
+      ...Object.keys(conflicts),
+      ...unconfirmedDestinations,
+      ...unsupportedKeys,
+      ...skippedKeys.filter((k) => submittedDestinations.includes(k) && !confirmedVerifiedSet.has(k))
+    ];
+
+    if (nonVerifiedProblemDestinations.length > 0) {
+      openDrawersForDestinations(nonVerifiedProblemDestinations);
+    }
+
+    const hasAnyBlockedOrUnresolved =
+      Object.keys(blockedFields).length > 0 ||
+      Object.keys(unresolvedChanges).length > 0 ||
+      Object.keys(conflicts).length > 0 ||
+      unconfirmedDestinations.length > 0 ||
+      unsupportedKeys.length > 0;
+
+    const effectiveOverallOutcome =
+      rawResponse.success === true &&
+      rawResponse.status === "REPAIRED" &&
+      readBackVerified &&
+      !hasAnyBlockedOrUnresolved &&
+      confirmedVerifiedList.length === submittedDestinations.length
+        ? "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
+        : confirmedVerifiedList.length > 0
+          ? "PARTIAL_OR_UNRESOLVED_WRITE_OUTCOME"
+          : "WRITE_FAILED_OR_BLOCKED";
+
+    const effectiveWriterStatus =
+      hasAnyBlockedOrUnresolved && confirmedVerifiedList.length > 0
+        ? "PARTIAL_SUCCESS"
+        : String(rawResponse.status || (rawResponse.success ? "OK" : "FAILED"));
+
+    const serverBaseMsg =
+      rawResponse.message ||
+      rawResponse.error ||
+      "Save finished. Review the field results below.";
+
+    const combinedMessage =
+      localBlockedKeys.length > 0
+        ? `${serverBaseMsg} (${localBlockedKeys.length} locally blocked field${
+            localBlockedKeys.length === 1 ? " was" : "s were"
+          } not sent: ${localBlockedKeys.join(", ")}.)`
+        : serverBaseMsg;
+
     setLastSaveReport({
       submissionId: pendingSub.submissionId,
       productId: submittedProductId,
       variantTargetId: submittedVariantTargetId,
       responseVariantTarget,
       completedAt: new Date().toISOString(),
-      overallOutcome:
-        rawResponse.success === true &&
-        rawResponse.status === "REPAIRED" &&
-        readBackVerified &&
-        unconfirmedDestinations.length === 0
-          ? "ALL_SUBMITTED_DESTINATIONS_VERIFIED"
-          : verifiedList.length > 0
-            ? "PARTIAL_OR_UNRESOLVED_WRITE_OUTCOME"
-            : "WRITE_FAILED_OR_BLOCKED",
-      writerStatus: String(rawResponse.status || (rawResponse.success ? "OK" : "FAILED")),
-      message:
-        rawResponse.message ||
-        rawResponse.error ||
-        "Save finished. Review the field results below.",
+      overallOutcome: effectiveOverallOutcome,
+      writerStatus: effectiveWriterStatus,
+      message: combinedMessage,
       submittedDestinations,
       submittedValuesByDestination: submittedValuesByDest,
-      verifiedDestinations: verifiedList,
+      verifiedDestinations: confirmedVerifiedList,
       blockedFields,
       skippedKeys,
       unsupportedKeys,
@@ -508,7 +649,7 @@ export function useBenchV2SaveController({
       conflicts,
       errors: errorsList,
       unconfirmedDestinations,
-      readBackVerified
+      readBackVerified: Boolean(readBackVerified && localBlockedKeys.length === 0)
     });
 
     setActiveSaveSubmission(null);
@@ -520,7 +661,8 @@ export function useBenchV2SaveController({
     setBaselineByProduct,
     setKnownProductsById,
     setProposedByProduct,
-    setApprovalsByProduct
+    setApprovalsByProduct,
+    openDrawersForDestinations
   ]);
 
   const handleExplicitSaveApprovedChanges = () => {
@@ -575,10 +717,20 @@ export function useBenchV2SaveController({
     }
 
     const prevalidationErrors = [];
+    const localBlockedFields = {};
     const safePlanToSubmit = {};
     const safeNativeChangesToSubmit = {};
     const safeExplicitReferenceReplacementsToSubmit = {};
     let requiredVariantTargetId = null;
+
+    const recordLocalPreflightBlock = (destKey, reasonText) => {
+      const cleanReason =
+        typeof reasonText === "string" && reasonText.trim() !== ""
+          ? reasonText.trim()
+          : "Blocked during client prevalidation.";
+      localBlockedFields[destKey] = cleanReason;
+      prevalidationErrors.push(`[${destKey}] ${cleanReason}`);
+    };
 
     for (const [destKey, approvalRec] of approvalEntries) {
       const contract = getFieldContractByDestination(destKey);
@@ -587,8 +739,9 @@ export function useBenchV2SaveController({
         !contract.isWritableInBatch1 ||
         !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(destKey)
       ) {
-        prevalidationErrors.push(
-          `[${destKey}] Not an eligible writable destination.`
+        recordLocalPreflightBlock(
+          destKey,
+          "Not an eligible writable destination."
         );
         continue;
       }
@@ -612,15 +765,16 @@ export function useBenchV2SaveController({
           baselineSnapshot: currentBaseline
         })
       ) {
-        prevalidationErrors.push(
-          `[${destKey}] Marked Keep Original; cannot be submitted for Save.`
+        recordLocalPreflightBlock(
+          destKey,
+          "Marked Keep Original; cannot be submitted for Save."
         );
         continue;
       }
 
       const fidelity = checkExistingWriterStringFidelity(currentProposedValue);
       if (!fidelity.faithful) {
-        prevalidationErrors.push(`[${destKey}] ${fidelity.reason}`);
+        recordLocalPreflightBlock(destKey, fidelity.reason);
         continue;
       }
 
@@ -633,13 +787,14 @@ export function useBenchV2SaveController({
       });
 
       if (!validation.valid) {
-        prevalidationErrors.push(`[${destKey}] ${validation.reason}`);
+        recordLocalPreflightBlock(destKey, validation.reason);
         continue;
       }
 
       if (validation.isUnchangedFromStored) {
-        prevalidationErrors.push(
-          `[${destKey}] Proposed value matches the saved value; uncheck Approve or enter a changed value.`
+        recordLocalPreflightBlock(
+          destKey,
+          "Proposed value matches the saved value; uncheck Approve or enter a changed value."
         );
         continue;
       }
@@ -654,8 +809,9 @@ export function useBenchV2SaveController({
       });
 
       if (!stillValidApproval) {
-        prevalidationErrors.push(
-          `[${destKey}] Approval record is out of date. Please review the value and check Approve again.`
+        recordLocalPreflightBlock(
+          destKey,
+          "Approval record is out of date. Please review the value and check Approve again."
         );
         continue;
       }
@@ -673,8 +829,9 @@ export function useBenchV2SaveController({
           approvalRec?.restrictedMetaobjectDefinitionId !==
             validation.baselineObservation?.restrictedMetaobjectDefinitionId
         ) {
-          prevalidationErrors.push(
-            `[${destKey}] Explicit reference list replacement approval does not match current baseline evidence. Please re-approve before saving.`
+          recordLocalPreflightBlock(
+            destKey,
+            "Explicit reference list replacement approval does not match current baseline evidence. Please re-approve before saving."
           );
           continue;
         }
@@ -709,8 +866,9 @@ export function useBenchV2SaveController({
             approvalRec?.owner !== "PRODUCTVARIANT" ||
             approvalRec?.variantId !== baselinePrimaryVariantId
           ) {
-            prevalidationErrors.push(
-              `[${destKey}] Single-variant target identity is not verified for this price approval. Reload product data and re-approve.`
+            recordLocalPreflightBlock(
+              destKey,
+              "Single-variant target identity is not verified for this price approval. Reload product data and re-approve."
             );
             continue;
           }
@@ -725,15 +883,17 @@ export function useBenchV2SaveController({
           approvalRec?.owner !== "PRODUCTVARIANT" ||
           approvalRec?.variantId !== baselinePrimaryVariantId
         ) {
-          prevalidationErrors.push(
-            `[${destKey}] Variant target identity or completeness is not verified for this approval. Reload product data and re-approve.`
+          recordLocalPreflightBlock(
+            destKey,
+            "Variant target identity or completeness is not verified for this approval. Reload product data and re-approve."
           );
           continue;
         }
 
         if (requiredVariantTargetId && requiredVariantTargetId !== baselinePrimaryVariantId) {
-          prevalidationErrors.push(
-            `[${destKey}] Conflicting variantTargetId detected across approved variant fields (${requiredVariantTargetId} vs. ${baselinePrimaryVariantId}).`
+          recordLocalPreflightBlock(
+            destKey,
+            `Conflicting variantTargetId detected across approved variant fields (${requiredVariantTargetId} vs. ${baselinePrimaryVariantId}).`
           );
           continue;
         }
@@ -747,25 +907,74 @@ export function useBenchV2SaveController({
       safePlanToSubmit[destKey] = validation.normalizedValue;
     }
 
-    if (prevalidationErrors.length > 0) {
-      setClientPrevalidationBanner({
-        tone: "error",
-        title: `Save stopped (${prevalidationErrors.length} issue${
-          prevalidationErrors.length === 1 ? "" : "s"
-        } found — nothing was sent)`,
-        reasons: prevalidationErrors
-      });
-      return;
-    }
-
     const submittedDestinations = Object.keys(safePlanToSubmit);
+    const localBlockedDestKeys = Object.keys(localBlockedFields);
+
     if (submittedDestinations.length === 0) {
+      if (localBlockedDestKeys.length > 0) {
+        const localOnlySubmissionId = `bench_v2_local_blocked_${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
+
+        openDrawersForDestinations(localBlockedDestKeys);
+
+        setClientPrevalidationBanner({
+          tone: "error",
+          title: `Save stopped (${prevalidationErrors.length} issue${
+            prevalidationErrors.length === 1 ? "" : "s"
+          } found — nothing was sent)`,
+          reasons: prevalidationErrors
+        });
+
+        setLastSaveReport({
+          submissionId: localOnlySubmissionId,
+          productId: activeProductId,
+          variantTargetId: null,
+          responseVariantTarget: null,
+          completedAt: new Date().toISOString(),
+          overallOutcome: "WRITE_FAILED_OR_BLOCKED",
+          writerStatus: "REPAIR_BLOCKED",
+          message: `No changes were sent to Shopify because ${localBlockedDestKeys.length} approved field${
+            localBlockedDestKeys.length === 1 ? " was" : "s were"
+          } blocked during preflight checks (${localBlockedDestKeys.join(", ")}).`,
+          submittedDestinations: [],
+          submittedValuesByDestination: {},
+          verifiedDestinations: [],
+          blockedFields: { ...localBlockedFields },
+          skippedKeys: [],
+          unsupportedKeys: [],
+          unchanged: [],
+          unresolvedChanges: {},
+          conflicts: {},
+          errors: localBlockedDestKeys.map((dest) => ({
+            destination: dest,
+            message: localBlockedFields[dest]
+          })),
+          unconfirmedDestinations: [],
+          readBackVerified: true
+        });
+        return;
+      }
+
       setClientPrevalidationBanner({
         tone: "warning",
         title: "No eligible approved changes",
         reasons: ["No valid approved changes remained after preflight checks."]
       });
       return;
+    }
+
+    if (localBlockedDestKeys.length > 0) {
+      openDrawersForDestinations(localBlockedDestKeys);
+      setClientPrevalidationBanner({
+        tone: "warning",
+        title: `Saving ${submittedDestinations.length} valid approved field${
+          submittedDestinations.length === 1 ? "" : "s"
+        }; ${localBlockedDestKeys.length} blocked field${
+          localBlockedDestKeys.length === 1 ? " was" : "s were"
+        } held back in Needs Review`,
+        reasons: prevalidationErrors
+      });
     }
 
     const submissionId = `bench_v2_save_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -777,6 +986,7 @@ export function useBenchV2SaveController({
       submittedValuesByDestination: { ...safePlanToSubmit },
       submittedNativeChanges: { ...safeNativeChangesToSubmit },
       submittedExplicitReferenceReplacements: { ...safeExplicitReferenceReplacementsToSubmit },
+      localBlockedFields: { ...localBlockedFields },
       startedAt: new Date().toISOString()
     };
 
