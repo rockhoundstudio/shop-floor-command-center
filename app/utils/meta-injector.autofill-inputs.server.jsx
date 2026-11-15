@@ -158,9 +158,8 @@ export function resolvePicklistStoneFamily(rawFamily) {
   return cleaned;
 }
 
-function isConfirmedPicklistOrVarietyStoneIdentity(rawCandidate) {
-  if (typeof rawCandidate !== "string") return false;
-  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+export function isSupportedPicklistStoneFamily(rawFamily) {
+  const cleaned = cleanStoneFamilyShape(String(rawFamily || "").trim());
   if (
     !cleaned ||
     cleaned.toLowerCase() === "unknown" ||
@@ -171,31 +170,75 @@ function isConfirmedPicklistOrVarietyStoneIdentity(rawCandidate) {
   ) {
     return false;
   }
-
   const options = DROPDOWN_OPTIONS?.stone_family || [];
-  const matchesPicklist = (str) => {
-    if (!str) return false;
-    const lower = str.toLowerCase().trim();
-    for (const opt of options) {
-      const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
-      if (val && val.toLowerCase().trim() === lower) return true;
+  const lower = cleaned.toLowerCase();
+  for (const opt of options) {
+    const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
+    if (val && val.toLowerCase().trim() === lower) {
+      return true;
     }
-    return false;
-  };
-
-  if (matchesPicklist(cleaned)) return true;
-
-  const baseExtracted = extractStoneName(cleaned);
-  if (baseExtracted && baseExtracted !== "Unknown" && matchesPicklist(baseExtracted)) {
-    return true;
   }
-
-  const strippedPrefix = getDerivedMaterial(cleaned);
-  if (strippedPrefix && strippedPrefix !== cleaned && matchesPicklist(strippedPrefix)) {
-    return true;
-  }
-
   return false;
+}
+
+export function resolveCanonicalBaseFamilyForStoneCandidate(rawCandidate) {
+  if (typeof rawCandidate !== "string") return "";
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return "";
+  }
+  if (isSupportedPicklistStoneFamily(cleaned)) {
+    return resolvePicklistStoneFamily(cleaned);
+  }
+  const extracted = extractStoneName(cleaned);
+  if (
+    extracted &&
+    extracted !== "Unknown" &&
+    isSupportedPicklistStoneFamily(extracted)
+  ) {
+    return resolvePicklistStoneFamily(extracted);
+  }
+  const derived = getDerivedMaterial(cleaned);
+  if (
+    derived &&
+    derived !== cleaned &&
+    isSupportedPicklistStoneFamily(derived)
+  ) {
+    return resolvePicklistStoneFamily(derived);
+  }
+  return "";
+}
+
+export function isValidatedSpecificVarietyOfBaseFamily(rawCandidate, targetBaseFamily = "") {
+  if (typeof rawCandidate !== "string") return false;
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (!cleaned) return false;
+  const candidateBaseFamily = resolveCanonicalBaseFamilyForStoneCandidate(cleaned);
+  if (!candidateBaseFamily) return false;
+  if (cleaned.toLowerCase() === candidateBaseFamily.toLowerCase()) {
+    return false;
+  }
+  if (targetBaseFamily) {
+    const cleanTargetFamily = resolveCanonicalBaseFamilyForStoneCandidate(targetBaseFamily);
+    if (
+      !cleanTargetFamily ||
+      candidateBaseFamily.toLowerCase() !== cleanTargetFamily.toLowerCase()
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isConfirmedPicklistOrVarietyStoneIdentity(rawCandidate) {
+  return resolveCanonicalBaseFamilyForStoneCandidate(rawCandidate) !== "";
 }
 
 const EXACT_CANONICAL_ROCK_COMPOSITION_LABELS = Object.freeze({
@@ -1129,6 +1172,169 @@ export function parseValidPhotoSolidLengthInches(rawVal) {
 }
 
 // ==========================================================================
+// SHARED BENCH V2 MATERIAL & STONE FAMILY RESOLUTION
+// ==========================================================================
+
+function cleanGenericNonBlankVisionStr(rawVal) {
+  if (typeof rawVal !== "string") return "";
+  const cleaned = sanitizeCandidateString(rawVal);
+  if (!cleaned) return "";
+  if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return "";
+  return cleaned;
+}
+
+function resolveBenchV2MaterialAndFamilyContext({
+  idOrigin,
+  currentData = {},
+  rawVisionSnapshot = {},
+  isMaterialOperatorLocked = false
+}) {
+  const rawTitleSegments = splitSegmentedTitle(idOrigin?.rawTitleInput || "");
+  const rawTitleStoneSegment =
+    idOrigin?.hasSegmentedTitle && rawTitleSegments.length >= 3
+      ? rawTitleSegments[0]
+      : "";
+  const cleanTitleStoneVariety =
+    idOrigin?.titleStoneSegment &&
+    isConfirmedPicklistOrVarietyStoneIdentity(idOrigin.titleStoneSegment)
+      ? idOrigin.titleStoneSegment
+      : "";
+
+  const rawVisMaterial = cleanGenericNonBlankVisionStr(rawVisionSnapshot.material);
+  const rawVisPrimaryMedium = cleanGenericNonBlankVisionStr(rawVisionSnapshot.primary_medium);
+  const rawVisStoneFamily = cleanGenericNonBlankVisionStr(rawVisionSnapshot.stone_family);
+
+  const normalizedVisStoneFamily = rawVisStoneFamily
+    ? resolvePicklistStoneFamily(rawVisStoneFamily)
+    : "";
+  const titleDerivedStoneFamily =
+    !idOrigin?.explicitStoneFamily &&
+    idOrigin?.hasSegmentedTitle &&
+    rawTitleStoneSegment &&
+    isConfirmedPicklistOrVarietyStoneIdentity(rawTitleStoneSegment)
+      ? resolvePicklistStoneFamily(
+          extractStoneName(rawTitleStoneSegment) !== "Unknown"
+            ? extractStoneName(rawTitleStoneSegment)
+            : rawTitleStoneSegment
+        )
+      : "";
+
+  const effectiveBaseFamily =
+    (idOrigin?.explicitStoneFamily && currentData.stone_family
+      ? resolvePicklistStoneFamily(currentData.stone_family)
+      : "") ||
+    normalizedVisStoneFamily ||
+    titleDerivedStoneFamily ||
+    "";
+
+  // If Vision echoed a bare base family (e.g. "Jasper") while the 3-segment title carries
+  // a more specific confirmed stone variety of that same family (e.g. "Brecciated Jasper"),
+  // prefer the specific stone variety for custom.material while keeping custom.stone_family
+  // as the normalized base family.
+  const isTitleVarietyMoreSpecificThanVision = Boolean(
+    cleanTitleStoneVariety &&
+    effectiveBaseFamily &&
+    cleanTitleStoneVariety.toLowerCase() !== effectiveBaseFamily.toLowerCase() &&
+    resolvePicklistStoneFamily(
+      extractStoneName(cleanTitleStoneVariety) !== "Unknown"
+        ? extractStoneName(cleanTitleStoneVariety)
+        : cleanTitleStoneVariety
+    ).toLowerCase() === effectiveBaseFamily.toLowerCase()
+  );
+
+  let materialProposal = null;
+  if (!isMaterialOperatorLocked) {
+    if (
+      rawVisMaterial &&
+      !isGenericBareStoneProposal(rawVisMaterial) &&
+      !isSettingOrHardwareMediumValue(rawVisMaterial) &&
+      !(
+        isTitleVarietyMoreSpecificThanVision &&
+        rawVisMaterial.toLowerCase() === effectiveBaseFamily.toLowerCase()
+      )
+    ) {
+      materialProposal = {
+        value: rawVisMaterial,
+        source: "Gemini Vision (material)"
+      };
+    } else if (
+      rawVisPrimaryMedium &&
+      !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
+      !isSettingOrHardwareMediumValue(rawVisPrimaryMedium) &&
+      !(
+        isTitleVarietyMoreSpecificThanVision &&
+        rawVisPrimaryMedium.toLowerCase() === effectiveBaseFamily.toLowerCase()
+      )
+    ) {
+      const isDistinctVarietyOrConfirmedStone =
+        !rawVisStoneFamily ||
+        rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFamily.toLowerCase() ||
+        Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
+      if (isDistinctVarietyOrConfirmedStone) {
+        materialProposal = {
+          value: rawVisPrimaryMedium,
+          source: "Gemini Vision (primary_medium stone variety)"
+        };
+      } else if (cleanTitleStoneVariety) {
+        materialProposal = {
+          value: cleanTitleStoneVariety,
+          source: "Title Segment Parse (3-Segment Product Title)"
+        };
+      }
+    } else if (cleanTitleStoneVariety) {
+      materialProposal = {
+        value: cleanTitleStoneVariety,
+        source: "Title Segment Parse (3-Segment Product Title)"
+      };
+    }
+  }
+
+  return {
+    rawTitleSegments,
+    rawTitleStoneSegment,
+    cleanTitleStoneVariety,
+    normalizedVisStoneFamily,
+    titleDerivedStoneFamily,
+    effectiveBaseFamily,
+    materialProposal
+  };
+}
+
+/**
+ * Computes the exact `custom.material` value that `buildBenchV2ProducerProposals`
+ * will stage for the current scan inputs, using the identical precedence rules as
+ * `buildBenchV2ProducerProposals` (operator lock -> `rawVisMaterial` ->
+ * `rawVisPrimaryMedium` -> 3-segment title variety).
+ */
+export function resolveBenchV2ProducedMaterialCandidate({
+  idOrigin,
+  currentData = {},
+  rawVisionSnapshot = {},
+  provenance = null
+}) {
+  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
+  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+  const isMaterialLocked =
+    hasValidProvenance &&
+    operatorLockedSet.has("material") &&
+    currentData.material !== undefined &&
+    String(currentData.material).trim() !== "";
+
+  if (isMaterialLocked) {
+    return "";
+  }
+
+  const { materialProposal } = resolveBenchV2MaterialAndFamilyContext({
+    idOrigin,
+    currentData,
+    rawVisionSnapshot,
+    isMaterialOperatorLocked: false
+  });
+
+  return materialProposal ? materialProposal.value : "";
+}
+
+// ==========================================================================
 // OPT-IN BENCH V2 PRODUCER PROPOSALS BUILDER (tab3FullRescan ONLY)
 // ==========================================================================
 
@@ -1246,16 +1452,20 @@ export function buildBenchV2ProducerProposals({
     };
   };
 
-  const rawTitleSegments = splitSegmentedTitle(idOrigin?.rawTitleInput || "");
-  const rawTitleStoneSegment =
-    idOrigin?.hasSegmentedTitle && rawTitleSegments.length >= 3
-      ? rawTitleSegments[0]
-      : "";
-  const cleanTitleStoneVariety =
-    idOrigin?.titleStoneSegment &&
-    isConfirmedPicklistOrVarietyStoneIdentity(idOrigin.titleStoneSegment)
-      ? idOrigin.titleStoneSegment
-      : "";
+  const {
+    rawTitleSegments,
+    rawTitleStoneSegment,
+    cleanTitleStoneVariety,
+    normalizedVisStoneFamily,
+    titleDerivedStoneFamily,
+    effectiveBaseFamily,
+    materialProposal
+  } = resolveBenchV2MaterialAndFamilyContext({
+    idOrigin,
+    currentData,
+    rawVisionSnapshot,
+    isMaterialOperatorLocked: isBareFieldOperatorLocked("material")
+  });
 
   // 1. Segmented Product Title Piece Name
   if (idOrigin.hasSegmentedTitle && idOrigin.preservedPieceName) {
@@ -1270,92 +1480,8 @@ export function buildBenchV2ProducerProposals({
   }
 
   // 2. Dominant Material (custom.material) & Base Stone Family (custom.stone_family)
-  const rawVisMaterial = cleanNonBlankVisionStr(rawVisionSnapshot.material);
-  const rawVisPrimaryMedium = cleanNonBlankVisionStr(rawVisionSnapshot.primary_medium);
-  const rawVisStoneFamily = cleanNonBlankVisionStr(rawVisionSnapshot.stone_family);
-
-  const normalizedVisStoneFamily = rawVisStoneFamily
-    ? resolvePicklistStoneFamily(rawVisStoneFamily)
-    : "";
-  const titleDerivedStoneFamily =
-    !idOrigin.explicitStoneFamily &&
-    idOrigin.hasSegmentedTitle &&
-    rawTitleStoneSegment &&
-    isConfirmedPicklistOrVarietyStoneIdentity(rawTitleStoneSegment)
-      ? resolvePicklistStoneFamily(
-          extractStoneName(rawTitleStoneSegment) !== "Unknown"
-            ? extractStoneName(rawTitleStoneSegment)
-            : rawTitleStoneSegment
-        )
-      : "";
-
-  const effectiveBaseFamily =
-    (idOrigin.explicitStoneFamily && currentData.stone_family
-      ? resolvePicklistStoneFamily(currentData.stone_family)
-      : "") ||
-    normalizedVisStoneFamily ||
-    titleDerivedStoneFamily ||
-    "";
-
-  // If Vision echoed a bare base family (e.g. "Jasper") while the 3-segment title carries
-  // a more specific confirmed stone variety of that same family (e.g. "Brecciated Jasper"),
-  // prefer the specific stone variety for custom.material while keeping custom.stone_family
-  // as the normalized base family.
-  const isTitleVarietyMoreSpecificThanVision = Boolean(
-    cleanTitleStoneVariety &&
-    effectiveBaseFamily &&
-    cleanTitleStoneVariety.toLowerCase() !== effectiveBaseFamily.toLowerCase() &&
-    resolvePicklistStoneFamily(
-      extractStoneName(cleanTitleStoneVariety) !== "Unknown"
-        ? extractStoneName(cleanTitleStoneVariety)
-        : cleanTitleStoneVariety
-    ).toLowerCase() === effectiveBaseFamily.toLowerCase()
-  );
-
-  if (!isBareFieldOperatorLocked("material")) {
-    if (
-      rawVisMaterial &&
-      !isGenericBareStoneProposal(rawVisMaterial) &&
-      !isSettingOrHardwareMediumValue(rawVisMaterial) &&
-      !(
-        isTitleVarietyMoreSpecificThanVision &&
-        rawVisMaterial.toLowerCase() === effectiveBaseFamily.toLowerCase()
-      )
-    ) {
-      addProposal("custom.material", rawVisMaterial, "Gemini Vision (material)");
-    } else if (
-      rawVisPrimaryMedium &&
-      !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
-      !isSettingOrHardwareMediumValue(rawVisPrimaryMedium) &&
-      !(
-        isTitleVarietyMoreSpecificThanVision &&
-        rawVisPrimaryMedium.toLowerCase() === effectiveBaseFamily.toLowerCase()
-      )
-    ) {
-      const isDistinctVarietyOrConfirmedStone =
-        !rawVisStoneFamily ||
-        rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFamily.toLowerCase() ||
-        Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
-      if (isDistinctVarietyOrConfirmedStone) {
-        addProposal(
-          "custom.material",
-          rawVisPrimaryMedium,
-          "Gemini Vision (primary_medium stone variety)"
-        );
-      } else if (cleanTitleStoneVariety) {
-        addProposal(
-          "custom.material",
-          cleanTitleStoneVariety,
-          "Title Segment Parse (3-Segment Product Title)"
-        );
-      }
-    } else if (cleanTitleStoneVariety) {
-      addProposal(
-        "custom.material",
-        cleanTitleStoneVariety,
-        "Title Segment Parse (3-Segment Product Title)"
-      );
-    }
+  if (materialProposal) {
+    addProposal("custom.material", materialProposal.value, materialProposal.source);
   }
 
   // Base Stone Family (custom.stone_family) — strictly independent from custom.material

@@ -3,20 +3,21 @@
 // File: app/utils/meta-injector.geology-db.server.jsx
 // ==========================================================================
 
-import { DROPDOWN_OPTIONS } from "../utils/meta-injector.constants.jsx";
 import {
   isGenericBareStoneProposal,
   isSettingOrHardwareMediumValue
 } from "./meta-injector.standardized.jsx";
 import {
   INVALID_CANDIDATE_FILLERS,
-  splitSegmentedTitle,
   extractStoneName,
-  resolvePicklistStoneFamily,
   sanitizeCandidateString,
   cleanStoneFamilyShape,
-  getDerivedMaterial
+  resolveCanonicalBaseFamilyForStoneCandidate,
+  isValidatedSpecificVarietyOfBaseFamily,
+  resolveBenchV2ProducedMaterialCandidate
 } from "./meta-injector.autofill-inputs.server.jsx";
+
+export { resolveBenchV2ProducedMaterialCandidate };
 
 export const BENCH_V2_DB_GEOLOGY_DESTINATIONS = Object.freeze({
   mohs_hardness: ["custom.mohs_hardness"],
@@ -75,205 +76,12 @@ async function saveToStoneCache(stoneName, geoResult) {
 
 const MINDAT_API_KEY = process.env.MINDAT_API_KEY;
 
-function isSupportedPicklistStoneFamily(rawFamily) {
-  const cleaned = cleanStoneFamilyShape(String(rawFamily || "").trim());
-  if (
-    !cleaned ||
-    cleaned.toLowerCase() === "unknown" ||
-    cleaned.toLowerCase() === "unknown stone" ||
-    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
-    isGenericBareStoneProposal(cleaned) ||
-    isSettingOrHardwareMediumValue(cleaned)
-  ) {
-    return false;
-  }
-  const options = DROPDOWN_OPTIONS?.stone_family || [];
-  const lower = cleaned.toLowerCase();
-  for (const opt of options) {
-    const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
-    if (val && val.toLowerCase().trim() === lower) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function resolveCanonicalBaseFamilyForStoneCandidate(rawCandidate) {
-  if (typeof rawCandidate !== "string") return "";
-  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
-  if (
-    !cleaned ||
-    cleaned.toLowerCase() === "unknown" ||
-    cleaned.toLowerCase() === "unknown stone" ||
-    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
-    isGenericBareStoneProposal(cleaned) ||
-    isSettingOrHardwareMediumValue(cleaned)
-  ) {
-    return "";
-  }
-  if (isSupportedPicklistStoneFamily(cleaned)) {
-    return resolvePicklistStoneFamily(cleaned);
-  }
-  const extracted = extractStoneName(cleaned);
-  if (
-    extracted &&
-    extracted !== "Unknown" &&
-    isSupportedPicklistStoneFamily(extracted)
-  ) {
-    return resolvePicklistStoneFamily(extracted);
-  }
-  const derived = getDerivedMaterial(cleaned);
-  if (
-    derived &&
-    derived !== cleaned &&
-    isSupportedPicklistStoneFamily(derived)
-  ) {
-    return resolvePicklistStoneFamily(derived);
-  }
-  return "";
-}
-
-function isValidatedSpecificVarietyOfBaseFamily(rawCandidate, targetBaseFamily = "") {
-  if (typeof rawCandidate !== "string") return false;
-  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
-  if (!cleaned) return false;
-  const candidateBaseFamily = resolveCanonicalBaseFamilyForStoneCandidate(cleaned);
-  if (!candidateBaseFamily) return false;
-  if (cleaned.toLowerCase() === candidateBaseFamily.toLowerCase()) {
-    return false;
-  }
-  if (targetBaseFamily) {
-    const cleanTargetFamily = resolveCanonicalBaseFamilyForStoneCandidate(targetBaseFamily);
-    if (
-      !cleanTargetFamily ||
-      candidateBaseFamily.toLowerCase() !== cleanTargetFamily.toLowerCase()
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
 export function cleanProducerNonBlankVisionStr(rawVal) {
   if (typeof rawVal !== "string") return "";
   const cleaned = sanitizeCandidateString(rawVal);
   if (!cleaned) return "";
   if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return "";
   return cleaned;
-}
-
-/**
- * Computes the exact `custom.material` value that `buildBenchV2ProducerProposals`
- * will stage for the current scan inputs, using the identical precedence rules as
- * `buildBenchV2ProducerProposals` (operator lock -> `rawVisMaterial` ->
- * `rawVisPrimaryMedium` -> 3-segment title variety).
- */
-export function resolveBenchV2ProducedMaterialCandidate({
-  idOrigin,
-  currentData = {},
-  rawVisionSnapshot = {},
-  provenance = null
-}) {
-  const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
-  const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
-  const isMaterialLocked =
-    hasValidProvenance &&
-    operatorLockedSet.has("material") &&
-    currentData.material !== undefined &&
-    String(currentData.material).trim() !== "";
-
-  if (isMaterialLocked) {
-    return "";
-  }
-
-  const rawTitleSegments = splitSegmentedTitle(idOrigin?.rawTitleInput || "");
-  const rawTitleStoneSegment =
-    idOrigin?.hasSegmentedTitle && rawTitleSegments.length >= 3
-      ? rawTitleSegments[0]
-      : "";
-  const cleanTitleStoneVariety =
-    idOrigin?.titleStoneSegment &&
-    resolveCanonicalBaseFamilyForStoneCandidate(idOrigin.titleStoneSegment) !== ""
-      ? idOrigin.titleStoneSegment
-      : "";
-
-  const rawVisMaterial = cleanProducerNonBlankVisionStr(rawVisionSnapshot.material);
-  const rawVisPrimaryMedium = cleanProducerNonBlankVisionStr(rawVisionSnapshot.primary_medium);
-  const rawVisStoneFamily = cleanProducerNonBlankVisionStr(rawVisionSnapshot.stone_family);
-
-  const normalizedVisStoneFamily = rawVisStoneFamily
-    ? resolvePicklistStoneFamily(rawVisStoneFamily)
-    : "";
-  const titleDerivedStoneFamily =
-    !idOrigin?.explicitStoneFamily &&
-    idOrigin?.hasSegmentedTitle &&
-    rawTitleStoneSegment &&
-    resolveCanonicalBaseFamilyForStoneCandidate(rawTitleStoneSegment) !== ""
-      ? resolvePicklistStoneFamily(
-          extractStoneName(rawTitleStoneSegment) !== "Unknown"
-            ? extractStoneName(rawTitleStoneSegment)
-            : rawTitleStoneSegment
-        )
-      : "";
-
-  const effectiveBaseFamily =
-    (idOrigin?.explicitStoneFamily && currentData.stone_family
-      ? resolvePicklistStoneFamily(currentData.stone_family)
-      : "") ||
-    normalizedVisStoneFamily ||
-    titleDerivedStoneFamily ||
-    "";
-
-  const isTitleVarietyMoreSpecificThanVision = Boolean(
-    cleanTitleStoneVariety &&
-    effectiveBaseFamily &&
-    cleanTitleStoneVariety.toLowerCase() !== effectiveBaseFamily.toLowerCase() &&
-    resolvePicklistStoneFamily(
-      extractStoneName(cleanTitleStoneVariety) !== "Unknown"
-        ? extractStoneName(cleanTitleStoneVariety)
-        : cleanTitleStoneVariety
-    ).toLowerCase() === effectiveBaseFamily.toLowerCase()
-  );
-
-  if (
-    rawVisMaterial &&
-    !isGenericBareStoneProposal(rawVisMaterial) &&
-    !isSettingOrHardwareMediumValue(rawVisMaterial) &&
-    !(
-      isTitleVarietyMoreSpecificThanVision &&
-      rawVisMaterial.toLowerCase() === effectiveBaseFamily.toLowerCase()
-    )
-  ) {
-    return rawVisMaterial;
-  }
-
-  if (
-    rawVisPrimaryMedium &&
-    !isGenericBareStoneProposal(rawVisPrimaryMedium) &&
-    !isSettingOrHardwareMediumValue(rawVisPrimaryMedium) &&
-    !(
-      isTitleVarietyMoreSpecificThanVision &&
-      rawVisPrimaryMedium.toLowerCase() === effectiveBaseFamily.toLowerCase()
-    )
-  ) {
-    const isDistinctVarietyOrConfirmedStone =
-      !rawVisStoneFamily ||
-      rawVisPrimaryMedium.toLowerCase() !== rawVisStoneFamily.toLowerCase() ||
-      Boolean(resolvePicklistStoneFamily(rawVisPrimaryMedium));
-    if (isDistinctVarietyOrConfirmedStone) {
-      return rawVisPrimaryMedium;
-    }
-    if (cleanTitleStoneVariety) {
-      return cleanTitleStoneVariety;
-    }
-    return "";
-  }
-
-  if (cleanTitleStoneVariety) {
-    return cleanTitleStoneVariety;
-  }
-
-  return "";
 }
 
 export async function getGeoData(admin, stoneFamily, options = {}) {
