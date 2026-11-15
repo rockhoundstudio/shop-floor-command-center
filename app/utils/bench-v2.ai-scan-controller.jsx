@@ -344,8 +344,79 @@ export function resolveProducerBackedGeologyReferenceCandidate({
     };
   }
 
+  const rawResolvedDefId =
+    verifiedFieldRes.restrictedMetaobjectDefinitionId ||
+    verifiedFieldRes.restrictedMetaobjectDefinition?.id ||
+    verifiedFieldRes.metafieldDefinition?.restrictedMetaobjectDefinitionId ||
+    null;
+
+  const hasDefTypeMismatch = Boolean(
+    verifiedFieldRes.metafieldDefinition &&
+      typeof verifiedFieldRes.metafieldDefinition === "object" &&
+      verifiedFieldRes.metafieldDefinition.type &&
+      verifiedFieldRes.metafieldDefinition.type !== "list.metaobject_reference"
+  );
+
+  const hasDefIdMismatch = Boolean(
+    rawResolvedDefId !== null &&
+      (!isExactMetaobjectDefinitionGid(rawResolvedDefId) ||
+        rawResolvedDefId !== baselineObs.restrictedMetaobjectDefinitionId)
+  );
+
+  const hasDefMismatchError = Boolean(
+    Array.isArray(verifiedFieldRes.errors) &&
+      verifiedFieldRes.errors.some(
+        (e) =>
+          typeof e === "string" &&
+          /Restricted MetaobjectDefinition mismatch or invalid ID/i.test(e)
+      )
+  );
+
   if (
-    verifiedFieldRes.isComplete !== true ||
+    hasDefTypeMismatch ||
+    hasDefIdMismatch ||
+    hasDefMismatchError ||
+    verifiedFieldRes.status === "blocked"
+  ) {
+    const firstDefErr =
+      Array.isArray(verifiedFieldRes.errors) && verifiedFieldRes.errors.length > 0
+        ? verifiedFieldRes.errors[0]
+        : `Restricted MetaobjectDefinition mismatch or blocked definition on ${destKey}.`;
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason: firstDefErr
+    };
+  }
+
+  const refAssignment = verifiedFieldRes.currentAssignment;
+  if (
+    refAssignment &&
+    typeof refAssignment === "object" &&
+    refAssignment.parseValid === false
+  ) {
+    return {
+      status: "held_ineligible_or_blocked",
+      displayLabel,
+      reason:
+        refAssignment.parseError ||
+        `Existing assignment preservation cannot be established on ${destKey}.`
+    };
+  }
+
+  if (verifiedFieldRes.isComplete !== true) {
+    const pendingReason =
+      Array.isArray(verifiedFieldRes.errors) && verifiedFieldRes.errors.length > 0
+        ? verifiedFieldRes.errors[0]
+        : `Verified Metaobject reference choices for ${destKey} (${baselineObs.restrictedMetaobjectDefinitionId || "definition"}) did not finish loading; retaining candidate "${displayLabel}" for retry.`;
+    return {
+      status: "pending_reference_choices",
+      displayLabel,
+      reason: pendingReason
+    };
+  }
+
+  if (
     !isExactMetaobjectDefinitionGid(verifiedFieldRes.restrictedMetaobjectDefinitionId) ||
     verifiedFieldRes.restrictedMetaobjectDefinitionId !==
       baselineObs.restrictedMetaobjectDefinitionId
@@ -361,7 +432,6 @@ export function resolveProducerBackedGeologyReferenceCandidate({
     };
   }
 
-  const refAssignment = verifiedFieldRes.currentAssignment;
   if (
     !refAssignment ||
     typeof refAssignment !== "object" ||
@@ -540,6 +610,7 @@ export function resolveProducerBackedGeologyReferenceCandidate({
 
 export function useBenchV2AiScanController({
   activeProductId,
+  activeProductIdRef: externalActiveProductIdRef = null,
   activeProductTitle,
   benchSessionIdRef,
   baselineByProductRef,
@@ -547,6 +618,8 @@ export function useBenchV2AiScanController({
   currentRefChoicesRecordRef,
   isCurrentRefChoicesBoundAndFreshRef,
   isAnyOperationBusyRef,
+  isScanBlockingBusyRef = null,
+  ensureStandardizedReferenceChoicesLoadedOrInFlightRef = null,
   isJsonImportBusy,
   proposedByProduct,
   proposedByProductRef,
@@ -561,6 +634,12 @@ export function useBenchV2AiScanController({
   clearDecisionForDestination
 }) {
   const aiScanFetcher = useFetcher();
+  const aiScanFetcherRef = useRef(aiScanFetcher);
+  aiScanFetcherRef.current = aiScanFetcher;
+
+  const internalActiveProductIdRef = useRef(activeProductId);
+  internalActiveProductIdRef.current = activeProductId;
+  const activeProductIdRef = externalActiveProductIdRef || internalActiveProductIdRef;
 
   // Held AI Alternatives State
   const [aiAlternativesByProduct, setAiAlternativesByProduct] = useState({});
@@ -570,6 +649,7 @@ export function useBenchV2AiScanController({
   const [lastAiScanReportByProduct, setLastAiScanReportByProduct] = useState({});
   const processedAiScanRequestIdRef = useRef(null);
   const activeAiScanRequestRef = useRef(null);
+  const observedBusyAiScanRequestIdRef = useRef(null);
 
   // Staged Vision Candidates State (Populated by AI Scan, read by Reference Loader & Telemetry)
   const [stagedVisionCandidatesByProduct, setStagedVisionCandidatesByProduct] = useState({});
@@ -610,9 +690,15 @@ export function useBenchV2AiScanController({
       isCurrentRefChoicesBoundAndFreshRef.current
     );
     const currentRefChoicesRecord = currentRefChoicesRecordRef.current;
-    const isAnyOperationBusy = Boolean(isAnyOperationBusyRef.current) || isAiScanBusy;
+    const isExclusiveBlockingBusy = isScanBlockingBusyRef
+      ? Boolean(isScanBlockingBusyRef.current)
+      : Boolean(isAnyOperationBusyRef?.current);
+    const isSelfScanBusy =
+      Boolean(activeAiScanRequestRef.current) ||
+      aiScanFetcherRef.current.state !== "idle" ||
+      isAiScanBusy;
 
-    if (isAnyOperationBusy || isJsonImportBusy) {
+    if (isExclusiveBlockingBusy || isSelfScanBusy || isJsonImportBusy) {
       setClientPrevalidationBanner({
         tone: "warning",
         title: "Operation already in progress",
@@ -633,6 +719,24 @@ export function useBenchV2AiScanController({
     if (
       currentBaseline.metafieldsReadComplete !== true ||
       currentBaseline.defsReadComplete !== true
+    ) {
+      setClientPrevalidationBanner({
+        tone: "error",
+        title: "Cannot run AI Scan: Baseline read incomplete",
+        reasons: [
+          "Product metafields or live definitions did not finish loading. Click Reload Product first."
+        ]
+      });
+      return;
+    }
+
+    const rawBaselineForScan =
+      baselineByProductRef.current?.[activeProductId] || currentBaseline;
+    if (
+      !rawBaselineForScan ||
+      rawBaselineForScan.productId !== activeProductId ||
+      rawBaselineForScan.metafieldsReadComplete !== true ||
+      rawBaselineForScan.defsReadComplete !== true
     ) {
       setClientPrevalidationBanner({
         tone: "error",
@@ -666,6 +770,10 @@ export function useBenchV2AiScanController({
       });
       return;
     }
+
+    const startedSessionId = benchSessionIdRef.current;
+    const startedBaselineContextSig =
+      buildStandardizedBaselineContextSignature(rawBaselineForScan);
 
     const operatorLockedList = [];
     const passiveStoredList = [];
@@ -894,12 +1002,31 @@ export function useBenchV2AiScanController({
       }
     }
 
+    // Coordinate reference choice loading in parallel after all AI Scan preflight
+    // validations succeed (never aborts a valid AI scan if reference start returns false).
+    if (
+      typeof ensureStandardizedReferenceChoicesLoadedOrInFlightRef?.current ===
+      "function"
+    ) {
+      try {
+        ensureStandardizedReferenceChoicesLoadedOrInFlightRef.current();
+      } catch {
+        // Reference loader manages its own diagnostics; never block AI Scan submission.
+      }
+    }
+
     const requestId = `bench_v2_aiscan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    setActiveAiScanRequest({
+    const scanReqMeta = {
       requestId,
+      sessionId: startedSessionId,
       productId: activeProductId,
+      baselineContextSig: startedBaselineContextSig,
       startedAt: new Date().toISOString()
-    });
+    };
+
+    observedBusyAiScanRequestIdRef.current = null;
+    activeAiScanRequestRef.current = scanReqMeta;
+    setActiveAiScanRequest(scanReqMeta);
 
     const formData = new FormData();
     formData.append("intent", "tab3FullRescan");
@@ -945,16 +1072,87 @@ export function useBenchV2AiScanController({
       }
     }
 
-    aiScanFetcher.submit(formData, {
-      method: "POST",
-      action: "/app/meta-injector-autofill"
-    });
+    try {
+      aiScanFetcherRef.current.submit(formData, {
+        method: "POST",
+        action: "/app/meta-injector-autofill"
+      });
+    } catch (submitErr) {
+      const errMessage =
+        submitErr && typeof submitErr.message === "string" && submitErr.message.trim() !== ""
+          ? submitErr.message.trim()
+          : "Failed to submit AI Scan request to /app/meta-injector-autofill.";
+      setLastAiScanReportByProduct((prev) => ({
+        ...prev,
+        [activeProductId]: {
+          requestId,
+          productId: activeProductId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          summary: `AI Scan failed: ${errMessage}`,
+          receivedCount: 0,
+          stagedCount: 0,
+          heldConflictCount: 0,
+          unchangedSkippedCount: 0,
+          rejectedInvalidCount: 0,
+          ignoredManualOnlyCount: 0,
+          diagnostics: {},
+          details: [],
+          proposalsByDestination: {}
+        }
+      }));
+      if (activeAiScanRequestRef.current?.requestId === requestId) {
+        observedBusyAiScanRequestIdRef.current = null;
+        activeAiScanRequestRef.current = null;
+        setActiveAiScanRequest((prevReq) =>
+          prevReq?.requestId === requestId ? null : prevReq
+        );
+      }
+    }
   };
 
   useEffect(() => {
-    if (aiScanFetcher.state !== "idle") return;
     const pendingScan = activeAiScanRequestRef.current;
     if (!pendingScan) return;
+
+    if (aiScanFetcher.state !== "idle") {
+      observedBusyAiScanRequestIdRef.current = pendingScan.requestId;
+      return;
+    }
+
+    const rawResponse = aiScanFetcher.data;
+    const hasMatchingResponseForPendingScan = Boolean(
+      rawResponse &&
+        typeof rawResponse === "object" &&
+        rawResponse.requestId === pendingScan.requestId
+    );
+
+    if (
+      observedBusyAiScanRequestIdRef.current !== pendingScan.requestId &&
+      !hasMatchingResponseForPendingScan
+    ) {
+      return;
+    }
+
+    const returnedRequestId =
+      rawResponse && typeof rawResponse === "object"
+        ? rawResponse.requestId || null
+        : null;
+    const returnedPieceId =
+      rawResponse && typeof rawResponse === "object"
+        ? rawResponse.pieceId || rawResponse.productId || null
+        : null;
+
+    // If a prior scan's echoed requestId is still in fetcher.data before the current
+    // request's response arrives, ignore the old payload without clearing or failing
+    // the active request.
+    if (
+      returnedRequestId &&
+      returnedRequestId !== pendingScan.requestId &&
+      observedBusyAiScanRequestIdRef.current !== pendingScan.requestId
+    ) {
+      return;
+    }
 
     if (processedAiScanRequestIdRef.current === pendingScan.requestId) {
       return;
@@ -962,7 +1160,16 @@ export function useBenchV2AiScanController({
     processedAiScanRequestIdRef.current = pendingScan.requestId;
 
     const scannedProductId = pendingScan.productId;
-    const rawResponse = aiScanFetcher.data;
+
+    const releaseOwnActiveRequest = () => {
+      if (activeAiScanRequestRef.current?.requestId === pendingScan.requestId) {
+        observedBusyAiScanRequestIdRef.current = null;
+        activeAiScanRequestRef.current = null;
+        setActiveAiScanRequest((prevReq) =>
+          prevReq?.requestId === pendingScan.requestId ? null : prevReq
+        );
+      }
+    };
 
     const recordFailedScan = (summary, diagnostics = {}) => {
       setLastAiScanReportByProduct((prev) => ({
@@ -984,7 +1191,7 @@ export function useBenchV2AiScanController({
           proposalsByDestination: {}
         }
       }));
-      setActiveAiScanRequest(null);
+      releaseOwnActiveRequest();
     };
 
     if (!rawResponse || typeof rawResponse !== "object") {
@@ -992,14 +1199,39 @@ export function useBenchV2AiScanController({
       return;
     }
 
-    const returnedRequestId = rawResponse.requestId || null;
-    const returnedPieceId = rawResponse.pieceId || rawResponse.productId || null;
-
     if (returnedRequestId !== pendingScan.requestId || returnedPieceId !== scannedProductId) {
+      if (returnedRequestId === null && rawResponse.success === false && rawResponse.error) {
+        recordFailedScan(
+          rawResponse.error,
+          rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
+            ? rawResponse.producerDiagnostics
+            : {}
+        );
+        return;
+      }
       recordFailedScan(
         `Ignored mismatched or stale AI Scan response (expected product ${scannedProductId} / request ${pendingScan.requestId}, got product ${String(
           returnedPieceId
         )} / request ${String(returnedRequestId)}).`
+      );
+      return;
+    }
+
+    const rawTargetBaseline = baselineByProductRef.current?.[scannedProductId] || null;
+    const targetBaselineContextSig =
+      buildStandardizedBaselineContextSignature(rawTargetBaseline);
+
+    if (
+      pendingScan.sessionId !== benchSessionIdRef.current ||
+      scannedProductId !== activeProductIdRef.current ||
+      !rawTargetBaseline ||
+      rawTargetBaseline.productId !== scannedProductId ||
+      rawTargetBaseline.metafieldsReadComplete !== true ||
+      rawTargetBaseline.defsReadComplete !== true ||
+      targetBaselineContextSig !== pendingScan.baselineContextSig
+    ) {
+      recordFailedScan(
+        "Discarded stale AI Scan response because the active product, bench session, or factual baseline changed while the scan was in flight."
       );
       return;
     }
@@ -1010,6 +1242,18 @@ export function useBenchV2AiScanController({
         rawResponse.producerDiagnostics && typeof rawResponse.producerDiagnostics === "object"
           ? rawResponse.producerDiagnostics
           : {}
+      );
+      return;
+    }
+
+    const rawProducerProposals = rawResponse.producerProposals;
+    if (
+      !rawProducerProposals ||
+      typeof rawProducerProposals !== "object" ||
+      Array.isArray(rawProducerProposals)
+    ) {
+      recordFailedScan(
+        "AI Scan response did not include producerProposals separation map; refused to stage tab3Data fallbacks."
       );
       return;
     }
@@ -1026,18 +1270,6 @@ export function useBenchV2AiScanController({
         ...prev,
         [scannedProductId]: rawVisionStandardizedCandidates
       }));
-    }
-
-    const rawProducerProposals = rawResponse.producerProposals;
-    if (
-      !rawProducerProposals ||
-      typeof rawProducerProposals !== "object" ||
-      Array.isArray(rawProducerProposals)
-    ) {
-      recordFailedScan(
-        "AI Scan response did not include producerProposals separation map; refused to stage tab3Data fallbacks."
-      );
-      return;
     }
 
     const combinedProducerAndVisionProposals = { ...rawProducerProposals };
@@ -1077,21 +1309,18 @@ export function useBenchV2AiScanController({
       }
     }
 
-    const rawTargetBaseline = baselineByProductRef.current[scannedProductId] || null;
     const mergedActiveBaseline =
       currentBaselineRef.current &&
       currentBaselineRef.current.productId === scannedProductId
         ? currentBaselineRef.current
         : rawTargetBaseline;
     const isRefChoicesFreshForScannedProduct = Boolean(
-      scannedProductId === activeProductId &&
+      scannedProductId === activeProductIdRef.current &&
         isCurrentRefChoicesBoundAndFreshRef.current &&
         currentRefChoicesRecordRef.current &&
         currentRefChoicesRecordRef.current.productId === scannedProductId
     );
     const targetBaseline = mergedActiveBaseline;
-    const targetBaselineContextSig =
-      buildStandardizedBaselineContextSignature(rawTargetBaseline);
 
     const existingProdProposals = { ...(proposedByProductRef.current[scannedProductId] || {}) };
     const existingProdApprovals = { ...(approvalsByProductRef.current[scannedProductId] || {}) };
@@ -1474,6 +1703,10 @@ export function useBenchV2AiScanController({
       }
     }));
 
+    const evaluatedWithRefRequestId = isRefChoicesFreshForScannedProduct
+      ? currentRefChoicesRecordRef.current?.requestId || null
+      : null;
+
     setPendingGeologyRefCandidatesByProduct((prev) => {
       const next = { ...prev };
       if (Object.keys(nextPendingGeologyRefForProd).length > 0) {
@@ -1482,6 +1715,7 @@ export function useBenchV2AiScanController({
           sessionId: benchSessionIdRef.current,
           productId: scannedProductId,
           baselineContextSig: targetBaselineContextSig,
+          lastAttemptedRefRequestId: evaluatedWithRefRequestId,
           candidatesByDest: nextPendingGeologyRefForProd
         };
       } else {
@@ -1516,11 +1750,12 @@ export function useBenchV2AiScanController({
       }
     }));
 
-    setActiveAiScanRequest(null);
+    releaseOwnActiveRequest();
   }, [
     aiScanFetcher.state,
     aiScanFetcher.data,
     activeProductId,
+    activeProductIdRef,
     baselineByProductRef,
     currentBaselineRef,
     isCurrentRefChoicesBoundAndFreshRef,
@@ -1634,7 +1869,8 @@ export function useBenchV2AiScanController({
 
 // ==========================================================================
 // DEFERRED GEOLOGY & VISION REFERENCE CANDIDATE RESOLUTION (WHEN REF CHOICES
-// ARRIVE AFTER AI SCAN) — ONCE PER SCAN REQUEST, NO RESCAN, NO LOOPS, NO AUTO-APPROVE
+// ARRIVE AFTER AI SCAN) — ONCE PER REF REQUEST PER SCAN BUNDLE, NO RESCAN,
+// NO LOOPS, NO AUTO-APPROVE
 // ==========================================================================
 export function useBenchV2DeferredAiReferenceResolver({
   activeProductId,
@@ -1660,6 +1896,8 @@ export function useBenchV2DeferredAiReferenceResolver({
   const setApprovalsByProduct =
     deferredResolverContext?.setApprovalsByProduct;
 
+  const processedRefAttemptKeysRef = useRef(new Set());
+
   useEffect(() => {
     if (
       !pendingGeologyRefCandidatesByProduct ||
@@ -1673,18 +1911,26 @@ export function useBenchV2DeferredAiReferenceResolver({
     const pendingBundle = pendingGeologyRefCandidatesByProduct[activeProductId];
     if (!pendingBundle || typeof pendingBundle !== "object") return;
 
+    const bundleRequestId = pendingBundle.requestId || null;
+    const bundleSessionId = pendingBundle.sessionId || null;
+    const bundleProductId = pendingBundle.productId || null;
+    const bundleContextSig = pendingBundle.baselineContextSig || null;
+
     const rawSnapForActive = baselineByProductRef.current[activeProductId] || null;
     const currentContextSig = buildStandardizedBaselineContextSignature(rawSnapForActive);
 
     // Discard stale pending candidates if session, product, or factual baseline changed
     if (
-      pendingBundle.sessionId !== benchSessionIdRef.current ||
-      pendingBundle.productId !== activeProductId ||
+      bundleSessionId !== benchSessionIdRef.current ||
+      bundleProductId !== activeProductId ||
       !rawSnapForActive ||
-      pendingBundle.baselineContextSig !== currentContextSig
+      bundleContextSig !== currentContextSig
     ) {
       setPendingGeologyRefCandidatesByProduct((prev) => {
-        if (!prev[activeProductId]) return prev;
+        const currentForProd = prev[activeProductId];
+        if (!currentForProd || currentForProd.requestId !== bundleRequestId) {
+          return prev;
+        }
         const next = { ...prev };
         delete next[activeProductId];
         return next;
@@ -1703,23 +1949,42 @@ export function useBenchV2DeferredAiReferenceResolver({
       return;
     }
 
+    const currentRefReqId = currentRefChoicesRecord.requestId || null;
+    if (!currentRefReqId) {
+      return;
+    }
+
+    // Process each reference-choices requestId at most once per scan bundle
+    const attemptDedupKey = `${bundleProductId}::${bundleRequestId}::${bundleContextSig}::${currentRefReqId}`;
+    if (
+      pendingBundle.lastAttemptedRefRequestId === currentRefReqId ||
+      processedRefAttemptKeysRef.current.has(attemptDedupKey)
+    ) {
+      return;
+    }
+    processedRefAttemptKeysRef.current.add(attemptDedupKey);
+
     const candidatesMap = pendingBundle.candidatesByDest || {};
     const destEntries = Object.entries(candidatesMap);
 
-    // Consume pending bundle synchronously first so it never re-runs in a loop
-    setPendingGeologyRefCandidatesByProduct((prev) => {
-      if (!prev[activeProductId]) return prev;
-      const next = { ...prev };
-      delete next[activeProductId];
-      return next;
-    });
-
-    if (destEntries.length === 0) return;
+    if (destEntries.length === 0) {
+      setPendingGeologyRefCandidatesByProduct((prev) => {
+        const currentForProd = prev[activeProductId];
+        if (!currentForProd || currentForProd.requestId !== bundleRequestId) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[activeProductId];
+        return next;
+      });
+      return;
+    }
 
     const existingProdProposals = { ...(proposedByProductRef.current[activeProductId] || {}) };
     const existingProdApprovals = { ...(approvalsByProductRef.current[activeProductId] || {}) };
     const existingProdKeepOriginal = keepOriginalByProductRef.current[activeProductId] || {};
     const nextAiAlternativesForProd = {};
+    const remainingRetryableByDest = {};
 
     let addedStaged = 0;
     let addedHeld = 0;
@@ -1757,6 +2022,18 @@ export function useBenchV2DeferredAiReferenceResolver({
         isRefChoicesFreshForBaseline: true
       });
 
+      if (resolution.status === "pending_reference_choices") {
+        remainingRetryableByDest[destKey] = candItem;
+        updatedProposalsMeta[destKey] = {
+          value: displayCandidateLabel,
+          source: reportedSource,
+          disposition: "Pending verified reference choices (will resolve automatically when ready)",
+          reason: resolution.reason
+        };
+        updatedDiagnostics[destKey] = resolution.reason;
+        continue;
+      }
+
       if (resolution.status === "unchanged_from_baseline") {
         addedUnchanged++;
         updatedProposalsMeta[destKey] = {
@@ -1784,7 +2061,7 @@ export function useBenchV2DeferredAiReferenceResolver({
           allowExplicitReferenceListReplacement: Boolean(
             resolution.allowExplicitReferenceListReplacement
           ),
-          requestId: pendingBundle.requestId,
+          requestId: bundleRequestId,
           targetBaseline: currentBaseline,
           existingProdProposals,
           existingProdApprovals,
@@ -1822,6 +2099,31 @@ export function useBenchV2DeferredAiReferenceResolver({
       );
     }
 
+    // Update or clear the pending bundle scoped to the exact scan requestId/session/product/context
+    setPendingGeologyRefCandidatesByProduct((prev) => {
+      const currentForProd = prev[activeProductId];
+      if (
+        !currentForProd ||
+        currentForProd.requestId !== bundleRequestId ||
+        currentForProd.sessionId !== bundleSessionId ||
+        currentForProd.productId !== bundleProductId ||
+        currentForProd.baselineContextSig !== bundleContextSig
+      ) {
+        return prev;
+      }
+      const next = { ...prev };
+      if (Object.keys(remainingRetryableByDest).length > 0) {
+        next[activeProductId] = {
+          ...currentForProd,
+          lastAttemptedRefRequestId: currentRefReqId,
+          candidatesByDest: remainingRetryableByDest
+        };
+      } else {
+        delete next[activeProductId];
+      }
+      return next;
+    });
+
     if (addedStaged > 0) {
       proposedByProductRef.current = {
         ...proposedByProductRef.current,
@@ -1854,53 +2156,68 @@ export function useBenchV2DeferredAiReferenceResolver({
       }));
     }
 
-    setLastAiScanReportByProduct((prev) => {
-      const existingReport = prev[activeProductId];
-      if (!existingReport || existingReport.requestId !== pendingBundle.requestId) {
-        return prev;
-      }
-      const nextDiagnostics = { ...(existingReport.diagnostics || {}) };
-      for (const [dKey, dReason] of Object.entries(updatedDiagnostics)) {
-        if (dReason === null) {
-          delete nextDiagnostics[dKey];
-        } else if (typeof dReason === "string" && dReason.trim() !== "") {
-          nextDiagnostics[dKey] = dReason;
+    const hasReportChanges =
+      addedStaged > 0 ||
+      addedHeld > 0 ||
+      addedUnchanged > 0 ||
+      addedRejected > 0 ||
+      appendedDetails.length > 0 ||
+      Object.keys(updatedProposalsMeta).length > 0 ||
+      Object.keys(updatedDiagnostics).length > 0;
+
+    if (hasReportChanges) {
+      setLastAiScanReportByProduct((prev) => {
+        const existingReport = prev[activeProductId];
+        if (
+          !existingReport ||
+          existingReport.requestId !== bundleRequestId ||
+          existingReport.productId !== bundleProductId
+        ) {
+          return prev;
         }
-      }
+        const nextDiagnostics = { ...(existingReport.diagnostics || {}) };
+        for (const [dKey, dReason] of Object.entries(updatedDiagnostics)) {
+          if (dReason === null) {
+            delete nextDiagnostics[dKey];
+          } else if (typeof dReason === "string" && dReason.trim() !== "") {
+            nextDiagnostics[dKey] = dReason;
+          }
+        }
 
-      const nextStagedCount = (existingReport.stagedCount || 0) + addedStaged;
-      const nextHeldCount = (existingReport.heldConflictCount || 0) + addedHeld;
-      const nextUnchangedCount =
-        (existingReport.unchangedSkippedCount || 0) + addedUnchanged;
-      const nextRejectedCount =
-        (existingReport.rejectedInvalidCount || 0) + addedRejected;
-      const recCount = existingReport.receivedCount || 0;
-      const ignCount = existingReport.ignoredManualOnlyCount || 0;
+        const nextStagedCount = (existingReport.stagedCount || 0) + addedStaged;
+        const nextHeldCount = (existingReport.heldConflictCount || 0) + addedHeld;
+        const nextUnchangedCount =
+          (existingReport.unchangedSkippedCount || 0) + addedUnchanged;
+        const nextRejectedCount =
+          (existingReport.rejectedInvalidCount || 0) + addedRejected;
+        const recCount = existingReport.receivedCount || 0;
+        const ignCount = existingReport.ignoredManualOnlyCount || 0;
 
-      return {
-        ...prev,
-        [activeProductId]: {
-          ...existingReport,
-          stagedCount: nextStagedCount,
-          heldConflictCount: nextHeldCount,
-          unchangedSkippedCount: nextUnchangedCount,
-          rejectedInvalidCount: nextRejectedCount,
-          summary: formatAiScanSummaryText({
-            receivedCount: recCount,
+        return {
+          ...prev,
+          [activeProductId]: {
+            ...existingReport,
             stagedCount: nextStagedCount,
             heldConflictCount: nextHeldCount,
             unchangedSkippedCount: nextUnchangedCount,
-            ignoredManualOnlyCount: ignCount
-          }),
-          diagnostics: nextDiagnostics,
-          details: [...(existingReport.details || []), ...appendedDetails],
-          proposalsByDestination: {
-            ...(existingReport.proposalsByDestination || {}),
-            ...updatedProposalsMeta
+            rejectedInvalidCount: nextRejectedCount,
+            summary: formatAiScanSummaryText({
+              receivedCount: recCount,
+              stagedCount: nextStagedCount,
+              heldConflictCount: nextHeldCount,
+              unchangedSkippedCount: nextUnchangedCount,
+              ignoredManualOnlyCount: ignCount
+            }),
+            diagnostics: nextDiagnostics,
+            details: [...(existingReport.details || []), ...appendedDetails],
+            proposalsByDestination: {
+              ...(existingReport.proposalsByDestination || {}),
+              ...updatedProposalsMeta
+            }
           }
-        }
-      };
-    });
+        };
+      });
+    }
   }, [
     pendingGeologyRefCandidatesByProduct,
     setPendingGeologyRefCandidatesByProduct,

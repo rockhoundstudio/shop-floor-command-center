@@ -125,6 +125,7 @@ export function BenchV2HeaderAndBannersView({
   totalVisibleFilteredRowCount,
   allEvaluatedRowsCount,
   isAnyOperationBusy,
+  isMutatingOrSwitchingBusy = undefined,
   isAiScanBusy,
   isWriterBusy,
   isBaselineReloading,
@@ -187,6 +188,33 @@ export function BenchV2HeaderAndBannersView({
       typeof setJsonImportPasteText === "function" &&
       typeof handleJsonDraftFileSelect === "function" &&
       typeof handleApplyPastedJsonDraftPacket === "function"
+  );
+
+  const isExclusiveOperationBusy =
+    typeof isMutatingOrSwitchingBusy === "boolean"
+      ? Boolean(
+          isMutatingOrSwitchingBusy ||
+            isWriterBusy ||
+            isBaselineReloading ||
+            isJsonImportBusy
+        )
+      : Boolean(isWriterBusy || isBaselineReloading || isJsonImportBusy);
+
+  const isCurrentBaselineBoundToActiveProduct = Boolean(
+    currentBaseline && currentBaseline.productId === activeProductId
+  );
+
+  const isAiScanControlDisabled = Boolean(
+    isExclusiveOperationBusy ||
+      isAiScanBusy ||
+      !isCurrentBaselineBoundToActiveProduct
+  );
+
+  const isRefChoicesRetryControlDisabled = Boolean(
+    isExclusiveOperationBusy ||
+      isRefChoicesBusy ||
+      !canRetryRefChoicesForCurrentProduct ||
+      !isCurrentBaselineBoundToActiveProduct
   );
 
   const isJsonImportControlDisabled = Boolean(
@@ -270,25 +298,16 @@ export function BenchV2HeaderAndBannersView({
             <button
               type="button"
               onClick={handleExplicitAiScanProduct}
-              disabled={isAnyOperationBusy || isJsonImportBusy || !currentBaseline}
+              disabled={isAiScanControlDisabled}
               style={{
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 700,
-                backgroundColor:
-                  isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                    ? "#cbd5e1"
-                    : "#1d4ed8",
-                color:
-                  isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                    ? "#334155"
-                    : "#ffffff",
+                backgroundColor: isAiScanControlDisabled ? "#cbd5e1" : "#1d4ed8",
+                color: isAiScanControlDisabled ? "#334155" : "#ffffff",
                 border: "2px solid #1e3a8a",
                 borderRadius: "8px",
-                cursor:
-                  isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                    ? "not-allowed"
-                    : "pointer"
+                cursor: isAiScanControlDisabled ? "not-allowed" : "pointer"
               }}
             >
               {isAiScanBusy ? "Scanning Photos with Gemini..." : "AI Scan Product"}
@@ -356,25 +375,22 @@ export function BenchV2HeaderAndBannersView({
               <button
                 type="button"
                 onClick={handleLoadStandardizedReferenceChoices}
-                disabled={isAnyOperationBusy || isJsonImportBusy || !currentBaseline}
+                disabled={isRefChoicesRetryControlDisabled}
                 style={{
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
-                  backgroundColor:
-                    isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                      ? "#cbd5e1"
-                      : "#0f766e",
-                  color:
-                    isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                      ? "#334155"
-                      : "#ffffff",
+                  backgroundColor: isRefChoicesRetryControlDisabled
+                    ? "#cbd5e1"
+                    : "#0f766e",
+                  color: isRefChoicesRetryControlDisabled
+                    ? "#334155"
+                    : "#ffffff",
                   border: "2px solid #115e59",
                   borderRadius: "8px",
-                  cursor:
-                    isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                      ? "not-allowed"
-                      : "pointer"
+                  cursor: isRefChoicesRetryControlDisabled
+                    ? "not-allowed"
+                    : "pointer"
                 }}
               >
                 Retry Reference Choices
@@ -1305,19 +1321,22 @@ export function BenchV2HeaderAndBannersView({
                   <button
                     type="button"
                     onClick={handleLoadStandardizedReferenceChoices}
-                    disabled={isAnyOperationBusy || isJsonImportBusy || !currentBaseline}
+                    disabled={isRefChoicesRetryControlDisabled}
                     style={{
                       padding: "4px 12px",
                       fontSize: "14px",
                       fontWeight: 700,
-                      backgroundColor: "#0f766e",
-                      color: "#ffffff",
+                      backgroundColor: isRefChoicesRetryControlDisabled
+                        ? "#cbd5e1"
+                        : "#0f766e",
+                      color: isRefChoicesRetryControlDisabled
+                        ? "#334155"
+                        : "#ffffff",
                       border: "1px solid #115e59",
                       borderRadius: "6px",
-                      cursor:
-                        isAnyOperationBusy || isJsonImportBusy || !currentBaseline
-                          ? "not-allowed"
-                          : "pointer"
+                      cursor: isRefChoicesRetryControlDisabled
+                        ? "not-allowed"
+                        : "pointer"
                     }}
                   >
                     Retry Reference Choices

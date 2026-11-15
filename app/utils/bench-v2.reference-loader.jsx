@@ -799,6 +799,12 @@ export function useStandardizedReferenceChoiceLoader({
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
+  const isExternalBusyRef = useRef(Boolean(isExternalBusy));
+  isExternalBusyRef.current = Boolean(isExternalBusy);
+
+  const isSwitchingProductRef = useRef(Boolean(isSwitchingProduct));
+  isSwitchingProductRef.current = Boolean(isSwitchingProduct);
+
   const getLatestBaselineRef = useRef(getLatestBaselineForProduct);
   getLatestBaselineRef.current = getLatestBaselineForProduct;
 
@@ -865,6 +871,9 @@ export function useStandardizedReferenceChoiceLoader({
         (rawBaseline.productCategory?.id || null)
   );
 
+  const isCurrentRefChoicesBoundAndFreshRef = useRef(isCurrentRefChoicesBoundAndFresh);
+  isCurrentRefChoicesBoundAndFreshRef.current = isCurrentRefChoicesBoundAndFresh;
+
   const currentBaseline = React.useMemo(() => {
     if (!rawBaseline) return null;
     if (!isCurrentRefChoicesBoundAndFresh || !currentRefChoicesRecord) {
@@ -899,6 +908,15 @@ export function useStandardizedReferenceChoiceLoader({
   const submitStandardizedReferenceChoicesRequest = useCallback(
     ({ targetProductId, targetBaselineSnap, targetContextSig }) => {
       if (
+        activeRefChoicesRequestRef.current ||
+        refChoicesFetcherRef.current.state !== "idle" ||
+        isExternalBusyRef.current ||
+        isSwitchingProductRef.current
+      ) {
+        return false;
+      }
+
+      if (
         !destinationPolicy.ok ||
         !isExactProductGid(targetProductId) ||
         !targetBaselineSnap ||
@@ -906,6 +924,19 @@ export function useStandardizedReferenceChoiceLoader({
         targetBaselineSnap.metafieldsReadComplete !== true ||
         targetBaselineSnap.defsReadComplete !== true ||
         targetBaselineSnap.productCategoryReadComplete !== true
+      ) {
+        return false;
+      }
+
+      const expectedContextSig = buildStandardizedBaselineContextSignature(
+        targetBaselineSnap,
+        destinationPolicy.bareKeys
+      );
+      if (
+        typeof targetContextSig !== "string" ||
+        targetContextSig.trim() === "" ||
+        targetContextSig === "no_baseline" ||
+        targetContextSig !== expectedContextSig
       ) {
         return false;
       }
@@ -960,14 +991,113 @@ export function useStandardizedReferenceChoiceLoader({
         JSON.stringify(stagedCandidatesForProduct)
       );
 
-      refChoicesFetcherRef.current.submit(formData, {
-        method: "POST",
-        action: resolvedActionPath
-      });
-      return true;
+      try {
+        refChoicesFetcherRef.current.submit(formData, {
+          method: "POST",
+          action: resolvedActionPath
+        });
+        return true;
+      } catch (submitErr) {
+        const errMessage =
+          submitErr && typeof submitErr.message === "string" && submitErr.message.trim() !== ""
+            ? submitErr.message.trim()
+            : `Failed to submit standardized reference choices request to ${resolvedActionPath}.`;
+        const failedSubmitRecord = {
+          requestId,
+          sessionId: reqMeta.sessionId,
+          benchSessionId: reqMeta.benchSessionId,
+          productId: targetProductId,
+          baselineContextSig: targetContextSig,
+          productCategoryId: reqMeta.productCategoryId,
+          completedAt: new Date().toISOString(),
+          ok: false,
+          state: "failed_or_incomplete",
+          summary: `Reference choices load failed: ${errMessage}`,
+          errors: [errMessage],
+          verifiedReferenceEntriesByDestination: {},
+          rawResponse: null
+        };
+        setRefChoicesStateByProduct((prev) => ({
+          ...prev,
+          [targetProductId]: failedSubmitRecord
+        }));
+        if (activeRefChoicesRequestRef.current?.requestId === requestId) {
+          observedBusyRequestIdRef.current = null;
+          activeRefChoicesRequestRef.current = null;
+          setActiveRefChoicesRequest((prevReq) =>
+            prevReq?.requestId === requestId ? null : prevReq
+          );
+        }
+        return false;
+      }
     },
     [destinationPolicy, cleanPrefix, resolvedActionPath]
   );
+
+  /**
+   * Synchronous helper for coordinated actions (such as explicit AI Scan).
+   * If verified reference choices for the current ready baseline context are
+   * already bound & fresh, or if a reference-choices request is already in
+   * flight, performs no extra submission. Otherwise delegates to the same
+   * guarded `submitStandardizedReferenceChoicesRequest` owner.
+   */
+  const ensureStandardizedReferenceChoicesLoadedOrInFlight = useCallback(() => {
+    try {
+      if (!isCurrentBaselineReadyForStandardizedLookup || !rawBaseline) {
+        return false;
+      }
+      if (isCurrentRefChoicesBoundAndFreshRef.current) {
+        return false;
+      }
+      if (
+        activeRefChoicesRequestRef.current ||
+        refChoicesFetcherRef.current.state !== "idle" ||
+        isExternalBusyRef.current ||
+        isSwitchingProductRef.current
+      ) {
+        return false;
+      }
+
+      const latestSnap =
+        typeof getLatestBaselineRef.current === "function"
+          ? getLatestBaselineRef.current(productId) || rawBaseline
+          : rawBaseline;
+      if (
+        !latestSnap ||
+        latestSnap.productId !== productId ||
+        latestSnap.metafieldsReadComplete !== true ||
+        latestSnap.defsReadComplete !== true ||
+        latestSnap.productCategoryReadComplete !== true
+      ) {
+        return false;
+      }
+
+      const latestSig = buildStandardizedBaselineContextSignature(
+        latestSnap,
+        destinationPolicy.ok
+          ? destinationPolicy.bareKeys
+          : ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS
+      );
+      if (latestSig !== currentBaselineContextSig) {
+        return false;
+      }
+
+      return submitStandardizedReferenceChoicesRequest({
+        targetProductId: productId,
+        targetBaselineSnap: latestSnap,
+        targetContextSig: latestSig
+      });
+    } catch {
+      return false;
+    }
+  }, [
+    isCurrentBaselineReadyForStandardizedLookup,
+    rawBaseline,
+    productId,
+    destinationPolicy,
+    currentBaselineContextSig,
+    submitStandardizedReferenceChoicesRequest
+  ]);
 
   // Automatic read-only reference-choice loading:
   // Fires at most once per (sessionId, productId, factual baselineContextSig)
@@ -1131,9 +1261,13 @@ export function useStandardizedReferenceChoiceLoader({
       [reqProductId]: evaluatedRecord
     }));
 
-    observedBusyRequestIdRef.current = null;
-    activeRefChoicesRequestRef.current = null;
-    setActiveRefChoicesRequest(null);
+    if (activeRefChoicesRequestRef.current?.requestId === pendingReq.requestId) {
+      observedBusyRequestIdRef.current = null;
+      activeRefChoicesRequestRef.current = null;
+      setActiveRefChoicesRequest((prevReq) =>
+        prevReq?.requestId === pendingReq.requestId ? null : prevReq
+      );
+    }
   }, [
     refChoicesFetcher.state,
     refChoicesFetcher.data,
@@ -1169,6 +1303,7 @@ export function useStandardizedReferenceChoiceLoader({
     isRefChoicesBusy,
     canRetryRefChoicesForCurrentProduct,
     handleLoadStandardizedReferenceChoices,
+    ensureStandardizedReferenceChoicesLoadedOrInFlight,
     dismissCurrentRefChoicesRecord
   };
 }
@@ -1245,7 +1380,9 @@ export function useBenchV2StandardizedReferenceLoader({
     rawBaseline: rawCurrentBaseline,
     getLatestBaselineForProduct,
     getStagedCandidatesForProduct,
-    isExternalBusy: Boolean(isWriterBusy || isAiScanBusy || isBaselineReloading),
+    isExternalBusy: Boolean(
+      isWriterBusy || isBaselineReloading || isSwitchingSelectedProduct
+    ),
     onPrevalidationNotice: handlePrevalidationNotice,
     onClearNotice: handleClearNotice,
     requestIdPrefix: DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX,

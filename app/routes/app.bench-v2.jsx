@@ -486,7 +486,7 @@ export default function BenchV2Route() {
       if (!prodMap || !prodMap[destinationKey]) return prev;
       const nextMap = { ...prodMap };
       delete nextMap[destinationKey];
-      return { ...prev, [productId]: nextMap };
+       return { ...prev, [productId]: nextMap };
     });
   }, []);
 
@@ -596,6 +596,8 @@ export default function BenchV2Route() {
   const isAiScanBusyRef = useRef(false);
   const isRefChoicesBusyRef = useRef(false);
   const isAnyOperationBusyRef = useRef(false);
+  const isScanBlockingBusyRef = useRef(false);
+  const ensureStandardizedReferenceChoicesLoadedOrInFlightRef = useRef(null);
 
   // 9D. Atomic JSON Draft Importer Hook & Replay Protection
   const {
@@ -651,6 +653,11 @@ export default function BenchV2Route() {
     setOpenDrawersById
   });
 
+  const isMutatingOrSwitchingBusy = Boolean(
+    isWriterBusy || isJsonImportBusy || isBaselineReloading || isSwitchingSelectedProduct
+  );
+  isScanBlockingBusyRef.current = isMutatingOrSwitchingBusy;
+
   // 9. Explicit AI Scan Request, Candidate Resolution & Held Alternatives Controller Hook
   const {
     isAiScanBusy,
@@ -666,6 +673,7 @@ export default function BenchV2Route() {
     deferredResolverContext
   } = useBenchV2AiScanController({
     activeProductId,
+    activeProductIdRef,
     activeProductTitle,
     benchSessionIdRef,
     baselineByProductRef,
@@ -673,6 +681,8 @@ export default function BenchV2Route() {
     currentRefChoicesRecordRef,
     isCurrentRefChoicesBoundAndFreshRef,
     isAnyOperationBusyRef,
+    isScanBlockingBusyRef,
+    ensureStandardizedReferenceChoicesLoadedOrInFlightRef,
     isJsonImportBusy,
     proposedByProduct,
     proposedByProductRef,
@@ -694,6 +704,7 @@ export default function BenchV2Route() {
     isRefChoicesBusy,
     canRetryRefChoicesForCurrentProduct,
     handleLoadStandardizedReferenceChoices,
+    ensureStandardizedReferenceChoicesLoadedOrInFlight,
     dismissCurrentRefChoicesRecord
   } = useBenchV2StandardizedReferenceLoader({
     benchSessionId: benchSessionIdRef.current,
@@ -714,6 +725,8 @@ export default function BenchV2Route() {
   isCurrentRefChoicesBoundAndFreshRef.current = isCurrentRefChoicesBoundAndFresh;
   isAiScanBusyRef.current = isAiScanBusy;
   isRefChoicesBusyRef.current = isRefChoicesBusy;
+  ensureStandardizedReferenceChoicesLoadedOrInFlightRef.current =
+    ensureStandardizedReferenceChoicesLoadedOrInFlight;
 
   const isAnyOperationBusy =
     isWriterBusy || isAiScanBusy || isRefChoicesBusy || isBaselineReloading;
@@ -1438,6 +1451,7 @@ export default function BenchV2Route() {
           totalVisibleFilteredRowCount={totalVisibleFilteredRowCount}
           allEvaluatedRowsCount={allEvaluatedRows.length}
           isAnyOperationBusy={isAnyOperationBusy}
+          isMutatingOrSwitchingBusy={isMutatingOrSwitchingBusy}
           isAiScanBusy={isAiScanBusy}
           isWriterBusy={isWriterBusy}
           isBaselineReloading={isBaselineReloading}
@@ -1509,6 +1523,7 @@ export default function BenchV2Route() {
           openDrawersById={openDrawersById}
           canRetryRefChoicesForCurrentProduct={canRetryRefChoicesForCurrentProduct}
           isAnyOperationBusy={isAnyOperationBusy || isJsonImportBusy}
+          isMutatingOrSwitchingBusy={isMutatingOrSwitchingBusy}
           currentBaseline={currentBaseline}
           isRefChoicesBusy={isRefChoicesBusy}
           isCurrentRefChoicesBoundAndFresh={isCurrentRefChoicesBoundAndFresh}

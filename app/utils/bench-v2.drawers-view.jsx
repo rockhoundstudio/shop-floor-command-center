@@ -420,6 +420,7 @@ export function BenchV2DrawersView({
   openDrawersById,
   canRetryRefChoicesForCurrentProduct,
   isAnyOperationBusy,
+  isMutatingOrSwitchingBusy = undefined,
   currentBaseline,
   isRefChoicesBusy,
   isCurrentRefChoicesBoundAndFresh,
@@ -439,6 +440,23 @@ export function BenchV2DrawersView({
 }) {
   const [capturedPacketsByDrawerId, setCapturedPacketsByDrawerId] = useState({});
   const [copyFeedbackByDrawerId, setCopyFeedbackByDrawerId] = useState({});
+
+  const isExclusiveOperationBusy =
+    typeof isMutatingOrSwitchingBusy === "boolean"
+      ? isMutatingOrSwitchingBusy
+      : false;
+
+  const isCurrentBaselineBoundToActiveProduct = Boolean(
+    currentBaseline &&
+      (!activeProductId || currentBaseline.productId === activeProductId)
+  );
+
+  const isDrawerRefChoicesRetryDisabled = Boolean(
+    isExclusiveOperationBusy ||
+      isRefChoicesBusy ||
+      !canRetryRefChoicesForCurrentProduct ||
+      !isCurrentBaselineBoundToActiveProduct
+  );
 
   const setDrawerCopyError = useCallback((drawerId, errMessage) => {
     setCopyFeedbackByDrawerId((prev) => ({
@@ -748,21 +766,22 @@ export function BenchV2DrawersView({
                           e.stopPropagation();
                           handleLoadStandardizedReferenceChoices();
                         }}
-                        disabled={isAnyOperationBusy || !currentBaseline}
+                        disabled={isDrawerRefChoicesRetryDisabled}
                         style={{
                           padding: "8px 14px",
                           fontSize: "15px",
                           fontWeight: 700,
-                          backgroundColor:
-                            isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
-                          color:
-                            isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                          backgroundColor: isDrawerRefChoicesRetryDisabled
+                            ? "#cbd5e1"
+                            : "#0f766e",
+                          color: isDrawerRefChoicesRetryDisabled
+                            ? "#334155"
+                            : "#ffffff",
                           border: "2px solid #115e59",
                           borderRadius: "8px",
-                          cursor:
-                            isAnyOperationBusy || !currentBaseline
-                              ? "not-allowed"
-                              : "pointer"
+                          cursor: isDrawerRefChoicesRetryDisabled
+                            ? "not-allowed"
+                            : "pointer"
                         }}
                       >
                         Retry Reference Choices
@@ -872,21 +891,22 @@ export function BenchV2DrawersView({
                         <button
                           type="button"
                           onClick={handleLoadStandardizedReferenceChoices}
-                          disabled={isAnyOperationBusy || !currentBaseline}
+                          disabled={isDrawerRefChoicesRetryDisabled}
                           style={{
                             padding: "9px 16px",
                             fontSize: "15px",
                             fontWeight: 700,
-                            backgroundColor:
-                              isAnyOperationBusy || !currentBaseline ? "#cbd5e1" : "#0f766e",
-                            color:
-                              isAnyOperationBusy || !currentBaseline ? "#334155" : "#ffffff",
+                            backgroundColor: isDrawerRefChoicesRetryDisabled
+                              ? "#cbd5e1"
+                              : "#0f766e",
+                            color: isDrawerRefChoicesRetryDisabled
+                              ? "#334155"
+                              : "#ffffff",
                             border: "2px solid #115e59",
                             borderRadius: "8px",
-                            cursor:
-                              isAnyOperationBusy || !currentBaseline
-                                ? "not-allowed"
-                                : "pointer"
+                            cursor: isDrawerRefChoicesRetryDisabled
+                              ? "not-allowed"
+                              : "pointer"
                           }}
                         >
                           Retry Reference Choices
