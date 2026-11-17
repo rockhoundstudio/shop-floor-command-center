@@ -7,8 +7,15 @@ export default function Index() {
     <div style={{ padding: "40px", fontFamily: "sans-serif" }}>
       <h1 style={{ fontSize: "32px", marginBottom: "32px" }}>Shop Floor Command Center</h1>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px", maxWidth: "400px" }}>
+        <button
+          type="button"
+          onClick={() => navigate("/app/bench-v2")}
+          aria-label="Open Bench2"
+          style={{ padding: "20px", fontSize: "20px", cursor: "pointer", borderRadius: "8px", border: "2px solid #333", background: "#fff" }}
+        >
+          Open Bench2
+        </button>
         {[
-          ["Open Bench2", "/app/bench-v2"],
           ["Meta Injector", "/app/meta-injector"],
           ["Menu Manager", "/app/menu-manager"],
           ["Collection Manager", "/app/collection-manager"],
@@ -24,7 +31,7 @@ export default function Index() {
           <button
             key={path}
             onClick={() => navigate(path)}
-            aria-label={label === "Open Bench2" ? label : `Open ${label}`}
+            aria-label={`Open ${label}`}
             style={{ padding: "20px", fontSize: "20px", cursor: "pointer", borderRadius: "8px", border: "2px solid #333", background: "#fff" }}
           >
             {label}
@@ -34,6 +41,3 @@ export default function Index() {
     </div>
   );
 }
-``` [!Loading](#)
-
-[sidekick-reference-anchor]: <#>
