@@ -4,26 +4,39 @@ import { Page, Layout, Card, Button, Text, BlockStack } from "@shopify/polaris";
 export default function Index() {
   const navigate = useNavigate();
 
+  const tools = [
+    ["Open Bench2", "/app/bench-v2"],
+    ["Meta Injector", "/app/meta-injector"],
+    ["Menu Manager", "/app/menu-manager"],
+    ["Collection Manager", "/app/collection-manager"],
+    ["Bulk Edit", "/app/bulk-edit"],
+    ["AI Content Forge", "/app/ai-content-forge"],
+    ["Theme Editor", "/app/theme-editor"],
+    ["Store Health Check", "/app/store-health-check"],
+    ["Image Extractor", "/app/image-extractor"],
+  ];
+
   return (
     <Page title="Shop Floor Command Center">
       <Layout>
         <Layout.Section>
-          <BlockStack gap="400">
-            <Card>
-              <BlockStack gap="300">
-                <Text variant="headingMd" as="h2">Tools</Text>
-                <Button onClick={() => navigate("/app/bench-v2")} size="large" aria-label="Open Bench2">Open Bench2</Button>
-                <Button onClick={() => navigate("/app/meta-injector")} size="large" aria-label="Open Meta Injector">Meta Injector</Button>
-                <Button onClick={() => navigate("/app/menu-manager")} size="large" aria-label="Open Menu Manager">Menu Manager</Button>
-                <Button onClick={() => navigate("/app/collection-manager")} size="large" aria-label="Open Collection Manager">Collection Manager</Button>
-                <Button onClick={() => navigate("/app/bulk-edit")} size="large" aria-label="Open Bulk Edit">Bulk Edit</Button>
-                <Button onClick={() => navigate("/app/ai-content-forge")} size="large" aria-label="Open AI Content Forge">AI Content Forge</Button>
-                <Button onClick={() => navigate("/app/theme-editor")} size="large" aria-label="Open Theme Editor">Theme Editor</Button>
-                <Button onClick={() => navigate("/app/store-health-check")} size="large" aria-label="Open Store Health Check">Store Health Check</Button>
-                <Button onClick={() => navigate("/app/image-extractor")} size="large" aria-label="Open Image Extractor">Image Extractor</Button>
-              </BlockStack>
-            </Card>
-          </BlockStack>
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">
+                Tools
+              </Text>
+              {tools.map(([label, path]) => (
+                <Button
+                  key={path}
+                  onClick={() => navigate(path)}
+                  size="large"
+                  aria-label={label === "Open Bench2" ? label : `Open ${label}`}
+                >
+                  {label}
+                </Button>
+              ))}
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>
