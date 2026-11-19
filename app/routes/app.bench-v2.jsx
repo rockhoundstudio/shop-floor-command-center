@@ -15,7 +15,7 @@
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
+import { useLoaderData, useFetcher, useNavigation, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { loadSingleProductBaselineSnapshot } from "../utils/bench-v2.baseline.server.jsx";
 import {
@@ -298,6 +298,7 @@ function inspectActiveReferenceListDraft(
 
 export default function BenchV2Route() {
   const loaderData = useLoaderData();
+  const navigation = useNavigation();
   const revalidator = useRevalidator();
   const pickerFetcher = useFetcher();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -314,6 +315,26 @@ export default function BenchV2Route() {
 
   const isSwitchingSelectedProduct = Boolean(
     requestedUrlProductId && requestedUrlProductId !== activeProductId
+  );
+
+  const pendingNavigationProductId = React.useMemo(() => {
+    if (navigation.state === "idle" || !navigation.location) {
+      return null;
+    }
+    const navParams = new URLSearchParams(navigation.location.search || "");
+    if (navParams.get("pickerOnly") === "1") {
+      return null;
+    }
+    const rawNavProductId = navParams.get("productId");
+    return rawNavProductId && isExactProductGid(rawNavProductId.trim())
+      ? rawNavProductId.trim()
+      : null;
+  }, [navigation.state, navigation.location]);
+
+  const isForegroundProductSwitchLoading = Boolean(
+    navigation.state !== "idle" &&
+      ((pendingNavigationProductId && pendingNavigationProductId !== activeProductId) ||
+        isSwitchingSelectedProduct)
   );
 
   // 1. Authoritative Baseline State (Strictly separated from proposals, keyed by Product GID)
@@ -486,7 +507,7 @@ export default function BenchV2Route() {
       if (!prodMap || !prodMap[destinationKey]) return prev;
       const nextMap = { ...prodMap };
       delete nextMap[destinationKey];
-       return { ...prev, [productId]: nextMap };
+      return { ...prev, [productId]: nextMap };
     });
   }, []);
 
@@ -1452,6 +1473,7 @@ export default function BenchV2Route() {
           allEvaluatedRowsCount={allEvaluatedRows.length}
           isAnyOperationBusy={isAnyOperationBusy}
           isMutatingOrSwitchingBusy={isMutatingOrSwitchingBusy}
+          isSwitchingSelectedProduct={isForegroundProductSwitchLoading}
           isAiScanBusy={isAiScanBusy}
           isWriterBusy={isWriterBusy}
           isBaselineReloading={isBaselineReloading}

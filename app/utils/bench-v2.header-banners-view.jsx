@@ -112,6 +112,127 @@ export function getPagerButtonStyle(disabled) {
   };
 }
 
+const BENCH_V2_SPINNER_KEYFRAMES_CSS = `
+@keyframes benchV2TaskSpinnerRotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.bench-v2-task-spinner-svg {
+  animation: benchV2TaskSpinnerRotate 0.85s linear infinite;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bench-v2-task-spinner-svg {
+    animation: none !important;
+  }
+}
+`;
+
+export function BenchV2TaskSpinner({
+  size = 20,
+  trackColor = "#cbd5e1",
+  indicatorColor = "#1d4ed8",
+  marginRight = "10px"
+}) {
+  return (
+    <svg
+      className="bench-v2-task-spinner-svg"
+      aria-hidden="true"
+      focusable="false"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      style={{
+        display: "inline-block",
+        verticalAlign: "middle",
+        flexShrink: 0,
+        marginRight
+      }}
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        stroke={trackColor}
+        strokeWidth="3"
+      />
+      <path
+        d="M12 3a9 9 0 0 1 9 9"
+        stroke={indicatorColor}
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function resolveBenchV2ForegroundTaskStatus({
+  isWriterBusy = false,
+  isSwitchingSelectedProduct = false,
+  isBaselineReloading = false,
+  isAiScanBusy = false,
+  isRefChoicesBusy = false,
+  isJsonImportBusy = false,
+  isPickerLoading = false,
+  activeProductTitle = ""
+}) {
+  const cleanTitle =
+    typeof activeProductTitle === "string" && activeProductTitle.trim() !== ""
+      ? activeProductTitle.trim()
+      : "selected product";
+
+  if (isWriterBusy) {
+    return {
+      taskKey: "saving",
+      label: `Saving approved changes for ${cleanTitle} to Shopify...`
+    };
+  }
+  if (isSwitchingSelectedProduct) {
+    return {
+      taskKey: "loading_selected_product",
+      label: "Loading selected product baseline from Shopify..."
+    };
+  }
+  if (isBaselineReloading) {
+    return {
+      taskKey: "reloading_baseline",
+      label: `Reloading product baseline for ${cleanTitle} from Shopify...`
+    };
+  }
+  if (isAiScanBusy && isRefChoicesBusy) {
+    return {
+      taskKey: "scanning_and_resolving_references",
+      label: `Scanning product & DB geology and resolving standardized reference choices for ${cleanTitle}...`
+    };
+  }
+  if (isAiScanBusy) {
+    return {
+      taskKey: "scanning",
+      label: `Scanning product & DB geology for ${cleanTitle}...`
+    };
+  }
+  if (isRefChoicesBusy) {
+    return {
+      taskKey: "resolving_references",
+      label: `Resolving standardized reference choices for ${cleanTitle}...`
+    };
+  }
+  if (isJsonImportBusy) {
+    return {
+      taskKey: "importing_json_drafts",
+      label: `Validating and staging JSON draft packet for ${cleanTitle}...`
+    };
+  }
+  if (isPickerLoading) {
+    return {
+      taskKey: "picker_search",
+      label: "Searching product inventory..."
+    };
+  }
+  return null;
+}
+
 export function BenchV2HeaderAndBannersView({
   activeProductId,
   activeProductTitle,
@@ -126,6 +247,7 @@ export function BenchV2HeaderAndBannersView({
   allEvaluatedRowsCount,
   isAnyOperationBusy,
   isMutatingOrSwitchingBusy = undefined,
+  isSwitchingSelectedProduct = false,
   isAiScanBusy,
   isWriterBusy,
   isBaselineReloading,
@@ -233,8 +355,27 @@ export function BenchV2HeaderAndBannersView({
       (currentRefChoicesRecord && !currentRefChoicesRecord.bannerDismissed)
   );
 
+  // Foreground task status strictly reflects active in-flight foreground operations
+  // (never background telemetry and never missing/mismatched baseline alone).
+  const activeForegroundTask = resolveBenchV2ForegroundTaskStatus({
+    isWriterBusy: Boolean(isWriterBusy),
+    isSwitchingSelectedProduct: Boolean(isSwitchingSelectedProduct),
+    isBaselineReloading: Boolean(isBaselineReloading),
+    isAiScanBusy: Boolean(isAiScanBusy),
+    isRefChoicesBusy: Boolean(isRefChoicesBusy),
+    isJsonImportBusy: Boolean(isJsonImportBusy),
+    isPickerLoading: Boolean(isPickerLoading),
+    activeProductTitle
+  });
+
+  const isThumbnailStripActivelyLoading = Boolean(
+    isSwitchingSelectedProduct || isBaselineReloading
+  );
+
   return (
     <>
+      <style>{BENCH_V2_SPINNER_KEYFRAMES_CSS}</style>
+
       {/* TOP SUMMARY BAR + ACCESSIBLE PRODUCT SEARCH / PICKER + 120x120 THUMBNAILS + DRAWER FILTER */}
       <header
         style={{
@@ -300,6 +441,9 @@ export function BenchV2HeaderAndBannersView({
               onClick={handleExplicitAiScanProduct}
               disabled={isAiScanControlDisabled}
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 700,
@@ -310,7 +454,15 @@ export function BenchV2HeaderAndBannersView({
                 cursor: isAiScanControlDisabled ? "not-allowed" : "pointer"
               }}
             >
-              {isAiScanBusy ? "Scanning Photos with Gemini..." : "AI Scan Product"}
+              {isAiScanBusy && (
+                <BenchV2TaskSpinner
+                  size={16}
+                  trackColor="#94a3b8"
+                  indicatorColor="#0f172a"
+                  marginRight="8px"
+                />
+              )}
+              {isAiScanBusy ? "Scanning Product..." : "AI Scan Product"}
             </button>
 
             <button
@@ -332,6 +484,9 @@ export function BenchV2HeaderAndBannersView({
                   : "Stage unapproved test/review drafts from a verified Bench V2 JSON packet."
               }
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 700,
@@ -364,6 +519,14 @@ export function BenchV2HeaderAndBannersView({
                     : "pointer"
               }}
             >
+              {isJsonImportBusy && (
+                <BenchV2TaskSpinner
+                  size={16}
+                  trackColor="#94a3b8"
+                  indicatorColor="#0f172a"
+                  marginRight="8px"
+                />
+              )}
               {isJsonImportBusy
                 ? "Reading JSON..."
                 : isJsonImportPanelOpen && hasJsonImportWiring
@@ -371,12 +534,15 @@ export function BenchV2HeaderAndBannersView({
                   : "Import JSON Drafts"}
             </button>
 
-            {canRetryRefChoicesForCurrentProduct && (
+            {(canRetryRefChoicesForCurrentProduct || isRefChoicesBusy) && (
               <button
                 type="button"
                 onClick={handleLoadStandardizedReferenceChoices}
                 disabled={isRefChoicesRetryControlDisabled}
                 style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
@@ -393,7 +559,15 @@ export function BenchV2HeaderAndBannersView({
                     : "pointer"
                 }}
               >
-                Retry Reference Choices
+                {isRefChoicesBusy && (
+                  <BenchV2TaskSpinner
+                    size={16}
+                    trackColor="#94a3b8"
+                    indicatorColor="#0f172a"
+                    marginRight="8px"
+                  />
+                )}
+                {isRefChoicesBusy ? "Resolving References..." : "Retry Reference Choices"}
               </button>
             )}
 
@@ -402,6 +576,9 @@ export function BenchV2HeaderAndBannersView({
               onClick={handleReloadProduct}
               disabled={isAnyOperationBusy || isJsonImportBusy}
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 600,
@@ -412,7 +589,15 @@ export function BenchV2HeaderAndBannersView({
                 cursor: isAnyOperationBusy || isJsonImportBusy ? "not-allowed" : "pointer"
               }}
             >
-              {isBaselineReloading ? "Loading..." : "Reload Product"}
+              {(isBaselineReloading || isSwitchingSelectedProduct) && (
+                <BenchV2TaskSpinner
+                  size={16}
+                  trackColor="#cbd5e1"
+                  indicatorColor="#0f172a"
+                  marginRight="8px"
+                />
+              )}
+              {isBaselineReloading || isSwitchingSelectedProduct ? "Loading..." : "Reload Product"}
             </button>
 
             <button
@@ -422,6 +607,9 @@ export function BenchV2HeaderAndBannersView({
                 isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
               }
               style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 padding: "10px 22px",
                 fontSize: "16px",
                 fontWeight: 700,
@@ -441,6 +629,14 @@ export function BenchV2HeaderAndBannersView({
                     : "pointer"
               }}
             >
+              {isWriterBusy && (
+                <BenchV2TaskSpinner
+                  size={16}
+                  trackColor="#94a3b8"
+                  indicatorColor="#0f172a"
+                  marginRight="8px"
+                />
+              )}
               {isWriterBusy
                 ? "Saving..."
                 : `Save Approved (${validApprovedRowsCount})`}
@@ -571,6 +767,9 @@ export function BenchV2HeaderAndBannersView({
                 onClick={handleApplyPastedJsonDraftPacket}
                 disabled={isJsonImportControlDisabled || safePasteText.trim() === ""}
                 style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   padding: "9px 18px",
                   fontSize: "15px",
                   fontWeight: 700,
@@ -590,6 +789,14 @@ export function BenchV2HeaderAndBannersView({
                       : "pointer"
                 }}
               >
+                {isJsonImportBusy && (
+                  <BenchV2TaskSpinner
+                    size={15}
+                    trackColor="#94a3b8"
+                    indicatorColor="#0f172a"
+                    marginRight="8px"
+                  />
+                )}
                 {isJsonImportBusy ? "Validating & Staging..." : "Validate & Stage JSON Drafts"}
               </button>
 
@@ -650,7 +857,9 @@ export function BenchV2HeaderAndBannersView({
         >
           {!currentBaseline || currentBaseline.productId !== activeProductId ? (
             <div style={{ fontSize: "15px", color: "#475569" }}>
-              Loading photos for selected product...
+              {isThumbnailStripActivelyLoading
+                ? "Loading photos for selected product..."
+                : "Product baseline and photos are not currently loaded."}
             </div>
           ) : activeProductMediaItems.length === 0 ? (
             <div style={{ fontSize: "15px", color: "#475569" }}>
@@ -746,6 +955,9 @@ export function BenchV2HeaderAndBannersView({
                 type="submit"
                 disabled={isAnyOperationBusy || isJsonImportBusy || isPickerLoading}
                 style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
@@ -765,6 +977,14 @@ export function BenchV2HeaderAndBannersView({
                       : "pointer"
                 }}
               >
+                {isPickerLoading && (
+                  <BenchV2TaskSpinner
+                    size={16}
+                    trackColor="#94a3b8"
+                    indicatorColor="#0f172a"
+                    marginRight="8px"
+                  />
+                )}
                 {isPickerLoading ? "Searching..." : "Search"}
               </button>
 
@@ -1248,6 +1468,36 @@ export function BenchV2HeaderAndBannersView({
         </details>
       </header>
 
+      {/* ACTIVE FOREGROUND TASK SPINNER & PLAIN TASK STATUS BANNER */}
+      {activeForegroundTask && (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            backgroundColor: "#eff6ff",
+            border: "2px solid #1d4ed8",
+            borderRadius: "10px",
+            padding: "14px 20px",
+            marginBottom: "20px",
+            color: "#0f172a",
+            fontSize: "17px",
+            fontWeight: 700
+          }}
+        >
+          <BenchV2TaskSpinner
+            size={22}
+            trackColor="#93c5fd"
+            indicatorColor="#1d4ed8"
+            marginRight="2px"
+          />
+          <span>{activeForegroundTask.label}</span>
+        </div>
+      )}
+
       {/* IMPORTANT BASELINE / SELECTOR ERRORS */}
       {hasBaselineErrors && (
         <div
@@ -1296,16 +1546,33 @@ export function BenchV2HeaderAndBannersView({
             }}
           >
             <div>
-              <div style={{ fontSize: "17px", fontWeight: 700 }}>
-                {isRefChoicesBusy
-                  ? "Loading Standardized Reference Choices..."
-                  : !isCurrentRefChoicesBoundAndFresh
-                    ? "Reference Choices Out of Date (Baseline Changed)"
-                    : currentRefChoicesRecord.ok
-                      ? "Standardized Reference Choices Loaded"
-                      : currentRefChoicesRecord.eligibleWithChoicesCount > 0
-                        ? "Standardized Reference Choices Partially Loaded (Some Attributes Held)"
-                        : "Standardized Reference Choices Warning"}
+              <div
+                style={{
+                  fontSize: "17px",
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center"
+                }}
+              >
+                {isRefChoicesBusy && (
+                  <BenchV2TaskSpinner
+                    size={18}
+                    trackColor="#93c5fd"
+                    indicatorColor="#1d4ed8"
+                    marginRight="10px"
+                  />
+                )}
+                <span>
+                  {isRefChoicesBusy
+                    ? "Loading Standardized Reference Choices..."
+                    : !isCurrentRefChoicesBoundAndFresh
+                      ? "Reference Choices Out of Date (Baseline Changed)"
+                      : currentRefChoicesRecord.ok
+                        ? "Standardized Reference Choices Loaded"
+                        : currentRefChoicesRecord.eligibleWithChoicesCount > 0
+                          ? "Standardized Reference Choices Partially Loaded (Some Attributes Held)"
+                          : "Standardized Reference Choices Warning"}
+                </span>
               </div>
               <div style={{ marginTop: "4px", fontSize: "15px", color: "#0f172a" }}>
                 {isRefChoicesBusy

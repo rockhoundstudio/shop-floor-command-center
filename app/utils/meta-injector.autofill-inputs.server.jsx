@@ -18,7 +18,10 @@ import {
   hasRiverOrFieldCollectionClaim,
   buildSafePurchasedSeoTitle
 } from "./meta-injector.standardized.jsx";
-import { ENGINE_ALLOWED_PROVENANCE_BARE_KEYS } from "./bench-v2.contract.jsx";
+import {
+  ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  isExactProductGid
+} from "./bench-v2.contract.jsx";
 
 export const INVALID_CANDIDATE_FILLERS = new Set([
   "none",
@@ -1426,29 +1429,52 @@ export function buildBenchV2ProducerProposals({
     return cleaned;
   };
 
-  const addProposal = (destKey, value, source) => {
+  const addProposal = (destKey, value, source, trustedGeologyDbProvenance = null) => {
     if (typeof value !== "string") return;
     const cleaned = sanitizeCandidateString(value);
     if (!cleaned) return;
-    if (isAllowedDestinationSpecificFiller(destKey, cleaned)) {
-      producerProposals[destKey] = {
-        value: normalizeDestinationSpecificFiller(destKey, cleaned),
-        source
-      };
+    const finalVal = isAllowedDestinationSpecificFiller(destKey, cleaned)
+      ? normalizeDestinationSpecificFiller(destKey, cleaned)
+      : cleaned;
+    if (
+      !isAllowedDestinationSpecificFiller(destKey, cleaned) &&
+      INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())
+    ) {
       return;
     }
-    if (INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase())) return;
-    producerProposals[destKey] = { value: cleaned, source };
+    producerProposals[destKey] = {
+      value: finalVal,
+      source,
+      ...(trustedGeologyDbProvenance &&
+      typeof trustedGeologyDbProvenance === "object" &&
+      trustedGeologyDbProvenance.verified === true &&
+      trustedGeologyDbProvenance.destinationKey === destKey &&
+      trustedGeologyDbProvenance.emittedValue === finalVal
+        ? { trustedGeologyDbProvenance }
+        : {})
+    };
   };
 
-  const addStandardizedGeologyCandidate = (destKey, rawLabel, source) => {
+  const addStandardizedGeologyCandidate = (
+    destKey,
+    rawLabel,
+    source,
+    trustedGeologyDbProvenance = null
+  ) => {
     if (typeof rawLabel !== "string") return;
     const cleaned = sanitizeCandidateString(rawLabel);
     if (!isCleanCandidateLabel(cleaned)) return;
     producerProposals[destKey] = {
       candidateLabel: cleaned,
       labels: [cleaned],
-      source
+      source,
+      ...(trustedGeologyDbProvenance &&
+      typeof trustedGeologyDbProvenance === "object" &&
+      trustedGeologyDbProvenance.verified === true &&
+      trustedGeologyDbProvenance.destinationKey === destKey &&
+      trustedGeologyDbProvenance.emittedCandidateLabel === cleaned
+        ? { trustedGeologyDbProvenance }
+        : {})
     };
   };
 
@@ -1935,7 +1961,164 @@ export function buildBenchV2ProducerProposals({
     lockedPrimaryMediumFamily ||
     "";
 
+  // Verify authoritative Postgres DB lookup metadata and selected-stone identity match
+  // before serialization so _dbLookupMeta (non-enumerable on geoFields) can be bound
+  // exclusively to authentic DB-derived geology proposals for this product/request.
+  const rawProductIdForGeo = String(
+    body?.get?.("pieceId") || body?.get?.("productId") || ""
+  ).trim();
+  const verifiedProductIdForGeo = isExactProductGid(rawProductIdForGeo)
+    ? rawProductIdForGeo
+    : null;
+  const rawRequestIdForGeo = String(body?.get?.("requestId") || "").trim();
+  const verifiedRequestIdForGeo = rawRequestIdForGeo !== "" ? rawRequestIdForGeo : null;
+
+  const stoneIdentityContextForGeoVerify = resolveVerifiedStoneIdentityContext(
+    currentData,
+    idOrigin?.derivedFamily || "",
+    provenance
+  );
+  const preVisionGeoCandidates = buildGeoLookupCandidates({
+    idOrigin,
+    stoneIdentityContext: stoneIdentityContextForGeoVerify,
+    currentData,
+    provenance
+  });
+
+  const activeSelectedStoneCandidatesLower = new Set();
+  const registerVerifiedStoneCandidate = (rawCand) => {
+    if (typeof rawCand !== "string") return;
+    const cleaned = cleanStoneFamilyShape(rawCand.trim());
+    if (
+      !cleaned ||
+      cleaned.toLowerCase() === "unknown" ||
+      cleaned.toLowerCase() === "unknown stone" ||
+      INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+      isGenericBareStoneProposal(cleaned) ||
+      isSettingOrHardwareMediumValue(cleaned)
+    ) {
+      return;
+    }
+    if (!isConfirmedPicklistOrVarietyStoneIdentity(cleaned)) {
+      return;
+    }
+    activeSelectedStoneCandidatesLower.add(cleaned.toLowerCase());
+    const baseFam = resolveCanonicalBaseFamilyForStoneCandidate(cleaned);
+    if (baseFam) {
+      activeSelectedStoneCandidatesLower.add(baseFam.toLowerCase());
+    }
+  };
+
+  for (const preCand of preVisionGeoCandidates) {
+    registerVerifiedStoneCandidate(preCand);
+  }
+  if (effectiveBaseFamily) {
+    registerVerifiedStoneCandidate(effectiveBaseFamily);
+  }
+  if (cleanTitleStoneVariety) {
+    registerVerifiedStoneCandidate(cleanTitleStoneVariety);
+  }
+  if (materialProposal?.value) {
+    registerVerifiedStoneCandidate(materialProposal.value);
+  }
+
+  const activeStoneBaseFamiliesLower = new Set();
+  const registerActiveBaseFamily = (rawStone) => {
+    const fam = resolveCanonicalBaseFamilyForStoneCandidate(rawStone);
+    if (fam) {
+      activeStoneBaseFamiliesLower.add(fam.toLowerCase());
+    }
+  };
+  if (effectiveBaseFamily) {
+    registerActiveBaseFamily(effectiveBaseFamily);
+  }
+  if (materialProposal?.value) {
+    registerActiveBaseFamily(materialProposal.value);
+  }
+  if (stoneIdentityContextForGeoVerify.effectiveFamily) {
+    registerActiveBaseFamily(stoneIdentityContextForGeoVerify.effectiveFamily);
+  }
+  if (stoneIdentityContextForGeoVerify.effectiveMaterial) {
+    registerActiveBaseFamily(stoneIdentityContextForGeoVerify.effectiveMaterial);
+  }
+
+  const dbMeta =
+    geoFields &&
+    typeof geoFields === "object" &&
+    geoFields._dbLookupMeta &&
+    typeof geoFields._dbLookupMeta === "object"
+      ? geoFields._dbLookupMeta
+      : null;
+
   const geoSourceTag = geoFields?.geoSource || "none";
+  const isAuthoritativePostgresGeoSource =
+    geoSourceTag === "cache" || geoSourceTag === "database";
+  const dbMatchedStoneNameLower =
+    typeof dbMeta?.dbMatchedStoneName === "string"
+      ? dbMeta.dbMatchedStoneName.trim().toLowerCase()
+      : "";
+  const dbCandidatesTriedLower = Array.isArray(dbMeta?.dbCandidatesTried)
+    ? dbMeta.dbCandidatesTried
+        .filter((c) => typeof c === "string" && c.trim() !== "")
+        .map((c) => c.trim().toLowerCase())
+    : [];
+
+  const matchedBaseFamily = dbMatchedStoneNameLower
+    ? resolveCanonicalBaseFamilyForStoneCandidate(dbMatchedStoneNameLower)
+    : "";
+  const isMatchedStoneCompatibleWithSelectedStone = Boolean(
+    dbMatchedStoneNameLower &&
+    !INVALID_CANDIDATE_FILLERS.has(dbMatchedStoneNameLower) &&
+    !isGenericBareStoneProposal(dbMatchedStoneNameLower) &&
+    !isSettingOrHardwareMediumValue(dbMatchedStoneNameLower) &&
+    isConfirmedPicklistOrVarietyStoneIdentity(dbMatchedStoneNameLower) &&
+    dbCandidatesTriedLower.includes(dbMatchedStoneNameLower) &&
+    activeSelectedStoneCandidatesLower.has(dbMatchedStoneNameLower) &&
+    matchedBaseFamily &&
+    (activeStoneBaseFamiliesLower.size === 0 ||
+      activeStoneBaseFamiliesLower.has(matchedBaseFamily.toLowerCase()))
+  );
+
+  // If a specific variety was produced for custom.material (and not operator-locked to
+  // another identity), verify that a generic base-family DB match is never treated as
+  // verified provenance for that specific variety.
+  const producedMaterialVarietyCleaned =
+    materialProposal?.value && typeof materialProposal.value === "string"
+      ? cleanStoneFamilyShape(materialProposal.value.trim())
+      : "";
+  const isProducedMaterialSpecificVariety = Boolean(
+    producedMaterialVarietyCleaned &&
+    isValidatedSpecificVarietyOfBaseFamily(
+      producedMaterialVarietyCleaned,
+      effectiveBaseFamily || matchedBaseFamily
+    )
+  );
+  const violatesSpecificVarietyRequirement = Boolean(
+    isProducedMaterialSpecificVariety &&
+    !isBareFieldOperatorLocked("material") &&
+    !isBareFieldOperatorLocked("primary_medium") &&
+    dbMatchedStoneNameLower !== producedMaterialVarietyCleaned.toLowerCase() &&
+    !(
+      preVisionGeoCandidates.length > 0 &&
+      isValidatedSpecificVarietyOfBaseFamily(
+        preVisionGeoCandidates[0],
+        effectiveBaseFamily || matchedBaseFamily
+      ) &&
+      dbMatchedStoneNameLower ===
+        cleanStoneFamilyShape(preVisionGeoCandidates[0]).toLowerCase()
+    )
+  );
+
+  const isTrustedDbGeologyLookupVerified = Boolean(
+    verifiedProductIdForGeo &&
+    isAuthoritativePostgresGeoSource &&
+    dbMeta &&
+    dbMeta.dbLookupComplete === true &&
+    !dbMeta.dbReadError &&
+    isMatchedStoneCompatibleWithSelectedStone &&
+    !violatesSpecificVarietyRequirement
+  );
+
   if (geoSourceTag !== "none") {
     const resolveGeologySourceLabel = (geoKey) => {
       if (geoSourceTag === "library") {
@@ -1956,30 +2139,87 @@ export function buildBenchV2ProducerProposals({
     };
 
     for (const geoKey of DRAWER_7_ACTIVE_GEOLOGY_KEYS) {
+      if (!PASSIVE_GEOLOGY_REVIEW_KEYS.has(geoKey)) continue;
       const rawGeoVal = geoFields[geoKey];
       const cleanGeoStr = cleanNonBlankVisionStr(rawGeoVal, geoKey);
       if (!cleanGeoStr) continue;
 
       const geoSourceLabel = resolveGeologySourceLabel(geoKey);
+      const customDestKey = `custom.${geoKey}`;
 
       if (!isBareFieldOperatorLocked(geoKey)) {
+        const customProvenance = isTrustedDbGeologyLookupVerified
+          ? Object.freeze({
+              verified: true,
+              productId: verifiedProductIdForGeo,
+              requestId: verifiedRequestIdForGeo,
+              destinationKey: customDestKey,
+              geoKey,
+              emittedValue: cleanGeoStr,
+              geoSource: geoSourceTag,
+              dbLookupComplete: true,
+              dbMatchedStoneName: dbMatchedStoneNameLower,
+              matchedBaseFamily,
+              stoneIdentityMatched: true
+            })
+          : null;
+
         addProposal(
-          `custom.${geoKey}`,
+          customDestKey,
           cleanGeoStr,
-          geoSourceLabel
+          geoSourceLabel,
+          customProvenance
         );
       }
 
       if (Object.prototype.hasOwnProperty.call(PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP, geoKey)) {
+        const companionDestKey = PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP[geoKey];
         const companionCandidateLabel = normalizeCanonicalGeologyReferenceCandidate(
           geoKey,
           cleanGeoStr,
           geoKey === "rock_composition" ? confirmedRockIdentityForCompanion : ""
         );
+
+        const rawGeoCollapsedLower = cleanGeoStr.replace(/\s+/g, " ").trim().toLowerCase();
+        const rockCompUsedIdentityFallback =
+          geoKey === "rock_composition" &&
+          !Object.prototype.hasOwnProperty.call(
+            EXACT_CANONICAL_ROCK_COMPOSITION_LABELS,
+            rawGeoCollapsedLower
+          );
+        const isRockCompIdentityVerified =
+          !rockCompUsedIdentityFallback ||
+          Boolean(
+            confirmedRockIdentityForCompanion &&
+            confirmedRockIdentityForCompanion.trim().toLowerCase() ===
+              matchedBaseFamily.toLowerCase()
+          );
+
+        const companionProvenance =
+          isTrustedDbGeologyLookupVerified &&
+          isRockCompIdentityVerified &&
+          isCleanCandidateLabel(companionCandidateLabel)
+            ? Object.freeze({
+                verified: true,
+                productId: verifiedProductIdForGeo,
+                requestId: verifiedRequestIdForGeo,
+                destinationKey: companionDestKey,
+                geoKey,
+                rawDbValue: cleanGeoStr,
+                emittedCandidateLabel: companionCandidateLabel,
+                geoSource: geoSourceTag,
+                dbLookupComplete: true,
+                dbMatchedStoneName: dbMatchedStoneNameLower,
+                matchedBaseFamily,
+                stoneIdentityMatched: true
+              })
+            : null;
+
         addStandardizedGeologyCandidate(
-          PRODUCER_GEOLOGY_STANDARDIZED_COMPANION_MAP[geoKey],
+          companionDestKey,
           companionCandidateLabel,
-          geoSourceLabel
+          geoSourceLabel,
+          companionProvenance
         );
       }
     }

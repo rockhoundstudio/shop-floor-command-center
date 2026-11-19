@@ -7,17 +7,20 @@
 // standardized reference destination sets, candidate resolution against
 // verified Metaobject reference entries, explicit AI Scan submission
 // (including dynamic verified Color choices and both OOAK observed types),
-// unapproved AI draft staging, held AI alternatives, and once-per-request
-// deferred reference candidate resolution when reference choices arrive after
-// AI Scan.
+// unapproved AI draft staging, trusted DB geology exact-value preapproval,
+// held AI alternatives, and once-per-request deferred reference candidate
+// resolution when reference choices arrive after AI Scan.
 // ==========================================================================
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useFetcher } from "react-router";
 import {
+  BENCH_V2_FIELD_CONTRACTS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  checkExistingWriterStringFidelity,
+  isExactProductGid,
   isManualMeasurementDestination,
   isManualOnlyNoAiDestination,
   isExactMetaobjectDefinitionGid,
@@ -27,6 +30,7 @@ import {
   inspectStoredReferenceListRawValue,
   inspectVerifiedReferenceEvidenceForDestination,
   validateBatch1ProposedValue,
+  createExactValueApprovalRecord,
   isExactValueApprovalValid,
   isKeepOriginalRecordValid
 } from "./bench-v2.contract.jsx";
@@ -67,9 +71,166 @@ export const AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS = Object.fre
   ])
 );
 
+// Reuse the authoritative Bench V2 field catalog for Drawers 11 & 12
+// (geology_physical_properties & geology_composition_and_time) rather than
+// duplicating geology destination lists.
+export const AUTHORITATIVE_GEOLOGY_PREAPPROVAL_DESTINATIONS = Object.freeze(
+  new Set(
+    BENCH_V2_FIELD_CONTRACTS
+      .filter(
+        (c) =>
+          c &&
+          c.isWritableInBatch1 === true &&
+          (c.drawerId === "geology_physical_properties" ||
+            c.drawerId === "geology_composition_and_time")
+      )
+      .map((c) => c.destinationKey)
+  )
+);
+
+function verifyTrustedGeologyDbProvenanceForProposal({
+  rawProvenance,
+  productId,
+  requestId,
+  destKey,
+  expectedEmittedValue = null,
+  expectedCandidateLabels = null
+}) {
+  if (!rawProvenance || typeof rawProvenance !== "object" || Array.isArray(rawProvenance)) {
+    return null;
+  }
+  if (!isExactProductGid(productId) || rawProvenance.productId !== productId) {
+    return null;
+  }
+  if (
+    typeof requestId !== "string" ||
+    requestId.trim() === "" ||
+    rawProvenance.requestId !== requestId
+  ) {
+    return null;
+  }
+  if (
+    typeof destKey !== "string" ||
+    !AUTHORITATIVE_GEOLOGY_PREAPPROVAL_DESTINATIONS.has(destKey) ||
+    rawProvenance.destinationKey !== destKey
+  ) {
+    return null;
+  }
+  if (
+    rawProvenance.verified !== true ||
+    rawProvenance.dbLookupComplete !== true ||
+    rawProvenance.stoneIdentityMatched !== true
+  ) {
+    return null;
+  }
+  if (rawProvenance.geoSource !== "cache" && rawProvenance.geoSource !== "database") {
+    return null;
+  }
+  if (
+    typeof rawProvenance.geoKey !== "string" ||
+    rawProvenance.geoKey.trim() === "" ||
+    typeof rawProvenance.dbMatchedStoneName !== "string" ||
+    rawProvenance.dbMatchedStoneName.trim() === "" ||
+    typeof rawProvenance.matchedBaseFamily !== "string" ||
+    rawProvenance.matchedBaseFamily.trim() === ""
+  ) {
+    return null;
+  }
+
+  const isShopifyReferenceCompanion =
+    PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey);
+
+  if (isShopifyReferenceCompanion) {
+    if (
+      typeof rawProvenance.emittedCandidateLabel !== "string" ||
+      rawProvenance.emittedCandidateLabel.trim() === "" ||
+      typeof rawProvenance.rawDbValue !== "string" ||
+      rawProvenance.rawDbValue.trim() === ""
+    ) {
+      return null;
+    }
+    if (Array.isArray(expectedCandidateLabels)) {
+      if (
+        expectedCandidateLabels.length !== 1 ||
+        expectedCandidateLabels[0] !== rawProvenance.emittedCandidateLabel
+      ) {
+        return null;
+      }
+    }
+  } else {
+    if (
+      !destKey.startsWith("custom.") ||
+      destKey !== `custom.${rawProvenance.geoKey}` ||
+      typeof rawProvenance.emittedValue !== "string" ||
+      rawProvenance.emittedValue.trim() === ""
+    ) {
+      return null;
+    }
+    if (
+      expectedEmittedValue !== null &&
+      rawProvenance.emittedValue !== expectedEmittedValue
+    ) {
+      return null;
+    }
+  }
+
+  return Object.freeze({
+    verified: true,
+    productId: rawProvenance.productId,
+    requestId: rawProvenance.requestId,
+    destinationKey: rawProvenance.destinationKey,
+    geoKey: rawProvenance.geoKey,
+    ...(isShopifyReferenceCompanion
+      ? {
+          rawDbValue: rawProvenance.rawDbValue,
+          emittedCandidateLabel: rawProvenance.emittedCandidateLabel
+        }
+      : {
+          emittedValue: rawProvenance.emittedValue
+        }),
+    geoSource: rawProvenance.geoSource,
+    dbLookupComplete: true,
+    dbMatchedStoneName: rawProvenance.dbMatchedStoneName.trim().toLowerCase(),
+    matchedBaseFamily: rawProvenance.matchedBaseFamily.trim(),
+    stoneIdentityMatched: true
+  });
+}
+
+function buildBaselineWithVerifiedReferenceForDestination(
+  targetBaseline,
+  destKey,
+  refChoicesRecord,
+  isRefChoicesFreshForBaseline
+) {
+  if (!targetBaseline || typeof targetBaseline !== "object") {
+    return targetBaseline;
+  }
+  const contract = getFieldContractByDestination(destKey);
+  if (!contract || contract.namespace !== "shopify") {
+    return targetBaseline;
+  }
+  if (targetBaseline.verifiedReferenceEntriesByDestination?.[destKey]) {
+    return targetBaseline;
+  }
+  const verifiedFieldRes = isRefChoicesFreshForBaseline
+    ? refChoicesRecord?.verifiedReferenceEntriesByDestination?.[destKey] || null
+    : null;
+  if (!verifiedFieldRes || typeof verifiedFieldRes !== "object") {
+    return targetBaseline;
+  }
+  return {
+    ...targetBaseline,
+    verifiedReferenceEntriesByDestination: {
+      ...(targetBaseline.verifiedReferenceEntriesByDestination || {}),
+      [destKey]: verifiedFieldRes
+    }
+  };
+}
+
 function formatAiScanSummaryText({
   receivedCount,
   stagedCount,
+  preapprovedGeologyCount = 0,
   heldConflictCount,
   unchangedSkippedCount,
   ignoredManualOnlyCount
@@ -81,9 +242,19 @@ function formatAiScanSummaryText({
         } ignored`
       : "";
 
+  const unapprovedStagedCount = Math.max(0, stagedCount - preapprovedGeologyCount);
+  const stagedBreakdownText =
+    preapprovedGeologyCount > 0
+      ? `${unapprovedStagedCount} staged as unapproved draft${
+          unapprovedStagedCount === 1 ? "" : "s"
+        }, ${preapprovedGeologyCount} trusted DB geology suggestion${
+          preapprovedGeologyCount === 1 ? "" : "s"
+        } preapproved for explicit Save`
+      : `${stagedCount} staged as unapproved draft${stagedCount === 1 ? "" : "s"}`;
+
   return `AI Scan complete: ${receivedCount} eligible suggestion${
     receivedCount === 1 ? "" : "s"
-  } received (${stagedCount} staged as unapproved drafts, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline${manualIgnoredNote}).`;
+  } received (${stagedBreakdownText}, ${heldConflictCount} held as alternatives alongside your existing edits, ${unchangedSkippedCount} matched saved baseline${manualIgnoredNote}).`;
 }
 
 function evaluateAndRecordResolvedAiProposal({
@@ -93,6 +264,7 @@ function evaluateAndRecordResolvedAiProposal({
   reportedSource,
   displayNote = "",
   allowExplicitReferenceListReplacement = false,
+  trustedGeologyDbProvenance = null,
   requestId,
   targetBaseline,
   existingProdProposals,
@@ -169,7 +341,8 @@ function evaluateAndRecordResolvedAiProposal({
       );
       return {
         dispositionOutcome: "matched_draft",
-        approvalCleared: false
+        approvalCleared: false,
+        preapprovedGeology: false
       };
     }
 
@@ -195,7 +368,8 @@ function evaluateAndRecordResolvedAiProposal({
     );
     return {
       dispositionOutcome: "held_conflict",
-      approvalCleared: false
+      approvalCleared: false,
+      preapprovedGeology: false
     };
   }
 
@@ -204,6 +378,16 @@ function evaluateAndRecordResolvedAiProposal({
     delete existingProdApprovals[destKey];
     approvalCleared = true;
   }
+
+  const verifiedTrustedGeoProvenance = verifyTrustedGeologyDbProvenanceForProposal({
+    rawProvenance: trustedGeologyDbProvenance,
+    productId,
+    requestId,
+    destKey,
+    expectedEmittedValue: PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+      ? null
+      : normalizedValue
+  });
 
   existingProdProposals[destKey] = {
     value: normalizedValue,
@@ -215,8 +399,56 @@ function evaluateAndRecordResolvedAiProposal({
           explicitReplacementValue: normalizedValue
         }
       : {}),
+    ...(verifiedTrustedGeoProvenance
+      ? {
+          trustedGeologyDbProvenance: verifiedTrustedGeoProvenance
+        }
+      : {}),
     updatedAt: new Date().toISOString()
   };
+
+  if (verifiedTrustedGeoProvenance) {
+    const fidelityCheck = checkExistingWriterStringFidelity(normalizedValue);
+    if (fidelityCheck.faithful) {
+      const createdApproval = createExactValueApprovalRecord({
+        productId,
+        destinationKey: destKey,
+        proposedValue: normalizedValue,
+        baselineSnapshot: targetBaseline,
+        allowExplicitReferenceListReplacement: shouldBindReplacementIntent
+      });
+
+      if (
+        createdApproval.ok &&
+        createdApproval.record &&
+        isExactValueApprovalValid({
+          approvalRecord: createdApproval.record,
+          productId,
+          destinationKey: destKey,
+          currentProposedValue: normalizedValue,
+          baselineSnapshot: targetBaseline,
+          allowExplicitReferenceListReplacement: shouldBindReplacementIntent
+        })
+      ) {
+        existingProdApprovals[destKey] = createdApproval.record;
+        proposalsByDestination[destKey] = {
+          value: normalizedValue,
+          source: reportedSource,
+          disposition: `Staged and preapproved (verified DB geology for "${verifiedTrustedGeoProvenance.dbMatchedStoneName}")`,
+          trustedGeologyDbProvenance: verifiedTrustedGeoProvenance
+        };
+        details.push(
+          `[${destKey}] Staged and preapproved trusted DB geology "${normalizedValue}"${formattedSuffix} (Matched stone: "${verifiedTrustedGeoProvenance.dbMatchedStoneName}" — Source: ${reportedSource}; requires explicit Save Approved).`
+        );
+        return {
+          dispositionOutcome: "staged",
+          approvalCleared: false,
+          preapprovedGeology: true
+        };
+      }
+    }
+  }
+
   proposalsByDestination[destKey] = {
     value: normalizedValue,
     source: reportedSource,
@@ -227,7 +459,8 @@ function evaluateAndRecordResolvedAiProposal({
   );
   return {
     dispositionOutcome: "staged",
-    approvalCleared
+    approvalCleared,
+    preapprovedGeology: false
   };
 }
 
@@ -661,7 +894,7 @@ export function useBenchV2AiScanController({
   // Pending Producer-Backed & Vision-Backed Standardized Reference Candidates State
   // Retains unresolved geology & Vision reference candidates when AI Scan arrives before
   // reference choices finish loading, so either arrival order resolves once without
-  // rescanning, loops, or auto-approval.
+  // rescanning, loops, or unverified auto-approval.
   const [pendingGeologyRefCandidatesByProduct, setPendingGeologyRefCandidatesByProduct] =
     useState({});
 
@@ -1092,6 +1325,7 @@ export function useBenchV2AiScanController({
           summary: `AI Scan failed: ${errMessage}`,
           receivedCount: 0,
           stagedCount: 0,
+          preapprovedGeologyCount: 0,
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
@@ -1182,6 +1416,7 @@ export function useBenchV2AiScanController({
           summary,
           receivedCount: 0,
           stagedCount: 0,
+          preapprovedGeologyCount: 0,
           heldConflictCount: 0,
           unchangedSkippedCount: 0,
           rejectedInvalidCount: 0,
@@ -1320,6 +1555,9 @@ export function useBenchV2AiScanController({
         currentRefChoicesRecordRef.current &&
         currentRefChoicesRecordRef.current.productId === scannedProductId
     );
+    const activeRefChoicesRecordForScan = isRefChoicesFreshForScannedProduct
+      ? currentRefChoicesRecordRef.current
+      : null;
     const targetBaseline = mergedActiveBaseline;
 
     const existingProdProposals = { ...(proposedByProductRef.current[scannedProductId] || {}) };
@@ -1336,6 +1574,7 @@ export function useBenchV2AiScanController({
 
     let receivedCount = 0;
     let stagedCount = 0;
+    let preapprovedGeologyCount = 0;
     let heldConflictCount = 0;
     let unchangedSkippedCount = 0;
     let rejectedInvalidCount = 0;
@@ -1347,7 +1586,9 @@ export function useBenchV2AiScanController({
       normalizedValue,
       reportedSource,
       displayNote = "",
-      allowExplicitReferenceListReplacement = false
+      allowExplicitReferenceListReplacement = false,
+      trustedGeologyDbProvenance = null,
+      baselineForDest = targetBaseline
     }) => {
       const outcome = evaluateAndRecordResolvedAiProposal({
         productId: scannedProductId,
@@ -1356,8 +1597,9 @@ export function useBenchV2AiScanController({
         reportedSource,
         displayNote,
         allowExplicitReferenceListReplacement,
+        trustedGeologyDbProvenance,
         requestId: pendingScan.requestId,
-        targetBaseline,
+        targetBaseline: baselineForDest,
         existingProdProposals,
         existingProdApprovals,
         existingProdKeepOriginal,
@@ -1370,6 +1612,9 @@ export function useBenchV2AiScanController({
         heldConflictCount++;
       } else if (outcome.dispositionOutcome === "staged") {
         stagedCount++;
+        if (outcome.preapprovedGeology) {
+          preapprovedGeologyCount++;
+        }
       }
     };
 
@@ -1440,14 +1685,22 @@ export function useBenchV2AiScanController({
 
         receivedCount++;
 
+        const verifiedRefProvenance = PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+          ? verifyTrustedGeologyDbProvenanceForProposal({
+              rawProvenance: entry.trustedGeologyDbProvenance,
+              productId: scannedProductId,
+              requestId: pendingScan.requestId,
+              destKey,
+              expectedCandidateLabels: candidateLabels
+            })
+          : null;
+
         const resolution = resolveProducerBackedGeologyReferenceCandidate({
           productId: scannedProductId,
           destKey,
           candidateLabels,
           targetBaseline,
-          refChoicesRecord: isRefChoicesFreshForScannedProduct
-            ? currentRefChoicesRecordRef.current
-            : null,
+          refChoicesRecord: activeRefChoicesRecordForScan,
           isRefChoicesFreshForBaseline: isRefChoicesFreshForScannedProduct
         });
 
@@ -1457,6 +1710,9 @@ export function useBenchV2AiScanController({
             candidateLabels,
             displayLabel: displayCandidateLabel,
             source: reportedSource,
+            ...(verifiedRefProvenance
+              ? { trustedGeologyDbProvenance: verifiedRefProvenance }
+              : {}),
             requestId: pendingScan.requestId,
             sessionId: benchSessionIdRef.current,
             productId: scannedProductId,
@@ -1466,7 +1722,10 @@ export function useBenchV2AiScanController({
             value: displayCandidateLabel,
             source: reportedSource,
             disposition: "Pending verified reference choices (will resolve automatically when ready)",
-            reason: resolution.reason
+            reason: resolution.reason,
+            ...(verifiedRefProvenance
+              ? { trustedGeologyDbProvenance: verifiedRefProvenance }
+              : {})
           };
           diagnosticsObj[destKey] = resolution.reason;
           details.push(
@@ -1489,6 +1748,13 @@ export function useBenchV2AiScanController({
         }
 
         if (resolution.status === "resolved_valid_change") {
+          const baselineWithVerifiedRef = buildBaselineWithVerifiedReferenceForDestination(
+            targetBaseline,
+            destKey,
+            activeRefChoicesRecordForScan,
+            isRefChoicesFreshForScannedProduct
+          );
+
           stageOrHoldResolvedProposal({
             destKey,
             normalizedValue: resolution.serializedValue,
@@ -1496,7 +1762,9 @@ export function useBenchV2AiScanController({
             displayNote: `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`,
             allowExplicitReferenceListReplacement: Boolean(
               resolution.allowExplicitReferenceListReplacement
-            )
+            ),
+            trustedGeologyDbProvenance: verifiedRefProvenance,
+            baselineForDest: baselineWithVerifiedRef
           });
           continue;
         }
@@ -1666,6 +1934,18 @@ export function useBenchV2AiScanController({
         continue;
       }
 
+      const verifiedCustomGeoProvenance =
+        destKey.startsWith("custom.") &&
+        AUTHORITATIVE_GEOLOGY_PREAPPROVAL_DESTINATIONS.has(destKey)
+          ? verifyTrustedGeologyDbProvenanceForProposal({
+              rawProvenance: entry?.trustedGeologyDbProvenance,
+              productId: scannedProductId,
+              requestId: pendingScan.requestId,
+              destKey,
+              expectedEmittedValue: validation.normalizedValue
+            })
+          : null;
+
       stageOrHoldResolvedProposal({
         destKey,
         normalizedValue: validation.normalizedValue,
@@ -1673,7 +1953,9 @@ export function useBenchV2AiScanController({
         allowExplicitReferenceListReplacement: Boolean(
           directProposalReplacementIntent &&
             validation.allowExplicitReferenceListReplacement === true
-        )
+        ),
+        trustedGeologyDbProvenance: verifiedCustomGeoProvenance,
+        baselineForDest: targetBaseline
       });
     }
 
@@ -1734,12 +2016,14 @@ export function useBenchV2AiScanController({
         summary: formatAiScanSummaryText({
           receivedCount,
           stagedCount,
+          preapprovedGeologyCount,
           heldConflictCount,
           unchangedSkippedCount,
           ignoredManualOnlyCount
         }),
         receivedCount,
         stagedCount,
+        preapprovedGeologyCount,
         heldConflictCount,
         unchangedSkippedCount,
         rejectedInvalidCount,
@@ -1870,7 +2154,7 @@ export function useBenchV2AiScanController({
 // ==========================================================================
 // DEFERRED GEOLOGY & VISION REFERENCE CANDIDATE RESOLUTION (WHEN REF CHOICES
 // ARRIVE AFTER AI SCAN) — ONCE PER REF REQUEST PER SCAN BUNDLE, NO RESCAN,
-// NO LOOPS, NO AUTO-APPROVE
+// NO LOOPS, PREAPPROVES ONLY VERIFIED TRUSTED GEOLOGY DB COMPANIONS
 // ==========================================================================
 export function useBenchV2DeferredAiReferenceResolver({
   activeProductId,
@@ -1987,10 +2271,11 @@ export function useBenchV2DeferredAiReferenceResolver({
     const remainingRetryableByDest = {};
 
     let addedStaged = 0;
+    let addedPreapprovedGeology = 0;
     let addedHeld = 0;
     let addedUnchanged = 0;
     let addedRejected = 0;
-    let approvalsCleared = false;
+    let approvalsMutated = false;
     const updatedProposalsMeta = {};
     const updatedDiagnostics = {};
     const appendedDetails = [];
@@ -2005,13 +2290,26 @@ export function useBenchV2DeferredAiReferenceResolver({
       }
 
       const reportedSource =
-        candItem.source ||
-        (PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
-          ? "Geo Library"
-          : "Gemini Vision");
+        typeof candItem.source === "string" && candItem.source.trim() !== ""
+          ? candItem.source.trim()
+          : PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+            ? "Geo Library"
+            : "Gemini Vision";
       const displayCandidateLabel =
         candItem.displayLabel ||
         (Array.isArray(candItem.candidateLabels) ? candItem.candidateLabels.join(", ") : "");
+
+      const verifiedDeferredProvenance = PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(
+        destKey
+      )
+        ? verifyTrustedGeologyDbProvenanceForProposal({
+            rawProvenance: candItem.trustedGeologyDbProvenance,
+            productId: activeProductId,
+            requestId: bundleRequestId,
+            destKey,
+            expectedCandidateLabels: candItem.candidateLabels
+          })
+        : null;
 
       const resolution = resolveProducerBackedGeologyReferenceCandidate({
         productId: activeProductId,
@@ -2028,7 +2326,10 @@ export function useBenchV2DeferredAiReferenceResolver({
           value: displayCandidateLabel,
           source: reportedSource,
           disposition: "Pending verified reference choices (will resolve automatically when ready)",
-          reason: resolution.reason
+          reason: resolution.reason,
+          ...(verifiedDeferredProvenance
+            ? { trustedGeologyDbProvenance: verifiedDeferredProvenance }
+            : {})
         };
         updatedDiagnostics[destKey] = resolution.reason;
         continue;
@@ -2052,6 +2353,13 @@ export function useBenchV2DeferredAiReferenceResolver({
         const displayNote = `Candidate "${displayCandidateLabel}" -> ${resolution.matchedSummary}`;
         updatedDiagnostics[destKey] = null;
 
+        const baselineWithVerifiedRef = buildBaselineWithVerifiedReferenceForDestination(
+          currentBaseline,
+          destKey,
+          currentRefChoicesRecord,
+          true
+        );
+
         const outcome = evaluateAndRecordResolvedAiProposal({
           productId: activeProductId,
           destKey,
@@ -2061,8 +2369,9 @@ export function useBenchV2DeferredAiReferenceResolver({
           allowExplicitReferenceListReplacement: Boolean(
             resolution.allowExplicitReferenceListReplacement
           ),
+          trustedGeologyDbProvenance: verifiedDeferredProvenance,
           requestId: bundleRequestId,
-          targetBaseline: currentBaseline,
+          targetBaseline: baselineWithVerifiedRef,
           existingProdProposals,
           existingProdApprovals,
           existingProdKeepOriginal,
@@ -2075,8 +2384,11 @@ export function useBenchV2DeferredAiReferenceResolver({
           addedHeld++;
         } else if (outcome.dispositionOutcome === "staged") {
           addedStaged++;
-          if (outcome.approvalCleared) {
-            approvalsCleared = true;
+          if (outcome.preapprovedGeology) {
+            addedPreapprovedGeology++;
+            approvalsMutated = true;
+          } else if (outcome.approvalCleared) {
+            approvalsMutated = true;
           }
         }
         continue;
@@ -2135,7 +2447,7 @@ export function useBenchV2DeferredAiReferenceResolver({
       }));
     }
 
-    if (approvalsCleared && typeof setApprovalsByProduct === "function") {
+    if (approvalsMutated && typeof setApprovalsByProduct === "function") {
       approvalsByProductRef.current = {
         ...approvalsByProductRef.current,
         [activeProductId]: existingProdApprovals
@@ -2158,6 +2470,7 @@ export function useBenchV2DeferredAiReferenceResolver({
 
     const hasReportChanges =
       addedStaged > 0 ||
+      addedPreapprovedGeology > 0 ||
       addedHeld > 0 ||
       addedUnchanged > 0 ||
       addedRejected > 0 ||
@@ -2185,6 +2498,8 @@ export function useBenchV2DeferredAiReferenceResolver({
         }
 
         const nextStagedCount = (existingReport.stagedCount || 0) + addedStaged;
+        const nextPreapprovedGeologyCount =
+          (existingReport.preapprovedGeologyCount || 0) + addedPreapprovedGeology;
         const nextHeldCount = (existingReport.heldConflictCount || 0) + addedHeld;
         const nextUnchangedCount =
           (existingReport.unchangedSkippedCount || 0) + addedUnchanged;
@@ -2198,12 +2513,14 @@ export function useBenchV2DeferredAiReferenceResolver({
           [activeProductId]: {
             ...existingReport,
             stagedCount: nextStagedCount,
+            preapprovedGeologyCount: nextPreapprovedGeologyCount,
             heldConflictCount: nextHeldCount,
             unchangedSkippedCount: nextUnchangedCount,
             rejectedInvalidCount: nextRejectedCount,
             summary: formatAiScanSummaryText({
               receivedCount: recCount,
               stagedCount: nextStagedCount,
+              preapprovedGeologyCount: nextPreapprovedGeologyCount,
               heldConflictCount: nextHeldCount,
               unchangedSkippedCount: nextUnchangedCount,
               ignoredManualOnlyCount: ignCount
