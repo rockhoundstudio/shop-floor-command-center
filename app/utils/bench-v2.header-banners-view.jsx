@@ -121,9 +121,15 @@ const BENCH_V2_SPINNER_KEYFRAMES_CSS = `
   animation: benchV2TaskSpinnerRotate 0.85s linear infinite;
   transform-origin: 50% 50%;
 }
+.bench-v2-task-spinner-static-mark {
+  display: none;
+}
 @media (prefers-reduced-motion: reduce) {
   .bench-v2-task-spinner-svg {
     animation: none !important;
+  }
+  .bench-v2-task-spinner-static-mark {
+    display: block;
   }
 }
 `;
@@ -155,14 +161,35 @@ export function BenchV2TaskSpinner({
         cy="12"
         r="9"
         stroke={trackColor}
-        strokeWidth="3"
+        strokeWidth="3.25"
       />
       <path
-        d="M12 3a9 9 0 0 1 9 9"
+        d="M12 3a9 9 0 1 1 -6.36 2.64"
         stroke={indicatorColor}
-        strokeWidth="3"
+        strokeWidth="3.5"
         strokeLinecap="round"
       />
+      <g className="bench-v2-task-spinner-static-mark">
+        <line
+          x1="12"
+          y1="12"
+          x2="12"
+          y2="7.2"
+          stroke={indicatorColor}
+          strokeWidth="2.6"
+          strokeLinecap="round"
+        />
+        <line
+          x1="12"
+          y1="12"
+          x2="15.6"
+          y2="12"
+          stroke={indicatorColor}
+          strokeWidth="2.6"
+          strokeLinecap="round"
+        />
+        <circle cx="12" cy="12" r="1.7" fill={indicatorColor} />
+      </g>
     </svg>
   );
 }
@@ -372,9 +399,82 @@ export function BenchV2HeaderAndBannersView({
     isSwitchingSelectedProduct || isBaselineReloading
   );
 
+  const isReloadOrSwitchActive = Boolean(
+    isBaselineReloading || isSwitchingSelectedProduct
+  );
+  const isReloadButtonDisabled = Boolean(
+    isAnyOperationBusy || isJsonImportBusy || isSwitchingSelectedProduct
+  );
+  const isSaveButtonDisabled = Boolean(
+    isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
+  );
+  const isSearchButtonDisabled = Boolean(
+    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+  );
+  const isValidatePasteButtonDisabled = Boolean(
+    isJsonImportControlDisabled || safePasteText.trim() === ""
+  );
+
   return (
     <>
       <style>{BENCH_V2_SPINNER_KEYFRAMES_CSS}</style>
+
+      {/* SINGLE VIEWPORT-FIXED FOREGROUND TASK STATUS STRIP (STAYS VISIBLE WHILE SCROLLING DRAWERS) */}
+      {activeForegroundTask && (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          style={{
+            position: "fixed",
+            bottom: "16px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            width: "max-content",
+            maxWidth: "calc(100vw - 32px)",
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            backgroundColor: "#ffffff",
+            border: "3px solid #1d4ed8",
+            borderRadius: "12px",
+            padding: "12px 20px",
+            boxShadow: "0 10px 25px rgba(15, 23, 42, 0.28)",
+            color: "#0f172a",
+            fontSize: "18px",
+            fontWeight: 700,
+            lineHeight: 1.4
+          }}
+        >
+          <BenchV2TaskSpinner
+            size={28}
+            trackColor="#93c5fd"
+            indicatorColor="#1d4ed8"
+            marginRight="2px"
+          />
+          <span
+            style={{
+              backgroundColor: "#1d4ed8",
+              color: "#ffffff",
+              fontSize: "13px",
+              fontWeight: 800,
+              padding: "2px 8px",
+              borderRadius: "6px",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              flexShrink: 0
+            }}
+          >
+            Working
+          </span>
+          <span style={{ wordBreak: "break-word" }}>
+            {activeForegroundTask.label}
+          </span>
+        </div>
+      )}
 
       {/* TOP SUMMARY BAR + ACCESSIBLE PRODUCT SEARCH / PICKER + 120x120 THUMBNAILS + DRAWER FILTER */}
       <header
@@ -447,8 +547,16 @@ export function BenchV2HeaderAndBannersView({
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 700,
-                backgroundColor: isAiScanControlDisabled ? "#cbd5e1" : "#1d4ed8",
-                color: isAiScanControlDisabled ? "#334155" : "#ffffff",
+                backgroundColor: isAiScanBusy
+                  ? "#1e3a8a"
+                  : isAiScanControlDisabled
+                    ? "#cbd5e1"
+                    : "#1d4ed8",
+                color: isAiScanBusy
+                  ? "#ffffff"
+                  : isAiScanControlDisabled
+                    ? "#334155"
+                    : "#ffffff",
                 border: "2px solid #1e3a8a",
                 borderRadius: "8px",
                 cursor: isAiScanControlDisabled ? "not-allowed" : "pointer"
@@ -456,9 +564,9 @@ export function BenchV2HeaderAndBannersView({
             >
               {isAiScanBusy && (
                 <BenchV2TaskSpinner
-                  size={16}
-                  trackColor="#94a3b8"
-                  indicatorColor="#0f172a"
+                  size={20}
+                  trackColor="#93c5fd"
+                  indicatorColor="#ffffff"
                   marginRight="8px"
                 />
               )}
@@ -490,20 +598,20 @@ export function BenchV2HeaderAndBannersView({
                 padding: "10px 18px",
                 fontSize: "16px",
                 fontWeight: 700,
-                backgroundColor:
-                  !hasJsonImportWiring ||
-                  isAnyOperationBusy ||
-                  isJsonImportBusy ||
-                  !currentBaseline
+                backgroundColor: isJsonImportBusy
+                  ? "#1e293b"
+                  : !hasJsonImportWiring ||
+                    isAnyOperationBusy ||
+                    !currentBaseline
                     ? "#cbd5e1"
                     : isJsonImportPanelOpen
                       ? "#334155"
                       : "#f8fafc",
-                color:
-                  !hasJsonImportWiring ||
-                  isAnyOperationBusy ||
-                  isJsonImportBusy ||
-                  !currentBaseline
+                color: isJsonImportBusy
+                  ? "#ffffff"
+                  : !hasJsonImportWiring ||
+                    isAnyOperationBusy ||
+                    !currentBaseline
                     ? "#334155"
                     : isJsonImportPanelOpen
                       ? "#ffffff"
@@ -521,9 +629,9 @@ export function BenchV2HeaderAndBannersView({
             >
               {isJsonImportBusy && (
                 <BenchV2TaskSpinner
-                  size={16}
+                  size={20}
                   trackColor="#94a3b8"
-                  indicatorColor="#0f172a"
+                  indicatorColor="#ffffff"
                   marginRight="8px"
                 />
               )}
@@ -546,12 +654,16 @@ export function BenchV2HeaderAndBannersView({
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
-                  backgroundColor: isRefChoicesRetryControlDisabled
-                    ? "#cbd5e1"
-                    : "#0f766e",
-                  color: isRefChoicesRetryControlDisabled
-                    ? "#334155"
-                    : "#ffffff",
+                  backgroundColor: isRefChoicesBusy
+                    ? "#115e59"
+                    : isRefChoicesRetryControlDisabled
+                      ? "#cbd5e1"
+                      : "#0f766e",
+                  color: isRefChoicesBusy
+                    ? "#ffffff"
+                    : isRefChoicesRetryControlDisabled
+                      ? "#334155"
+                      : "#ffffff",
                   border: "2px solid #115e59",
                   borderRadius: "8px",
                   cursor: isRefChoicesRetryControlDisabled
@@ -561,9 +673,9 @@ export function BenchV2HeaderAndBannersView({
               >
                 {isRefChoicesBusy && (
                   <BenchV2TaskSpinner
-                    size={16}
-                    trackColor="#94a3b8"
-                    indicatorColor="#0f172a"
+                    size={20}
+                    trackColor="#5eead4"
+                    indicatorColor="#ffffff"
                     marginRight="8px"
                   />
                 )}
@@ -574,38 +686,44 @@ export function BenchV2HeaderAndBannersView({
             <button
               type="button"
               onClick={handleReloadProduct}
-              disabled={isAnyOperationBusy || isJsonImportBusy}
+              disabled={isReloadButtonDisabled}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
                 padding: "10px 18px",
                 fontSize: "16px",
-                fontWeight: 600,
-                backgroundColor: "#ffffff",
-                color: "#0f172a",
+                fontWeight: isReloadOrSwitchActive ? 700 : 600,
+                backgroundColor: isReloadOrSwitchActive
+                  ? "#1e293b"
+                  : isReloadButtonDisabled
+                    ? "#cbd5e1"
+                    : "#ffffff",
+                color: isReloadOrSwitchActive
+                  ? "#ffffff"
+                  : isReloadButtonDisabled
+                    ? "#334155"
+                    : "#0f172a",
                 border: "2px solid #475569",
                 borderRadius: "8px",
-                cursor: isAnyOperationBusy || isJsonImportBusy ? "not-allowed" : "pointer"
+                cursor: isReloadButtonDisabled ? "not-allowed" : "pointer"
               }}
             >
-              {(isBaselineReloading || isSwitchingSelectedProduct) && (
+              {isReloadOrSwitchActive && (
                 <BenchV2TaskSpinner
-                  size={16}
-                  trackColor="#cbd5e1"
-                  indicatorColor="#0f172a"
+                  size={20}
+                  trackColor="#94a3b8"
+                  indicatorColor="#ffffff"
                   marginRight="8px"
                 />
               )}
-              {isBaselineReloading || isSwitchingSelectedProduct ? "Loading..." : "Reload Product"}
+              {isReloadOrSwitchActive ? "Loading..." : "Reload Product"}
             </button>
 
             <button
               type="button"
               onClick={handleExplicitSaveApprovedChanges}
-              disabled={
-                isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
-              }
+              disabled={isSaveButtonDisabled}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -613,27 +731,26 @@ export function BenchV2HeaderAndBannersView({
                 padding: "10px 22px",
                 fontSize: "16px",
                 fontWeight: 700,
-                backgroundColor:
-                  isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
+                backgroundColor: isWriterBusy
+                  ? "#14532d"
+                  : isSaveButtonDisabled
                     ? "#cbd5e1"
                     : "#15803d",
-                color:
-                  isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
+                color: isWriterBusy
+                  ? "#ffffff"
+                  : isSaveButtonDisabled
                     ? "#334155"
                     : "#ffffff",
                 border: "2px solid #14532d",
                 borderRadius: "8px",
-                cursor:
-                  isAnyOperationBusy || isJsonImportBusy || validApprovedRowsCount === 0
-                    ? "not-allowed"
-                    : "pointer"
+                cursor: isSaveButtonDisabled ? "not-allowed" : "pointer"
               }}
             >
               {isWriterBusy && (
                 <BenchV2TaskSpinner
-                  size={16}
-                  trackColor="#94a3b8"
-                  indicatorColor="#0f172a"
+                  size={20}
+                  trackColor="#86efac"
+                  indicatorColor="#ffffff"
                   marginRight="8px"
                 />
               )}
@@ -765,7 +882,7 @@ export function BenchV2HeaderAndBannersView({
               <button
                 type="button"
                 onClick={handleApplyPastedJsonDraftPacket}
-                disabled={isJsonImportControlDisabled || safePasteText.trim() === ""}
+                disabled={isValidatePasteButtonDisabled}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -773,27 +890,26 @@ export function BenchV2HeaderAndBannersView({
                   padding: "9px 18px",
                   fontSize: "15px",
                   fontWeight: 700,
-                  backgroundColor:
-                    isJsonImportControlDisabled || safePasteText.trim() === ""
+                  backgroundColor: isJsonImportBusy
+                    ? "#1e3a8a"
+                    : isValidatePasteButtonDisabled
                       ? "#cbd5e1"
                       : "#1d4ed8",
-                  color:
-                    isJsonImportControlDisabled || safePasteText.trim() === ""
+                  color: isJsonImportBusy
+                    ? "#ffffff"
+                    : isValidatePasteButtonDisabled
                       ? "#334155"
                       : "#ffffff",
                   border: "2px solid #1e3a8a",
                   borderRadius: "8px",
-                  cursor:
-                    isJsonImportControlDisabled || safePasteText.trim() === ""
-                      ? "not-allowed"
-                      : "pointer"
+                  cursor: isValidatePasteButtonDisabled ? "not-allowed" : "pointer"
                 }}
               >
                 {isJsonImportBusy && (
                   <BenchV2TaskSpinner
-                    size={15}
-                    trackColor="#94a3b8"
-                    indicatorColor="#0f172a"
+                    size={20}
+                    trackColor="#93c5fd"
+                    indicatorColor="#ffffff"
                     marginRight="8px"
                   />
                 )}
@@ -953,7 +1069,7 @@ export function BenchV2HeaderAndBannersView({
 
               <button
                 type="submit"
-                disabled={isAnyOperationBusy || isJsonImportBusy || isPickerLoading}
+                disabled={isSearchButtonDisabled}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -961,27 +1077,26 @@ export function BenchV2HeaderAndBannersView({
                   padding: "10px 18px",
                   fontSize: "16px",
                   fontWeight: 700,
-                  backgroundColor:
-                    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+                  backgroundColor: isPickerLoading
+                    ? "#0f172a"
+                    : isSearchButtonDisabled
                       ? "#cbd5e1"
                       : "#0f172a",
-                  color:
-                    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
+                  color: isPickerLoading
+                    ? "#ffffff"
+                    : isSearchButtonDisabled
                       ? "#334155"
                       : "#ffffff",
                   border: "2px solid #0f172a",
                   borderRadius: "8px",
-                  cursor:
-                    isAnyOperationBusy || isJsonImportBusy || isPickerLoading
-                      ? "not-allowed"
-                      : "pointer"
+                  cursor: isSearchButtonDisabled ? "not-allowed" : "pointer"
                 }}
               >
                 {isPickerLoading && (
                   <BenchV2TaskSpinner
-                    size={16}
+                    size={20}
                     trackColor="#94a3b8"
-                    indicatorColor="#0f172a"
+                    indicatorColor="#ffffff"
                     marginRight="8px"
                   />
                 )}
@@ -992,7 +1107,7 @@ export function BenchV2HeaderAndBannersView({
                 <button
                   type="button"
                   onClick={handleClearProductSearch}
-                  disabled={isAnyOperationBusy || isJsonImportBusy || isPickerLoading}
+                  disabled={isSearchButtonDisabled}
                   style={{
                     padding: "10px 16px",
                     fontSize: "16px",
@@ -1001,10 +1116,7 @@ export function BenchV2HeaderAndBannersView({
                     color: "#0f172a",
                     border: "2px solid #64748b",
                     borderRadius: "8px",
-                    cursor:
-                      isAnyOperationBusy || isJsonImportBusy || isPickerLoading
-                        ? "not-allowed"
-                        : "pointer"
+                    cursor: isSearchButtonDisabled ? "not-allowed" : "pointer"
                   }}
                 >
                   Clear Search
@@ -1468,36 +1580,6 @@ export function BenchV2HeaderAndBannersView({
         </details>
       </header>
 
-      {/* ACTIVE FOREGROUND TASK SPINNER & PLAIN TASK STATUS BANNER */}
-      {activeForegroundTask && (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            backgroundColor: "#eff6ff",
-            border: "2px solid #1d4ed8",
-            borderRadius: "10px",
-            padding: "14px 20px",
-            marginBottom: "20px",
-            color: "#0f172a",
-            fontSize: "17px",
-            fontWeight: 700
-          }}
-        >
-          <BenchV2TaskSpinner
-            size={22}
-            trackColor="#93c5fd"
-            indicatorColor="#1d4ed8"
-            marginRight="2px"
-          />
-          <span>{activeForegroundTask.label}</span>
-        </div>
-      )}
-
       {/* IMPORTANT BASELINE / SELECTOR ERRORS */}
       {hasBaselineErrors && (
         <div
@@ -1556,7 +1638,7 @@ export function BenchV2HeaderAndBannersView({
               >
                 {isRefChoicesBusy && (
                   <BenchV2TaskSpinner
-                    size={18}
+                    size={20}
                     trackColor="#93c5fd"
                     indicatorColor="#1d4ed8"
                     marginRight="10px"
