@@ -17,6 +17,7 @@ import { useFetcher } from "react-router";
 import {
   BENCH_V2_FIELD_CONTRACTS,
   BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS,
+  BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
   checkExistingWriterStringFidelity,
@@ -37,6 +38,8 @@ import {
 import {
   ALLOWED_VISION_CANDIDATE_KEYS,
   isExactMetaobjectGid,
+  isGeneratedReferenceId,
+  sanitizeStandardizedCandidates,
   collectVerifiedEntriesForResolution,
   areReferenceGidSetsSemanticallyEquivalent,
   evaluateCandidateLabelResolution
@@ -61,7 +64,15 @@ export const PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS = Object.freeze(
 );
 
 export const VISION_BACKED_STANDARDIZED_REFERENCE_DESTINATIONS = Object.freeze(
-  new Set(ALLOWED_VISION_CANDIDATE_KEYS.map((k) => `shopify.${k}`))
+  new Set(
+    ALLOWED_VISION_CANDIDATE_KEYS
+      .map((k) => `shopify.${k}`)
+      .filter(
+        (destKey) =>
+          BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(destKey) &&
+          !isRetiredParkedBenchDestination(destKey, "PRODUCT")
+      )
+  )
 );
 
 export const AUTHORIZED_AI_SCAN_STANDARDIZED_REFERENCE_DESTINATIONS = Object.freeze(
@@ -87,6 +98,90 @@ export const AUTHORITATIVE_GEOLOGY_PREAPPROVAL_DESTINATIONS = Object.freeze(
       .map((c) => c.destinationKey)
   )
 );
+
+function filterAndValidateBenchV2VisionCandidates(rawContainer) {
+  const activeSanitized = {};
+  const malformedActiveEntries = [];
+
+  if (!rawContainer || typeof rawContainer !== "object" || Array.isArray(rawContainer)) {
+    return { activeSanitized, malformedActiveEntries };
+  }
+
+  const sharedSanitized = sanitizeStandardizedCandidates(rawContainer);
+
+  for (const [rawKey, rawEntry] of Object.entries(rawContainer)) {
+    if (typeof rawKey !== "string" || !rawKey.trim()) continue;
+    const trimmedKey = rawKey.trim();
+    const bareKey = trimmedKey.startsWith("shopify.")
+      ? trimmedKey.slice(8)
+      : trimmedKey;
+    const destKey = `shopify.${bareKey}`;
+
+    if (
+      CANCELLED_INERT_DESTINATIONS.has(destKey) ||
+      RETIRED_ERA_DESTINATIONS.has(destKey) ||
+      isRetiredParkedBenchDestination(destKey, "PRODUCT") ||
+      !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(destKey) ||
+      !VISION_BACKED_STANDARDIZED_REFERENCE_DESTINATIONS.has(destKey)
+    ) {
+      continue;
+    }
+
+    const sanitizedEntry = sharedSanitized[bareKey];
+    if (sanitizedEntry) {
+      if (!Object.prototype.hasOwnProperty.call(activeSanitized, bareKey)) {
+        activeSanitized[bareKey] = {
+          labels: [...sanitizedEntry.labels],
+          evidence: sanitizedEntry.evidence
+        };
+      }
+      continue;
+    }
+
+    let rawValueSummary = "";
+    let malformedReason = `Malformed Vision standardized_candidates entry for ${destKey}.`;
+
+    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
+      rawValueSummary = rawEntry === undefined || rawEntry === null ? "" : String(rawEntry);
+      malformedReason = `Vision candidate "${bareKey}" must be an object containing non-empty labels and evidence.`;
+    } else {
+      const rawLabels = Array.isArray(rawEntry.labels) ? rawEntry.labels : [];
+      const stringLabels = rawLabels
+        .filter((l) => typeof l === "string" && l.trim() !== "")
+        .map((l) => l.trim());
+      rawValueSummary = stringLabels.join(", ");
+
+      const hasGeneratedOrIdLabel = stringLabels.some((l) => isGeneratedReferenceId(l));
+      const hasNonStringOrBlankLabel =
+        Array.isArray(rawEntry.labels) &&
+        rawEntry.labels.some((l) => typeof l !== "string" || l.trim() === "");
+      const validEvidence =
+        typeof rawEntry.evidence === "string" &&
+        rawEntry.evidence.trim() !== "" &&
+        rawEntry.evidence.trim() !== "[object Object]";
+
+      if (!Array.isArray(rawEntry.labels) || stringLabels.length === 0) {
+        malformedReason = `Vision candidate "${bareKey}" is missing a non-empty string array of candidate labels.`;
+      } else if (hasGeneratedOrIdLabel) {
+        malformedReason = `Vision candidate "${bareKey}" contains a generated ID or disallowed identifier in labels (${rawValueSummary}).`;
+      } else if (hasNonStringOrBlankLabel) {
+        malformedReason = `Vision candidate "${bareKey}" contains an empty or non-string label element.`;
+      } else if (!validEvidence) {
+        malformedReason = `Vision candidate "${bareKey}" is missing required non-empty evidence text for "${rawValueSummary}".`;
+      }
+    }
+
+    malformedActiveEntries.push({
+      bareKey,
+      destKey,
+      valueSummary: rawValueSummary,
+      source: `Gemini Vision (standardized_candidates.${bareKey})`,
+      reason: malformedReason
+    });
+  }
+
+  return { activeSanitized, malformedActiveEntries };
+}
 
 function verifyTrustedGeologyDbProvenanceForProposal({
   rawProvenance,
@@ -1493,6 +1588,10 @@ export function useBenchV2AiScanController({
       return;
     }
 
+    const hasVisionCandidatesProperty = Object.prototype.hasOwnProperty.call(
+      rawResponse,
+      "standardized_candidates"
+    );
     const rawVisionStandardizedCandidates =
       rawResponse.standardized_candidates &&
       typeof rawResponse.standardized_candidates === "object" &&
@@ -1500,48 +1599,37 @@ export function useBenchV2AiScanController({
         ? rawResponse.standardized_candidates
         : null;
 
-    if (rawVisionStandardizedCandidates) {
+    const {
+      activeSanitized: activeBenchV2VisionCandidates,
+      malformedActiveEntries: malformedVisionCandidateEntries
+    } = filterAndValidateBenchV2VisionCandidates(rawVisionStandardizedCandidates);
+
+    if (hasVisionCandidatesProperty) {
+      stagedVisionCandidatesByProductRef.current = {
+        ...stagedVisionCandidatesByProductRef.current,
+        [scannedProductId]: activeBenchV2VisionCandidates
+      };
       setStagedVisionCandidatesByProduct((prev) => ({
         ...prev,
-        [scannedProductId]: rawVisionStandardizedCandidates
+        [scannedProductId]: activeBenchV2VisionCandidates
       }));
     }
 
     const combinedProducerAndVisionProposals = { ...rawProducerProposals };
-    if (rawVisionStandardizedCandidates) {
-      for (const visionAttrKey of ALLOWED_VISION_CANDIDATE_KEYS) {
-        const destKey = `shopify.${visionAttrKey}`;
-        if (isRetiredParkedBenchDestination(destKey, "PRODUCT")) {
-          continue;
-        }
-        if (Object.prototype.hasOwnProperty.call(combinedProducerAndVisionProposals, destKey)) {
-          continue;
-        }
-        const candEntry =
-          rawVisionStandardizedCandidates[visionAttrKey] ??
-          rawVisionStandardizedCandidates[destKey];
-        if (!candEntry || typeof candEntry !== "object" || Array.isArray(candEntry)) {
-          continue;
-        }
-        const cleanVisionLabels = Array.isArray(candEntry.labels)
-          ? candEntry.labels
-              .filter((l) => typeof l === "string" && l.trim() !== "")
-              .map((l) => l.trim())
-          : [];
-        if (cleanVisionLabels.length === 0) {
-          continue;
-        }
-        const evidenceNote =
-          typeof candEntry.evidence === "string" && candEntry.evidence.trim() !== ""
-            ? candEntry.evidence.trim()
-            : "";
-        combinedProducerAndVisionProposals[destKey] = {
-          candidateLabel: cleanVisionLabels.join(", "),
-          labels: cleanVisionLabels,
-          source: `Gemini Vision (standardized_candidates.${visionAttrKey})`,
-          ...(evidenceNote ? { evidence: evidenceNote } : {})
-        };
+    for (const [visionAttrKey, candEntry] of Object.entries(activeBenchV2VisionCandidates)) {
+      const destKey = `shopify.${visionAttrKey}`;
+      if (isRetiredParkedBenchDestination(destKey, "PRODUCT")) {
+        continue;
       }
+      if (Object.prototype.hasOwnProperty.call(combinedProducerAndVisionProposals, destKey)) {
+        continue;
+      }
+      combinedProducerAndVisionProposals[destKey] = {
+        candidateLabel: candEntry.labels.join(", "),
+        labels: [...candEntry.labels],
+        source: `Gemini Vision (standardized_candidates.${visionAttrKey})`,
+        evidence: candEntry.evidence
+      };
     }
 
     const mergedActiveBaseline =
@@ -1580,6 +1668,35 @@ export function useBenchV2AiScanController({
     let rejectedInvalidCount = 0;
     let ignoredManualOnlyCount = 0;
     const details = [];
+
+    for (const malformedItem of malformedVisionCandidateEntries) {
+      if (Object.prototype.hasOwnProperty.call(combinedProducerAndVisionProposals, malformedItem.destKey)) {
+        continue;
+      }
+      const malformedContract = getFieldContractByDestination(malformedItem.destKey);
+      if (
+        !malformedContract ||
+        !malformedContract.isWritableInBatch1 ||
+        !BENCH_V2_BATCH_1_WRITABLE_DESTINATIONS.has(malformedItem.destKey) ||
+        isManualOnlyNoAiDestination(malformedItem.destKey, malformedContract)
+      ) {
+        continue;
+      }
+      receivedCount++;
+      rejectedInvalidCount++;
+      proposalsByDestination[malformedItem.destKey] = {
+        value: malformedItem.valueSummary,
+        source: malformedItem.source,
+        disposition: "Rejected (invalid)",
+        reason: malformedItem.reason
+      };
+      diagnosticsObj[malformedItem.destKey] = malformedItem.reason;
+      details.push(
+        `[${malformedItem.destKey}] Rejected invalid Vision candidate${
+          malformedItem.valueSummary ? ` "${malformedItem.valueSummary}"` : ""
+        } (Source: ${malformedItem.source}): ${malformedItem.reason}`
+      );
+    }
 
     const stageOrHoldResolvedProposal = ({
       destKey,
@@ -1636,7 +1753,7 @@ export function useBenchV2AiScanController({
           ? entry.source.trim()
           : "Source not reported";
 
-      // Check for the 4 producer-backed geology reference companions and 7 Vision standardized candidates
+      // Check for the 4 producer-backed geology reference companions and active Vision standardized candidates
       const isGeologyRefCandidateShape = Boolean(
         entry &&
           typeof entry === "object" &&

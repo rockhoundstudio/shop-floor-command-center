@@ -16,11 +16,15 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useFetcher } from "react-router";
 import {
   BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
+  CANCELLED_INERT_DESTINATIONS,
+  RETIRED_ERA_DESTINATIONS,
+  isRetiredParkedBenchDestination,
   isExactProductGid,
   isExactMetaobjectDefinitionGid
 } from "./bench-v2.contract.jsx";
 import {
   SUPPORTED_STANDARDIZED_REFERENCE_KEYS,
+  sanitizeStandardizedCandidates,
   isExactMetaobjectGid,
   extractEntryGid,
   extractEntryLabel,
@@ -29,6 +33,7 @@ import {
 
 const DEFAULT_REFERENCE_CHOICES_ACTION_PATH = "/app/meta-injector-api";
 const DEFAULT_REFERENCE_CHOICES_REQUEST_PREFIX = "bench_v2_refchoices";
+const MAX_STALE_DISCARD_AUTO_RECOVERY_ATTEMPTS = 1;
 
 const ACTIVE_BENCH_V2_SUPPORTED_BARE_KEYS = Object.freeze(
   SUPPORTED_STANDARDIZED_REFERENCE_KEYS.filter((k) =>
@@ -41,6 +46,46 @@ const AUTHORITATIVE_SUPPORTED_BARE_KEY_SET = new Set(
 );
 
 const MULTILINE_SCOPED_DESTINATION_ERROR_REGEX = /^\[([^\]]+)\]\s*([\s\S]+)$/;
+
+/**
+ * Filters and sanitizes staged Vision standardized candidates strictly for
+ * active, non-retired Bench V2 destinations using owning catalog policies and
+ * `sanitizeStandardizedCandidates`, so retired, non-active, or malformed
+ * candidate entries cannot abort `enumerate_destinations` while valid active
+ * Vision candidates remain intact.
+ */
+function buildSafeBenchV2CandidatesPayload(
+  rawContainer,
+  allowedDestinationSet = BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS
+) {
+  const safePayload = {};
+  if (!rawContainer || typeof rawContainer !== "object" || Array.isArray(rawContainer)) {
+    return safePayload;
+  }
+
+  const sharedSanitized = sanitizeStandardizedCandidates(rawContainer);
+  for (const [bareKey, entry] of Object.entries(sharedSanitized)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const destKey = `shopify.${bareKey}`;
+    if (
+      CANCELLED_INERT_DESTINATIONS.has(destKey) ||
+      RETIRED_ERA_DESTINATIONS.has(destKey) ||
+      isRetiredParkedBenchDestination(destKey, "PRODUCT") ||
+      !AUTHORITATIVE_SUPPORTED_BARE_KEY_SET.has(bareKey) ||
+      !BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS.has(destKey) ||
+      (allowedDestinationSet instanceof Set && !allowedDestinationSet.has(destKey))
+    ) {
+      continue;
+    }
+
+    safePayload[bareKey] = {
+      labels: [...entry.labels],
+      evidence: entry.evidence
+    };
+  }
+
+  return safePayload;
+}
 
 /**
  * Resolves and validates requested standardized reference keys against the
@@ -764,8 +809,9 @@ function buildDefaultPrevalidationMessages(productTitle, reloadActionLabel = "Re
 }
 
 /**
- * Reusable client-safe hook for once-per-factual-context automatic and explicit
- * retry read-only standardized reference choice loading.
+ * Reusable client-safe hook for once-per-factual-context automatic, bounded
+ * stale-discard recovery, and explicit retry read-only standardized reference
+ * choice loading.
  */
 export function useStandardizedReferenceChoiceLoader({
   sessionId,
@@ -789,10 +835,15 @@ export function useStandardizedReferenceChoiceLoader({
   const [refChoicesStateByProduct, setRefChoicesStateByProduct] = useState({});
   const [bannerDismissedRequestIdByProduct, setBannerDismissedRequestIdByProduct] =
     useState({});
+  const [staleRecoverySignal, setStaleRecoverySignal] = useState(0);
+
   const processedRefChoicesRequestIdRef = useRef(null);
   const activeRefChoicesRequestRef = useRef(null);
   const observedBusyRequestIdRef = useRef(null);
   const autoRefChoicesAttemptedKeysRef = useRef(new Set());
+  const pendingStaleRecoveryByProductRef = useRef({});
+  const staleDiscardAutoRecoveryCountByAttemptKeyRef = useRef(new Map());
+
   const refChoicesFetcherRef = useRef(refChoicesFetcher);
   refChoicesFetcherRef.current = refChoicesFetcher;
 
@@ -947,6 +998,9 @@ export function useStandardizedReferenceChoiceLoader({
         targetContextSig
       );
       autoRefChoicesAttemptedKeysRef.current.add(attemptKey);
+      if (pendingStaleRecoveryByProductRef.current[targetProductId]) {
+        delete pendingStaleRecoveryByProductRef.current[targetProductId];
+      }
 
       const requestId = `${cleanPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const enumerateList = destinationPolicy.destinationKeys;
@@ -954,10 +1008,10 @@ export function useStandardizedReferenceChoiceLoader({
         typeof getStagedCandidatesRef.current === "function"
           ? getStagedCandidatesRef.current(targetProductId)
           : {};
-      const stagedCandidatesForProduct =
-        rawCandidates && typeof rawCandidates === "object" && !Array.isArray(rawCandidates)
-          ? rawCandidates
-          : {};
+      const stagedCandidatesForProduct = buildSafeBenchV2CandidatesPayload(
+        rawCandidates,
+        destinationPolicy.destinationSet
+      );
 
       const reqMeta = {
         requestId,
@@ -1099,21 +1153,31 @@ export function useStandardizedReferenceChoiceLoader({
     submitStandardizedReferenceChoicesRequest
   ]);
 
-  // Automatic read-only reference-choice loading:
-  // Fires at most once per (sessionId, productId, factual baselineContextSig)
-  // when the selected product baseline is genuinely ready. Records the attempt key
-  // synchronously before submitting so Strict Mode or revalidation cannot loop.
+  // Automatic read-only reference-choice loading & bounded stale-discard recovery:
+  // - Normal path: fires at most once per (sessionId, productId, factual baselineContextSig)
+  //   when the selected product baseline is genuinely ready, recording the attempt key
+  //   synchronously before submitting so Strict Mode or revalidation cannot loop.
+  // - Stale-discard recovery path: if a prior in-flight request for `productId` in the
+  //   active session was discarded as stale (`state === "discarded_stale"`), allows at
+  //   most one bounded automatic recovery submission for the CURRENT ready baseline
+  //   context once the fetcher is idle and external operations are no longer busy,
+  //   even if that current context signature was attempted earlier before a transient
+  //   change. Never deletes attempt keys on `failed_or_incomplete` or `partial_or_blocked`.
   useEffect(() => {
     if (!isCurrentBaselineReadyForStandardizedLookup || !rawBaseline) {
       return;
     }
     if (isCurrentRefChoicesBoundAndFresh) {
+      if (pendingStaleRecoveryByProductRef.current[productId]) {
+        delete pendingStaleRecoveryByProductRef.current[productId];
+      }
       return;
     }
     if (
       activeRefChoicesRequestRef.current ||
       refChoicesFetcherRef.current.state !== "idle" ||
-      isExternalBusy
+      isExternalBusy ||
+      isSwitchingProduct
     ) {
       return;
     }
@@ -1123,15 +1187,39 @@ export function useStandardizedReferenceChoiceLoader({
       productId,
       currentBaselineContextSig
     );
-    if (autoRefChoicesAttemptedKeysRef.current.has(attemptKey)) {
+
+    if (!autoRefChoicesAttemptedKeysRef.current.has(attemptKey)) {
+      submitStandardizedReferenceChoicesRequest({
+        targetProductId: productId,
+        targetBaselineSnap: rawBaseline,
+        targetContextSig: currentBaselineContextSig
+      });
       return;
     }
 
-    submitStandardizedReferenceChoicesRequest({
-      targetProductId: productId,
-      targetBaselineSnap: rawBaseline,
-      targetContextSig: currentBaselineContextSig
-    });
+    const pendingStaleMeta = pendingStaleRecoveryByProductRef.current[productId];
+    if (
+      pendingStaleMeta &&
+      pendingStaleMeta.sessionId === sessionIdRef.current &&
+      pendingStaleMeta.productId === productId
+    ) {
+      const usedRecoveries =
+        staleDiscardAutoRecoveryCountByAttemptKeyRef.current.get(attemptKey) || 0;
+      if (usedRecoveries < MAX_STALE_DISCARD_AUTO_RECOVERY_ATTEMPTS) {
+        staleDiscardAutoRecoveryCountByAttemptKeyRef.current.set(
+          attemptKey,
+          usedRecoveries + 1
+        );
+        delete pendingStaleRecoveryByProductRef.current[productId];
+        submitStandardizedReferenceChoicesRequest({
+          targetProductId: productId,
+          targetBaselineSnap: rawBaseline,
+          targetContextSig: currentBaselineContextSig
+        });
+      } else {
+        delete pendingStaleRecoveryByProductRef.current[productId];
+      }
+    }
   }, [
     isCurrentBaselineReadyForStandardizedLookup,
     isCurrentRefChoicesBoundAndFresh,
@@ -1139,7 +1227,10 @@ export function useStandardizedReferenceChoiceLoader({
     currentBaselineContextSig,
     rawBaseline,
     isExternalBusy,
+    isSwitchingProduct,
     isRefChoicesBusy,
+    refChoicesFetcher.state,
+    staleRecoverySignal,
     submitStandardizedReferenceChoicesRequest
   ]);
 
@@ -1225,6 +1316,21 @@ export function useStandardizedReferenceChoiceLoader({
       return;
     }
 
+    // If fetcher.data still holds an older response's echoed requestId before the
+    // active request's response lands, do not let the old response clear or fail
+    // the newer active request.
+    const returnedRequestId =
+      rawResponse && typeof rawResponse === "object"
+        ? rawResponse.requestId || null
+        : null;
+    if (
+      returnedRequestId &&
+      returnedRequestId !== pendingReq.requestId &&
+      observedBusyRequestIdRef.current !== pendingReq.requestId
+    ) {
+      return;
+    }
+
     if (processedRefChoicesRequestIdRef.current === pendingReq.requestId) {
       return;
     }
@@ -1256,10 +1362,51 @@ export function useStandardizedReferenceChoiceLoader({
       actionPath: resolvedActionPath
     });
 
-    setRefChoicesStateByProduct((prev) => ({
-      ...prev,
-      [reqProductId]: evaluatedRecord
-    }));
+    if (
+      evaluatedRecord.state === "discarded_stale" &&
+      (pendingReq.sessionId ?? pendingReq.benchSessionId) === sessionIdRef.current &&
+      reqProductId
+    ) {
+      pendingStaleRecoveryByProductRef.current[reqProductId] = {
+        discardedRequestId: pendingReq.requestId,
+        sessionId: sessionIdRef.current,
+        productId: reqProductId,
+        discardedContextSig: pendingReq.baselineContextSig
+      };
+      setStaleRecoverySignal((prevSig) => prevSig + 1);
+    } else if (
+      evaluatedRecord.state === "choices_loaded" ||
+      evaluatedRecord.state === "partial_or_blocked"
+    ) {
+      if (pendingStaleRecoveryByProductRef.current[reqProductId]) {
+        delete pendingStaleRecoveryByProductRef.current[reqProductId];
+      }
+    }
+
+    setRefChoicesStateByProduct((prev) => {
+      const existingRecord = prev[reqProductId];
+      // Preserve already-fresh verified reference choices for the current baseline
+      // context if a stale response from an earlier context arrives late.
+      if (
+        evaluatedRecord.state === "discarded_stale" &&
+        existingRecord &&
+        (existingRecord.sessionId ?? existingRecord.benchSessionId) ===
+          sessionIdRef.current &&
+        existingRecord.productId === reqProductId &&
+        latestBaselineForProduct &&
+        existingRecord.baselineContextSig === latestContextSig &&
+        (existingRecord.productCategoryId || null) ===
+          (latestBaselineForProduct.productCategory?.id || null) &&
+        (existingRecord.state === "choices_loaded" ||
+          existingRecord.state === "partial_or_blocked")
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [reqProductId]: evaluatedRecord
+      };
+    });
 
     if (activeRefChoicesRequestRef.current?.requestId === pendingReq.requestId) {
       observedBusyRequestIdRef.current = null;
