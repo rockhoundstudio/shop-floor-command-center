@@ -20,6 +20,11 @@ import {
   BENCH_V2_CONNECTED_STANDARDIZED_DESTINATIONS,
   CANCELLED_INERT_DESTINATIONS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+  isLegacyGenericStudioCordLabel,
+  resolveKnownStudioHardwareOptionLength,
+  areHardwareOptionsCompatibleForKnownStudioLength,
+  evaluateAiHardwareLengthSupport,
   checkExistingWriterStringFidelity,
   isExactProductGid,
   isManualMeasurementDestination,
@@ -98,6 +103,9 @@ export const AUTHORITATIVE_GEOLOGY_PREAPPROVAL_DESTINATIONS = Object.freeze(
       .map((c) => c.destinationKey)
   )
 );
+
+const isConfirmedBlankBaselinePresence = (presence) =>
+  presence === "absent" || presence === "null" || presence === "empty_string";
 
 function filterAndValidateBenchV2VisionCandidates(rawContainer) {
   const activeSanitized = {};
@@ -291,6 +299,453 @@ function verifyTrustedGeologyDbProvenanceForProposal({
   });
 }
 
+/**
+ * Independently verifies the narrow current-scan known-studio-stock `"18"`
+ * proposal on PRODUCT `custom.chain_cord_length_in`.
+ *
+ * A `verified: true` flag alone is NEVER treated as verification:
+ * - Validates exact `productId`, `requestId`, `destinationKey === "custom.chain_cord_length_in"`,
+ *   `rawValue === "18"`, `emittedValue === "18"`, `basis === "vision_photo_match_known_studio_stock"`,
+ *   and non-empty evidence-labelled `source`.
+ * - Resolves `matchedHardwareOption` against the shared `resolveKnownStudioHardwareOptionLength`
+ *   catalog and verifies exact canonical option + `hardwareCategory` match.
+ * - Cross-checks the current scan response (`combinedProducerAndVisionProposals["custom.chain_material"]`
+ *   when unlocked, or compatible current human/saved `custom.chain_material` when locked).
+ * - Confirms live baseline for `custom.chain_cord_length_in` is complete and genuinely blank
+ *   (`presence` in `{"absent", "null", "empty_string"}`), and that NO human/manual draft
+ *   (including a temporarily empty manual draft), valid approval, or Keep Original decision
+ *   exists on `custom.chain_cord_length_in`.
+ * - Verifies live sibling `custom.chain_material` compatibility (supporting passive or kept
+ *   legacy `"Cord"` only for `"studio_cord_stock"` without overwriting saved `"Cord"`, and
+ *   confirming via `evaluateAiHardwareLengthSupport` that the resulting `aiKnownStudioHardwareBasis`
+ *   entry is supported under the live state).
+ */
+function verifyCurrentScanKnownStudioHardwareLengthProposal({
+  entry,
+  rawValue,
+  reportedSource,
+  productId,
+  requestId,
+  destKey,
+  contract,
+  targetBaseline,
+  combinedProducerAndVisionProposals,
+  existingProdProposals,
+  existingProdApprovals,
+  existingProdKeepOriginal
+}) {
+  if (
+    destKey !== "custom.chain_cord_length_in" ||
+    !contract ||
+    contract.owner !== "PRODUCT" ||
+    contract.namespace !== "custom" ||
+    contract.destinationKey !== "custom.chain_cord_length_in" ||
+    contract.isWritableInBatch1 !== true
+  ) {
+    return { eligible: false, basis: null, normalizedSource: null, holdReason: null };
+  }
+
+  if (
+    !entry ||
+    typeof entry !== "object" ||
+    Array.isArray(entry) ||
+    !entry.trustedKnownHardwareLengthProvenance ||
+    typeof entry.trustedKnownHardwareLengthProvenance !== "object" ||
+    Array.isArray(entry.trustedKnownHardwareLengthProvenance)
+  ) {
+    return { eligible: false, basis: null, normalizedSource: null, holdReason: null };
+  }
+
+  const rawProv = entry.trustedKnownHardwareLengthProvenance;
+  if (!isExactProductGid(productId) || rawProv.productId !== productId) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason: "Rejected AI chain/cord length proposal: product GID mismatch in hardware provenance."
+    };
+  }
+  if (
+    typeof requestId !== "string" ||
+    requestId.trim() === "" ||
+    rawProv.requestId !== requestId
+  ) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason: "Rejected AI chain/cord length proposal: scan requestId mismatch in hardware provenance."
+    };
+  }
+  if (
+    rawProv.verified !== true ||
+    rawProv.destinationKey !== "custom.chain_cord_length_in" ||
+    rawValue !== KNOWN_STUDIO_HARDWARE_LENGTH_IN ||
+    rawProv.emittedValue !== KNOWN_STUDIO_HARDWARE_LENGTH_IN ||
+    rawProv.basis !== "vision_photo_match_known_studio_stock"
+  ) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason: "Rejected AI chain/cord length proposal: unverified value or basis in hardware provenance."
+    };
+  }
+
+  const rawMatchedOpt =
+    typeof rawProv.matchedHardwareOption === "string"
+      ? rawProv.matchedHardwareOption.trim()
+      : "";
+  const resolvedHw = resolveKnownStudioHardwareOptionLength(rawMatchedOpt);
+  if (
+    !resolvedHw.matched ||
+    resolvedHw.canonicalOption !== rawMatchedOpt ||
+    resolvedHw.lengthIn !== KNOWN_STUDIO_HARDWARE_LENGTH_IN ||
+    rawProv.hardwareCategory !== resolvedHw.category
+  ) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason: `Rejected AI chain/cord length proposal: "${rawMatchedOpt}" is not a confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch studio hardware stock option.`
+    };
+  }
+
+  // Confirm live baseline on custom.chain_cord_length_in is complete and genuinely blank.
+  const lengthBaselineObs = buildBaselineObservation(
+    targetBaseline,
+    "custom.chain_cord_length_in"
+  );
+  if (
+    !lengthBaselineObs.evidenceAvailable ||
+    lengthBaselineObs.metafieldsCompleteState !== "complete"
+  ) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        "Held AI 18 in studio length proposal: saved baseline read for custom.chain_cord_length_in is incomplete."
+    };
+  }
+  if (lengthBaselineObs.presence === "present") {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        "Held AI 18 in studio length proposal: a saved chain/cord length already exists on this product and is preserved."
+    };
+  }
+  if (!isConfirmedBlankBaselinePresence(lengthBaselineObs.presence)) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        "Held AI 18 in studio length proposal: custom.chain_cord_length_in baseline could not be confirmed blank."
+    };
+  }
+
+  // Confirm ZERO human length state on custom.chain_cord_length_in (including temporarily empty manual drafts,
+  // valid approvals, or valid Keep Original records). Never stage an AI alternative against human length edits.
+  const hasExistingLengthKey = Boolean(
+    existingProdProposals &&
+      Object.prototype.hasOwnProperty.call(existingProdProposals, "custom.chain_cord_length_in")
+  );
+  const existingLengthEntry = hasExistingLengthKey
+    ? existingProdProposals["custom.chain_cord_length_in"]
+    : undefined;
+  const existingLengthVal = getProposalValueString(existingLengthEntry);
+  const isExistingManualLengthDraft = Boolean(
+    hasExistingLengthKey &&
+      (typeof existingLengthEntry !== "object" ||
+        existingLengthEntry === null ||
+        existingLengthEntry.origin !== "AI")
+  );
+  const existingLengthApproval = existingProdApprovals?.["custom.chain_cord_length_in"] || null;
+  const hasValidExistingLengthApproval = Boolean(
+    hasExistingLengthKey &&
+      existingLengthVal.trim() !== "" &&
+      isExactValueApprovalValid({
+        approvalRecord: existingLengthApproval,
+        productId,
+        destinationKey: "custom.chain_cord_length_in",
+        currentProposedValue: existingLengthVal,
+        baselineSnapshot: targetBaseline,
+        rawProposalEntry: existingLengthEntry,
+        proposedMapForProduct: existingProdProposals,
+        keepOriginalMapForProduct: existingProdKeepOriginal
+      })
+  );
+  const existingLengthKeepOrig = existingProdKeepOriginal?.["custom.chain_cord_length_in"] || null;
+  const hasValidExistingLengthKeepOrig = Boolean(
+    hasExistingLengthKey &&
+      existingLengthVal.trim() !== "" &&
+      isKeepOriginalRecordValid({
+        keepOriginalRecord: existingLengthKeepOrig,
+        productId,
+        destinationKey: "custom.chain_cord_length_in",
+        currentProposedValue: existingLengthVal,
+        baselineSnapshot: targetBaseline
+      })
+  );
+
+  if (
+    isExistingManualLengthDraft ||
+    hasValidExistingLengthApproval ||
+    hasValidExistingLengthKeepOrig
+  ) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        "Preserved existing operator draft or decision on custom.chain_cord_length_in without staging an AI studio-stock override."
+    };
+  }
+
+  // Verify live baseline and sibling state on custom.chain_material and custom.chain_link_type.
+  const chainMatBaselineObs = buildBaselineObservation(
+    targetBaseline,
+    "custom.chain_material"
+  );
+  if (
+    !chainMatBaselineObs.evidenceAvailable ||
+    chainMatBaselineObs.metafieldsCompleteState !== "complete"
+  ) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        "Held AI 18 in studio length proposal: saved baseline read for custom.chain_material is incomplete."
+    };
+  }
+  const savedChainMat =
+    chainMatBaselineObs.presence === "present" && typeof chainMatBaselineObs.rawValue === "string"
+      ? chainMatBaselineObs.rawValue.trim()
+      : "";
+
+  // Check operator lock on chain_link_type === "None"
+  const existingChainLinkEntry = existingProdProposals?.["custom.chain_link_type"];
+  const existingChainLinkVal = getProposalValueString(existingChainLinkEntry).trim();
+  const isManualChainLinkNone = Boolean(
+    existingChainLinkEntry &&
+      (typeof existingChainLinkEntry !== "object" || existingChainLinkEntry.origin !== "AI") &&
+      /^none$/i.test(existingChainLinkVal)
+  );
+  if (isManualChainLinkNone) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        'Held AI 18 in studio length proposal: custom.chain_link_type has a manual draft of "None".'
+    };
+  }
+
+  // Cross-check sibling custom.chain_material in the current scan response and live human state.
+  const hasExistingChainMatKey = Boolean(
+    existingProdProposals &&
+      Object.prototype.hasOwnProperty.call(existingProdProposals, "custom.chain_material")
+  );
+  const existingChainMatEntry = hasExistingChainMatKey
+    ? existingProdProposals["custom.chain_material"]
+    : undefined;
+  const existingChainMatVal = getProposalValueString(existingChainMatEntry);
+  const isManualChainMatDraft = Boolean(
+    hasExistingChainMatKey &&
+      (typeof existingChainMatEntry !== "object" ||
+        existingChainMatEntry === null ||
+        existingChainMatEntry.origin !== "AI")
+  );
+  const existingChainMatApproval = existingProdApprovals?.["custom.chain_material"] || null;
+  const hasValidChainMatApproval = Boolean(
+    hasExistingChainMatKey &&
+      existingChainMatVal.trim() !== "" &&
+      isExactValueApprovalValid({
+        approvalRecord: existingChainMatApproval,
+        productId,
+        destinationKey: "custom.chain_material",
+        currentProposedValue: existingChainMatVal,
+        baselineSnapshot: targetBaseline
+      })
+  );
+  const existingChainMatKeepOrig = existingProdKeepOriginal?.["custom.chain_material"] || null;
+  const hasValidChainMatKeepOrig = Boolean(
+    hasExistingChainMatKey &&
+      existingChainMatVal.trim() !== "" &&
+      isKeepOriginalRecordValid({
+        keepOriginalRecord: existingChainMatKeepOrig,
+        productId,
+        destinationKey: "custom.chain_material",
+        currentProposedValue: existingChainMatVal,
+        baselineSnapshot: targetBaseline
+      })
+  );
+
+  const isChainMatHumanLocked =
+    isManualChainMatDraft || hasValidChainMatApproval || hasValidChainMatKeepOrig;
+
+  const responseChainMatProposal =
+    combinedProducerAndVisionProposals?.["custom.chain_material"];
+  const responseChainMatVal =
+    responseChainMatProposal &&
+    typeof responseChainMatProposal === "object" &&
+    typeof responseChainMatProposal.value === "string"
+      ? responseChainMatProposal.value.trim()
+      : "";
+
+  const projectedProposalsForSupportCheck = { ...(existingProdProposals || {}) };
+
+  if (isChainMatHumanLocked) {
+    if (hasValidChainMatKeepOrig) {
+      if (savedChainMat === "") {
+        return {
+          eligible: false,
+          basis: null,
+          normalizedSource: null,
+          holdReason:
+            "Held AI 18 in studio length proposal: custom.chain_material is marked Keep Original (Not set)."
+        };
+      }
+      const compatibleKept = areHardwareOptionsCompatibleForKnownStudioLength({
+        matchedOption: resolvedHw.canonicalOption,
+        candidateOrSavedChainMaterial: savedChainMat,
+        allowLegacyGenericCord: true
+      });
+      if (!compatibleKept) {
+        return {
+          eligible: false,
+          basis: null,
+          normalizedSource: null,
+          holdReason: `Held AI 18 in studio length proposal: custom.chain_material is marked Keep Original ("${savedChainMat}"), which conflicts with "${resolvedHw.canonicalOption}".`
+        };
+      }
+    } else {
+      const trimmedHumanMat = existingChainMatVal.trim();
+      if (trimmedHumanMat === "") {
+        return {
+          eligible: false,
+          basis: null,
+          normalizedSource: null,
+          holdReason:
+            "Held AI 18 in studio length proposal: custom.chain_material currently has an empty manual draft."
+        };
+      }
+      const compatibleHumanDraft = areHardwareOptionsCompatibleForKnownStudioLength({
+        matchedOption: resolvedHw.canonicalOption,
+        candidateOrSavedChainMaterial: trimmedHumanMat,
+        allowLegacyGenericCord: isLegacyGenericStudioCordLabel(trimmedHumanMat)
+      });
+      // Note: if human drafted legacy "Cord" manually as plain text, evaluateAiHardwareLengthSupport
+      // requires an active draft to be one of the 12 confirmed studio stock options.
+      const humanDraftKnown = resolveKnownStudioHardwareOptionLength(trimmedHumanMat);
+      if (!compatibleHumanDraft || !humanDraftKnown.matched) {
+        return {
+          eligible: false,
+          basis: null,
+          normalizedSource: null,
+          holdReason: `Held AI 18 in studio length proposal: current human custom.chain_material ("${trimmedHumanMat}") is not compatible with "${resolvedHw.canonicalOption}".`
+        };
+      }
+    }
+  } else {
+    // When custom.chain_material is NOT human-locked, the same scan response must carry
+    // the exact matching studio hardware proposal on custom.chain_material, and any
+    // passive saved chain_material must be compatible (allowing passive legacy "Cord"
+    // for studio_cord_stock).
+    const respKnown = resolveKnownStudioHardwareOptionLength(responseChainMatVal);
+    if (!respKnown.matched || respKnown.canonicalOption !== resolvedHw.canonicalOption) {
+      return {
+        eligible: false,
+        basis: null,
+        normalizedSource: null,
+        holdReason:
+          "Rejected AI 18 in studio length proposal: current scan response did not include the matching custom.chain_material studio stock proposal."
+      };
+    }
+
+    const compatibleSaved = areHardwareOptionsCompatibleForKnownStudioLength({
+      matchedOption: resolvedHw.canonicalOption,
+      candidateOrSavedChainMaterial: savedChainMat,
+      allowLegacyGenericCord: true
+    });
+    if (!compatibleSaved) {
+      return {
+        eligible: false,
+        basis: null,
+        normalizedSource: null,
+        holdReason: `Held AI 18 in studio length proposal: saved custom.chain_material ("${savedChainMat}") conflicts with photo match "${resolvedHw.canonicalOption}".`
+      };
+    }
+
+    projectedProposalsForSupportCheck["custom.chain_material"] = {
+      value: respKnown.canonicalOption,
+      source:
+        typeof responseChainMatProposal.source === "string" &&
+        responseChainMatProposal.source.trim() !== ""
+          ? responseChainMatProposal.source.trim()
+          : "Gemini Vision (chain_material)",
+      origin: "AI"
+    };
+  }
+
+  const normalizedEvidenceSource =
+    typeof reportedSource === "string" &&
+    reportedSource.trim() !== "" &&
+    reportedSource !== "Source not reported"
+      ? reportedSource.trim()
+      : `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${resolvedHw.canonicalOption}; Gemini Vision photo match)`;
+
+  const stampedBasis = Object.freeze({
+    kind: "ai_known_studio_hardware_length_basis",
+    productId,
+    requestId,
+    destinationKey: "custom.chain_cord_length_in",
+    matchedHardwareOption: resolvedHw.canonicalOption,
+    hardwareCategory: resolvedHw.category,
+    emittedValue: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+    basis: "vision_photo_match_known_studio_stock",
+    verifiedAt: new Date().toISOString()
+  });
+
+  const candidateAiLengthEntry = {
+    value: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+    source: normalizedEvidenceSource,
+    origin: "AI",
+    aiKnownStudioHardwareBasis: stampedBasis
+  };
+  projectedProposalsForSupportCheck["custom.chain_cord_length_in"] = candidateAiLengthEntry;
+
+  const contractSupportCheck = evaluateAiHardwareLengthSupport({
+    productId,
+    rawLengthPropEntry: candidateAiLengthEntry,
+    baselineSnapshot: targetBaseline,
+    proposedMapForProduct: projectedProposalsForSupportCheck,
+    keepOriginalMapForProduct: existingProdKeepOriginal
+  });
+
+  if (!contractSupportCheck.isAiHardwareDerived || !contractSupportCheck.supported) {
+    return {
+      eligible: false,
+      basis: null,
+      normalizedSource: null,
+      holdReason:
+        contractSupportCheck.reason ||
+        "Held AI 18 in studio length proposal: live hardware support check did not pass."
+    };
+  }
+
+  return {
+    eligible: true,
+    basis: stampedBasis,
+    normalizedSource: normalizedEvidenceSource,
+    holdReason: null
+  };
+}
+
 function buildBaselineWithVerifiedReferenceForDestination(
   targetBaseline,
   destKey,
@@ -360,6 +815,7 @@ function evaluateAndRecordResolvedAiProposal({
   displayNote = "",
   allowExplicitReferenceListReplacement = false,
   trustedGeologyDbProvenance = null,
+  aiKnownStudioHardwareBasis = null,
   requestId,
   targetBaseline,
   existingProdProposals,
@@ -379,12 +835,31 @@ function evaluateAndRecordResolvedAiProposal({
       normalizedValue.trim() !== ""
   );
 
-  const existingDraft = existingProdProposals[destKey];
+  const hasValidKnownHardwareBasis = Boolean(
+    destKey === "custom.chain_cord_length_in" &&
+      normalizedValue === KNOWN_STUDIO_HARDWARE_LENGTH_IN &&
+      aiKnownStudioHardwareBasis &&
+      typeof aiKnownStudioHardwareBasis === "object" &&
+      !Array.isArray(aiKnownStudioHardwareBasis) &&
+      aiKnownStudioHardwareBasis.productId === productId &&
+      aiKnownStudioHardwareBasis.requestId === requestId &&
+      aiKnownStudioHardwareBasis.destinationKey === "custom.chain_cord_length_in" &&
+      aiKnownStudioHardwareBasis.emittedValue === KNOWN_STUDIO_HARDWARE_LENGTH_IN
+  );
+
+  const hasExistingKey = Object.prototype.hasOwnProperty.call(
+    existingProdProposals,
+    destKey
+  );
+  const existingDraft = hasExistingKey ? existingProdProposals[destKey] : undefined;
   const existingDraftVal = getProposalValueString(existingDraft);
   const hasExistingDraft = Boolean(existingDraft && existingDraftVal.trim() !== "");
   const isManualDraft = Boolean(
-    hasExistingDraft &&
-      (typeof existingDraft !== "object" || existingDraft.origin !== "AI")
+    hasExistingKey &&
+      (typeof existingDraft !== "object" ||
+        existingDraft === null ||
+        existingDraft.origin !== "AI") &&
+      (hasExistingDraft || destKey === "custom.chain_cord_length_in")
   );
   const existingAllowReplacement = hasExplicitReferenceReplacementFlag(
     existingDraft,
@@ -401,7 +876,10 @@ function evaluateAndRecordResolvedAiProposal({
       destinationKey: destKey,
       currentProposedValue: existingDraftVal,
       baselineSnapshot: targetBaseline,
-      allowExplicitReferenceListReplacement: existingAllowReplacement
+      allowExplicitReferenceListReplacement: existingAllowReplacement,
+      rawProposalEntry: existingDraft,
+      proposedMapForProduct: existingProdProposals,
+      keepOriginalMapForProduct: existingProdKeepOriginal
     });
 
   const keepOrigRec = existingProdKeepOriginal[destKey] || null;
@@ -433,6 +911,23 @@ function evaluateAndRecordResolvedAiProposal({
       };
       details.push(
         `[${destKey}] AI suggestion matches your current draft ("${normalizedValue}"${formattedSuffix}) — Source: ${reportedSource}.`
+      );
+      return {
+        dispositionOutcome: "matched_draft",
+        approvalCleared: false,
+        preapprovedGeology: false
+      };
+    }
+
+    // Never stage a held AI alternative against protected human state on custom.chain_cord_length_in.
+    if (destKey === "custom.chain_cord_length_in") {
+      proposalsByDestination[destKey] = {
+        value: normalizedValue,
+        source: reportedSource,
+        disposition: "Preserved human measurement / decision (not staged)"
+      };
+      details.push(
+        `[${destKey}] Preserved your existing measurement or decision without staging AI studio-stock "${normalizedValue}" (Source: ${reportedSource}).`
       );
       return {
         dispositionOutcome: "matched_draft",
@@ -474,15 +969,18 @@ function evaluateAndRecordResolvedAiProposal({
     approvalCleared = true;
   }
 
-  const verifiedTrustedGeoProvenance = verifyTrustedGeologyDbProvenanceForProposal({
-    rawProvenance: trustedGeologyDbProvenance,
-    productId,
-    requestId,
-    destKey,
-    expectedEmittedValue: PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
-      ? null
-      : normalizedValue
-  });
+  const verifiedTrustedGeoProvenance =
+    !hasValidKnownHardwareBasis && destKey !== "custom.chain_cord_length_in"
+      ? verifyTrustedGeologyDbProvenanceForProposal({
+          rawProvenance: trustedGeologyDbProvenance,
+          productId,
+          requestId,
+          destKey,
+          expectedEmittedValue: PRODUCER_BACKED_GEOLOGY_REFERENCE_DESTINATIONS.has(destKey)
+            ? null
+            : normalizedValue
+        })
+      : null;
 
   existingProdProposals[destKey] = {
     value: normalizedValue,
@@ -497,6 +995,11 @@ function evaluateAndRecordResolvedAiProposal({
     ...(verifiedTrustedGeoProvenance
       ? {
           trustedGeologyDbProvenance: verifiedTrustedGeoProvenance
+        }
+      : {}),
+    ...(hasValidKnownHardwareBasis
+      ? {
+          aiKnownStudioHardwareBasis
         }
       : {}),
     updatedAt: new Date().toISOString()
@@ -547,7 +1050,12 @@ function evaluateAndRecordResolvedAiProposal({
   proposalsByDestination[destKey] = {
     value: normalizedValue,
     source: reportedSource,
-    disposition: "Staged as unapproved AI draft"
+    disposition: "Staged as unapproved AI draft",
+    ...(hasValidKnownHardwareBasis
+      ? {
+          aiKnownStudioHardwareBasis
+        }
+      : {})
   };
   details.push(
     `[${destKey}] Staged unapproved AI draft "${normalizedValue}"${formattedSuffix} (Source: ${reportedSource}).`
@@ -1125,16 +1633,27 @@ export function useBenchV2AiScanController({
 
       let lockedHumanVal = "";
       let hasLockedHumanOrKeepOriginal = false;
+      let hasEmptyManualDraftLock = false;
 
       for (const checkDest of candidateDestKeys) {
-        const propEntry = currentProposedMap[checkDest];
-        const propValStr = getProposalValueString(propEntry);
-        const hasHumanDraft = Boolean(
-          propEntry &&
-            typeof propEntry === "object" &&
-            propEntry.origin === "Manual" &&
-            propValStr.trim() !== ""
+        const hasPropEntryKey = Object.prototype.hasOwnProperty.call(
+          currentProposedMap,
+          checkDest
         );
+        const propEntry = hasPropEntryKey ? currentProposedMap[checkDest] : undefined;
+        const propValStr = getProposalValueString(propEntry);
+        const isManualOriginEntry = Boolean(
+          hasPropEntryKey &&
+            (typeof propEntry !== "object" ||
+              propEntry === null ||
+              propEntry.origin !== "AI")
+        );
+        const hasHumanDraft = Boolean(
+          isManualOriginEntry && propValStr.trim() !== ""
+        );
+        if (isManualOriginEntry && propValStr.trim() === "") {
+          hasEmptyManualDraftLock = true;
+        }
 
         const allowRepForCheck = hasExplicitReferenceReplacementFlag(
           propEntry,
@@ -1151,7 +1670,10 @@ export function useBenchV2AiScanController({
               destinationKey: checkDest,
               currentProposedValue: propValStr,
               baselineSnapshot: currentBaseline,
-              allowExplicitReferenceListReplacement: allowRepForCheck
+              allowExplicitReferenceListReplacement: allowRepForCheck,
+              rawProposalEntry: propEntry,
+              proposedMapForProduct: currentProposedMap,
+              keepOriginalMapForProduct: currentKeepOriginalMap
             })
         );
 
@@ -1191,12 +1713,23 @@ export function useBenchV2AiScanController({
             hasLockedHumanOrKeepOriginal = true;
             break;
           }
+          if (checkDest === "custom.chain_cord_length_in" || checkDest === "custom.chain_material") {
+            hasEmptyManualDraftLock = true;
+          }
         }
       }
 
       if (hasLockedHumanOrKeepOriginal && lockedHumanVal !== "") {
         operatorLockedList.push(bareKey);
         contextKeyValues[bareKey] = lockedHumanVal;
+        continue;
+      }
+
+      // If the operator currently has a temporarily empty manual draft or Keep Original (Not set)
+      // on chain_cord_length_in, lock chain_cord_length_in in operator_locked_fields so the server
+      // knows human editing is active without inventing a fake nonblank value.
+      if (hasEmptyManualDraftLock && bareKey === "chain_cord_length_in") {
+        operatorLockedList.push(bareKey);
         continue;
       }
 
@@ -1705,6 +2238,7 @@ export function useBenchV2AiScanController({
       displayNote = "",
       allowExplicitReferenceListReplacement = false,
       trustedGeologyDbProvenance = null,
+      aiKnownStudioHardwareBasis = null,
       baselineForDest = targetBaseline
     }) => {
       const outcome = evaluateAndRecordResolvedAiProposal({
@@ -1715,6 +2249,7 @@ export function useBenchV2AiScanController({
         displayNote,
         allowExplicitReferenceListReplacement,
         trustedGeologyDbProvenance,
+        aiKnownStudioHardwareBasis,
         requestId: pendingScan.requestId,
         targetBaseline: baselineForDest,
         existingProdProposals,
@@ -1913,10 +2448,38 @@ export function useBenchV2AiScanController({
         continue;
       }
 
-      if (isManualOnlyNoAiDestination(destKey, contract)) {
+      // Narrow current-scan exception BEFORE generic manual-only rejection:
+      // Allows ONLY verified current-scan known studio hardware stock `"18"` on
+      // PRODUCT `custom.chain_cord_length_in` when baseline is confirmed blank,
+      // human length state is untouched, and live hardware is compatible.
+      let verifiedKnownHardwareLength = null;
+      if (destKey === "custom.chain_cord_length_in") {
+        const hwLengthCheck = verifyCurrentScanKnownStudioHardwareLengthProposal({
+          entry,
+          rawValue,
+          reportedSource,
+          productId: scannedProductId,
+          requestId: pendingScan.requestId,
+          destKey,
+          contract,
+          targetBaseline,
+          combinedProducerAndVisionProposals,
+          existingProdProposals,
+          existingProdApprovals,
+          existingProdKeepOriginal
+        });
+        if (hwLengthCheck.eligible && hwLengthCheck.basis) {
+          verifiedKnownHardwareLength = hwLengthCheck;
+        } else if (hwLengthCheck.holdReason) {
+          diagnosticsObj["custom.chain_cord_length_in"] = hwLengthCheck.holdReason;
+        }
+      }
+
+      if (!verifiedKnownHardwareLength && isManualOnlyNoAiDestination(destKey, contract)) {
         ignoredManualOnlyCount++;
         const manualReason = isManualMeasurementDestination(destKey)
-          ? "Manual measurement field — excluded from AI staging; enter physical measurement manually."
+          ? diagnosticsObj[destKey] ||
+            "Manual measurement field — excluded from AI staging; enter physical measurement manually."
           : destKey === "native_price" || destKey === "price"
             ? "Manual single-variant price field — excluded from AI staging; enter price manually."
             : contract?.owner === "PRODUCTVARIANT"
@@ -2052,6 +2615,7 @@ export function useBenchV2AiScanController({
       }
 
       const verifiedCustomGeoProvenance =
+        !verifiedKnownHardwareLength &&
         destKey.startsWith("custom.") &&
         AUTHORITATIVE_GEOLOGY_PREAPPROVAL_DESTINATIONS.has(destKey)
           ? verifyTrustedGeologyDbProvenanceForProposal({
@@ -2066,14 +2630,61 @@ export function useBenchV2AiScanController({
       stageOrHoldResolvedProposal({
         destKey,
         normalizedValue: validation.normalizedValue,
-        reportedSource,
+        reportedSource: verifiedKnownHardwareLength
+          ? verifiedKnownHardwareLength.normalizedSource
+          : reportedSource,
+        displayNote: verifiedKnownHardwareLength
+          ? `Confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio stock (${verifiedKnownHardwareLength.basis.matchedHardwareOption})`
+          : "",
         allowExplicitReferenceListReplacement: Boolean(
           directProposalReplacementIntent &&
             validation.allowExplicitReferenceListReplacement === true
         ),
         trustedGeologyDbProvenance: verifiedCustomGeoProvenance,
+        aiKnownStudioHardwareBasis: verifiedKnownHardwareLength
+          ? verifiedKnownHardwareLength.basis
+          : null,
         baselineForDest: targetBaseline
       });
+    }
+
+    // Post-loop safety check: if custom.chain_cord_length_in was staged earlier in key order
+    // (or alongside custom.chain_material), re-verify evaluateAiHardwareLengthSupport against
+    // the finalized existingProdProposals map so any sibling change or hold is honored.
+    const stagedLengthEntryAfterLoop = existingProdProposals["custom.chain_cord_length_in"];
+    if (
+      stagedLengthEntryAfterLoop &&
+      typeof stagedLengthEntryAfterLoop === "object" &&
+      stagedLengthEntryAfterLoop.origin === "AI" &&
+      stagedLengthEntryAfterLoop.aiKnownStudioHardwareBasis &&
+      stagedLengthEntryAfterLoop.aiKnownStudioHardwareBasis.requestId === pendingScan.requestId
+    ) {
+      const postLoopSupport = evaluateAiHardwareLengthSupport({
+        productId: scannedProductId,
+        rawLengthPropEntry: stagedLengthEntryAfterLoop,
+        baselineSnapshot: targetBaseline,
+        proposedMapForProduct: existingProdProposals,
+        keepOriginalMapForProduct: existingProdKeepOriginal
+      });
+      if (!postLoopSupport.isAiHardwareDerived || !postLoopSupport.supported) {
+        delete existingProdProposals["custom.chain_cord_length_in"];
+        delete existingProdApprovals["custom.chain_cord_length_in"];
+        stagedCount = Math.max(0, stagedCount - 1);
+        rejectedInvalidCount++;
+        const holdMsg =
+          postLoopSupport.reason ||
+          "Held AI 18 in studio length proposal: final hardware state did not support 18 in.";
+        proposalsByDestination["custom.chain_cord_length_in"] = {
+          value: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+          source: stagedLengthEntryAfterLoop.source || "Known Studio Hardware Stock",
+          disposition: "Held (hardware basis not supported)",
+          reason: holdMsg
+        };
+        diagnosticsObj["custom.chain_cord_length_in"] = holdMsg;
+        details.push(
+          `[custom.chain_cord_length_in] Held AI studio-stock length proposal: ${holdMsg}`
+        );
+      }
     }
 
     proposedByProductRef.current = {
@@ -2175,7 +2786,47 @@ export function useBenchV2AiScanController({
     if (!altEntry || typeof altEntry.value !== "string") return;
 
     const contract = getFieldContractByDestination(destinationKey);
-    if (isManualOnlyNoAiDestination(destinationKey, contract)) {
+    const currentBaseline = currentBaselineRef.current;
+
+    let validAltHardwareBasis = null;
+    if (
+      destinationKey === "custom.chain_cord_length_in" &&
+      altEntry.value === KNOWN_STUDIO_HARDWARE_LENGTH_IN &&
+      altEntry.aiKnownStudioHardwareBasis &&
+      typeof altEntry.aiKnownStudioHardwareBasis === "object" &&
+      !Array.isArray(altEntry.aiKnownStudioHardwareBasis) &&
+      altEntry.aiKnownStudioHardwareBasis.productId === activeProductId &&
+      altEntry.aiKnownStudioHardwareBasis.destinationKey === "custom.chain_cord_length_in" &&
+      altEntry.aiKnownStudioHardwareBasis.emittedValue === KNOWN_STUDIO_HARDWARE_LENGTH_IN &&
+      currentBaseline &&
+      currentBaseline.productId === activeProductId
+    ) {
+      const candidateAcceptEntry = {
+        value: altEntry.value,
+        source:
+          typeof altEntry.source === "string" && altEntry.source.trim() !== ""
+            ? altEntry.source.trim()
+            : "Known Studio Hardware Stock",
+        origin: "AI",
+        aiKnownStudioHardwareBasis: altEntry.aiKnownStudioHardwareBasis
+      };
+      const projectedMap = {
+        ...(proposedByProductRef.current?.[activeProductId] || {}),
+        [destinationKey]: candidateAcceptEntry
+      };
+      const supportCheck = evaluateAiHardwareLengthSupport({
+        productId: activeProductId,
+        rawLengthPropEntry: candidateAcceptEntry,
+        baselineSnapshot: currentBaseline,
+        proposedMapForProduct: projectedMap,
+        keepOriginalMapForProduct: keepOriginalByProductRef.current?.[activeProductId] || {}
+      });
+      if (supportCheck.isAiHardwareDerived && supportCheck.supported) {
+        validAltHardwareBasis = altEntry.aiKnownStudioHardwareBasis;
+      }
+    }
+
+    if (!validAltHardwareBasis && isManualOnlyNoAiDestination(destinationKey, contract)) {
       return;
     }
 
@@ -2194,9 +2845,9 @@ export function useBenchV2AiScanController({
       contract?.namespace === "shopify" &&
       contract?.expectedType === "list.metaobject_reference" &&
       contract?.isWritableInBatch1 === true &&
-      currentBaselineRef.current
+      currentBaseline
     ) {
-      const obs = buildBaselineObservation(currentBaselineRef.current, destinationKey);
+      const obs = buildBaselineObservation(currentBaseline, destinationKey);
       const storedCheck = inspectStoredReferenceListRawValue(obs.rawValue);
       const proposedCheck = inspectStoredReferenceListRawValue(exactVal);
       if (storedCheck.valid && proposedCheck.valid && proposedCheck.gids.length > 0) {
@@ -2218,6 +2869,11 @@ export function useBenchV2AiScanController({
           ? {
               allowExplicitReferenceListReplacement: true,
               explicitReplacementValue: exactVal
+            }
+          : {}),
+        ...(validAltHardwareBasis
+          ? {
+              aiKnownStudioHardwareBasis: validAltHardwareBasis
             }
           : {}),
         updatedAt: new Date().toISOString()

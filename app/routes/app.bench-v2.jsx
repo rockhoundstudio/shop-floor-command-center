@@ -26,6 +26,7 @@ import {
   getFieldContractByDestination,
   inspectStoredReferenceListRawValue,
   buildBaselineObservation,
+  evaluateAiHardwareLengthSupport,
   createExactValueApprovalRecord,
   createKeepOriginalRecord
 } from "../utils/bench-v2.contract.jsx";
@@ -502,9 +503,43 @@ export default function BenchV2Route() {
   );
 
   const clearDecisionForDestination = useCallback((setter, productId, destinationKey) => {
+    if (setter === setProposedByProduct) {
+      const prevProd = proposedByProductRef.current?.[productId];
+      if (prevProd && Object.prototype.hasOwnProperty.call(prevProd, destinationKey)) {
+        const nextProd = { ...prevProd };
+        delete nextProd[destinationKey];
+        proposedByProductRef.current = {
+          ...proposedByProductRef.current,
+          [productId]: nextProd
+        };
+      }
+    } else if (setter === setApprovalsByProduct) {
+      const prevProd = approvalsByProductRef.current?.[productId];
+      if (prevProd && prevProd[destinationKey]) {
+        const nextProd = { ...prevProd };
+        delete nextProd[destinationKey];
+        approvalsByProductRef.current = {
+          ...approvalsByProductRef.current,
+          [productId]: nextProd
+        };
+      }
+    } else if (setter === setKeepOriginalByProduct) {
+      const prevProd = keepOriginalByProductRef.current?.[productId];
+      if (prevProd && prevProd[destinationKey]) {
+        const nextProd = { ...prevProd };
+        delete nextProd[destinationKey];
+        keepOriginalByProductRef.current = {
+          ...keepOriginalByProductRef.current,
+          [productId]: nextProd
+        };
+      }
+    }
+
     setter((prev) => {
       const prodMap = prev[productId];
-      if (!prodMap || !prodMap[destinationKey]) return prev;
+      if (!prodMap || !Object.prototype.hasOwnProperty.call(prodMap, destinationKey)) {
+        return prev;
+      }
       const nextMap = { ...prodMap };
       delete nextMap[destinationKey];
       return { ...prev, [productId]: nextMap };
@@ -773,6 +808,103 @@ export default function BenchV2Route() {
   const currentApprovalsMap = approvalsByProduct[activeProductId] || {};
   const currentKeepOriginalMap = keepOriginalByProduct[activeProductId] || {};
 
+  /**
+   * Evaluates AI-derived `custom.chain_cord_length_in` support against the
+   * NEXT effective `proposedMapForProduct` and `keepOriginalMapForProduct`
+   * whenever `custom.chain_material` is manually edited, reset, or toggled in
+   * Keep Original.
+   *
+   * - Complete no-op if `custom.chain_cord_length_in` is absent, Manual-origin,
+   *   or has no recorded AI-basis-bound approval (`aiHardwareBasisSignature`).
+   * - Never deletes the `custom.chain_cord_length_in` proposal or any manual/saved
+   *   measurement: clears ONLY the stale AI-basis-bound approval record on
+   *   `custom.chain_cord_length_in` when support is removed or when
+   *   `effectiveHardwareSignature` changes (so a compatible hardware correction
+   *   leaves `"18"` reviewable and unapproved, while an incompatible hardware
+   *   change holds it via `evaluateBenchV2FieldRow` and Save preflight).
+   */
+  const syncAiHardwareLengthApprovalForNextHardwareState = useCallback(
+    (productId, nextProposedForProduct, nextKeepOriginalForProduct) => {
+      if (!isExactProductGid(productId)) return;
+
+      const safeNextProposed =
+        nextProposedForProduct &&
+        typeof nextProposedForProduct === "object" &&
+        !Array.isArray(nextProposedForProduct)
+          ? nextProposedForProduct
+          : {};
+      const safeNextKeepOrig =
+        nextKeepOriginalForProduct &&
+        typeof nextKeepOriginalForProduct === "object" &&
+        !Array.isArray(nextKeepOriginalForProduct)
+          ? nextKeepOriginalForProduct
+          : {};
+
+      const rawLengthEntry = safeNextProposed["custom.chain_cord_length_in"];
+      const existingLengthApproval =
+        approvalsByProductRef.current?.[productId]?.["custom.chain_cord_length_in"] || null;
+
+      if (!existingLengthApproval || typeof existingLengthApproval !== "object") {
+        return;
+      }
+
+      const isAiLengthEntry = Boolean(
+        rawLengthEntry &&
+          typeof rawLengthEntry === "object" &&
+          !Array.isArray(rawLengthEntry) &&
+          rawLengthEntry.origin === "AI"
+      );
+      const hasRecordedAiSignature = Boolean(
+        existingLengthApproval.aiHardwareBasisSignature !== undefined &&
+          existingLengthApproval.aiHardwareBasisSignature !== null
+      );
+
+      // Never clear a Manual-origin length approval when hardware changes.
+      if (!isAiLengthEntry && !hasRecordedAiSignature) {
+        return;
+      }
+
+      if (
+        !isAiLengthEntry ||
+        typeof existingLengthApproval.aiHardwareBasisSignature !== "string" ||
+        existingLengthApproval.aiHardwareBasisSignature === ""
+      ) {
+        clearDecisionForDestination(
+          setApprovalsByProduct,
+          productId,
+          "custom.chain_cord_length_in"
+        );
+        return;
+      }
+
+      const baselineSnap =
+        currentBaselineRef.current && currentBaselineRef.current.productId === productId
+          ? currentBaselineRef.current
+          : baselineByProductRef.current?.[productId] || null;
+
+      const supportEval = evaluateAiHardwareLengthSupport({
+        productId,
+        rawLengthPropEntry: rawLengthEntry,
+        baselineSnapshot: baselineSnap,
+        proposedMapForProduct: safeNextProposed,
+        keepOriginalMapForProduct: safeNextKeepOrig
+      });
+
+      if (
+        !supportEval.isAiHardwareDerived ||
+        !supportEval.supported ||
+        supportEval.effectiveHardwareSignature !== existingLengthApproval.aiHardwareBasisSignature
+      ) {
+        clearDecisionForDestination(
+          setApprovalsByProduct,
+          productId,
+          "custom.chain_cord_length_in"
+        );
+      }
+    },
+    [clearDecisionForDestination]
+  );
+
   const activeProductPieceName =
     (typeof currentBaseline?.currentMetafields?.["custom.piece_name"] === "string" &&
       currentBaseline.currentMetafields["custom.piece_name"].trim() !== ""
@@ -936,25 +1068,53 @@ export default function BenchV2Route() {
         exactString.trim() !== ""
     );
 
-    setProposedByProduct((prev) => {
-      const prodMap = { ...(prev[activeProductId] || {}) };
-      prodMap[destinationKey] = {
-        value: exactString,
-        source: "Manual",
-        origin: "Manual",
-        ...(shouldBindExplicitReplacement
-          ? {
-              allowExplicitReferenceListReplacement: true,
-              explicitReplacementValue: exactString
-            }
-          : {}),
-        updatedAt: new Date().toISOString()
-      };
-      return { ...prev, [activeProductId]: prodMap };
-    });
+    // Construct a fresh Manual-origin proposal entry with zero inherited AI metadata
+    // (`aiKnownStudioHardwareBasis` or `trustedGeologyDbProvenance`), even if the
+    // typed value on `custom.chain_cord_length_in` remains `"18"`.
+    const manualProposalEntry = {
+      value: exactString,
+      source: "Manual",
+      origin: "Manual",
+      ...(shouldBindExplicitReplacement
+        ? {
+            allowExplicitReferenceListReplacement: true,
+            explicitReplacementValue: exactString
+          }
+        : {}),
+      updatedAt: new Date().toISOString()
+    };
+
+    const nextProdProposals = {
+      ...(proposedByProductRef.current?.[activeProductId] || {}),
+      [destinationKey]: manualProposalEntry
+    };
+    proposedByProductRef.current = {
+      ...proposedByProductRef.current,
+      [activeProductId]: nextProdProposals
+    };
+
+    setProposedByProduct((prev) => ({
+      ...prev,
+      [activeProductId]: {
+        ...(prev[activeProductId] || {}),
+        [destinationKey]: manualProposalEntry
+      }
+    }));
 
     clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
     clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
+
+    if (destinationKey === "custom.chain_material") {
+      const nextProdKeepOriginal = {
+        ...(keepOriginalByProductRef.current?.[activeProductId] || {})
+      };
+      delete nextProdKeepOriginal[destinationKey];
+      syncAiHardwareLengthApprovalForNextHardwareState(
+        activeProductId,
+        nextProdProposals,
+        nextProdKeepOriginal
+      );
+    }
   };
 
   const handleManualProposalChange = (destinationKey, rawNewValue) => {
@@ -1109,8 +1269,24 @@ export default function BenchV2Route() {
         }
         setClientPrevalidationBanner(null);
         releaseRetainedFieldEditor(activeProductId, destKey);
+
+        const nextProdProposals = {
+          ...(proposedByProductRef.current?.[activeProductId] || {})
+        };
+        delete nextProdProposals[destKey];
+
         clearDecisionForDestination(setProposedByProduct, activeProductId, destKey);
         clearDecisionForDestination(setApprovalsByProduct, activeProductId, destKey);
+
+        if (destKey === "custom.chain_material") {
+          const currentKeepOrigForProd =
+            keepOriginalByProductRef.current?.[activeProductId] || {};
+          syncAiHardwareLengthApprovalForNextHardwareState(
+            activeProductId,
+            nextProdProposals,
+            currentKeepOrigForProd
+          );
+        }
         return;
       }
 
@@ -1229,9 +1405,27 @@ export default function BenchV2Route() {
     setClientPrevalidationBanner(null);
     releaseRetainedFieldEditor(activeProductId, destinationKey);
 
+    const nextProdProposals = {
+      ...(proposedByProductRef.current?.[activeProductId] || {})
+    };
+    delete nextProdProposals[destinationKey];
+
+    const nextProdKeepOriginal = {
+      ...(keepOriginalByProductRef.current?.[activeProductId] || {})
+    };
+    delete nextProdKeepOriginal[destinationKey];
+
     clearDecisionForDestination(setProposedByProduct, activeProductId, destinationKey);
     clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
     clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
+
+    if (destinationKey === "custom.chain_material") {
+      syncAiHardwareLengthApprovalForNextHardwareState(
+        activeProductId,
+        nextProdProposals,
+        nextProdKeepOriginal
+      );
+    }
   };
 
   const handleToggleApproval = (destinationKey, currentlyApproved) => {
@@ -1243,7 +1437,12 @@ export default function BenchV2Route() {
       return;
     }
 
-    const rawPropEntry = currentProposedMap[destinationKey];
+    const latestProposedMap =
+      proposedByProductRef.current?.[activeProductId] || currentProposedMap;
+    const latestKeepOriginalMap =
+      keepOriginalByProductRef.current?.[activeProductId] || currentKeepOriginalMap;
+
+    const rawPropEntry = latestProposedMap[destinationKey];
     const exactProposedValue = getProposalValueString(rawPropEntry);
     const allowExplicitReplacement = hasExplicitReferenceReplacementFlag(
       rawPropEntry,
@@ -1261,12 +1460,20 @@ export default function BenchV2Route() {
       return;
     }
 
+    const nextKeepOriginalMapForApproval = {
+      ...latestKeepOriginalMap
+    };
+    delete nextKeepOriginalMapForApproval[destinationKey];
+
     const created = createExactValueApprovalRecord({
       productId: activeProductId,
       destinationKey,
       proposedValue: exactProposedValue,
       baselineSnapshot: currentBaseline,
-      allowExplicitReferenceListReplacement: allowExplicitReplacement
+      allowExplicitReferenceListReplacement: allowExplicitReplacement,
+      rawProposalEntry: rawPropEntry,
+      proposedMapForProduct: latestProposedMap,
+      keepOriginalMapForProduct: nextKeepOriginalMapForApproval
     });
 
     if (!created.ok || !created.record) {
@@ -1279,6 +1486,15 @@ export default function BenchV2Route() {
     }
 
     clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
+
+    const nextApprovalsForProd = {
+      ...(approvalsByProductRef.current?.[activeProductId] || {}),
+      [destinationKey]: created.record
+    };
+    approvalsByProductRef.current = {
+      ...approvalsByProductRef.current,
+      [activeProductId]: nextApprovalsForProd
+    };
 
     setApprovalsByProduct((prev) => ({
       ...prev,
@@ -1293,18 +1509,34 @@ export default function BenchV2Route() {
     setClientPrevalidationBanner(null);
     releaseRetainedFieldEditor(activeProductId, destinationKey);
 
+    const latestProposedMap =
+      proposedByProductRef.current?.[activeProductId] || currentProposedMap;
+    const latestKeepOriginalMap =
+      keepOriginalByProductRef.current?.[activeProductId] || currentKeepOriginalMap;
+
     if (currentlyKeepOriginal) {
+      const nextProdKeepOriginal = { ...latestKeepOriginalMap };
+      delete nextProdKeepOriginal[destinationKey];
+
       clearDecisionForDestination(setKeepOriginalByProduct, activeProductId, destinationKey);
+
+      if (destinationKey === "custom.chain_material") {
+        syncAiHardwareLengthApprovalForNextHardwareState(
+          activeProductId,
+          latestProposedMap,
+          nextProdKeepOriginal
+        );
+      }
       return;
     }
 
     const hasProposalKey = Boolean(
-      currentProposedMap &&
-        typeof currentProposedMap === "object" &&
-        Object.prototype.hasOwnProperty.call(currentProposedMap, destinationKey)
+      latestProposedMap &&
+        typeof latestProposedMap === "object" &&
+        Object.prototype.hasOwnProperty.call(latestProposedMap, destinationKey)
     );
     const exactStagedProposalValue = hasProposalKey
-      ? getProposalValueString(currentProposedMap[destinationKey])
+      ? getProposalValueString(latestProposedMap[destinationKey])
       : "";
 
     let rejectedTargetValue = exactStagedProposalValue;
@@ -1349,6 +1581,15 @@ export default function BenchV2Route() {
 
     clearDecisionForDestination(setApprovalsByProduct, activeProductId, destinationKey);
 
+    const nextProdKeepOriginal = {
+      ...latestKeepOriginalMap,
+      [destinationKey]: created.record
+    };
+    keepOriginalByProductRef.current = {
+      ...keepOriginalByProductRef.current,
+      [activeProductId]: nextProdKeepOriginal
+    };
+
     setKeepOriginalByProduct((prev) => ({
       ...prev,
       [activeProductId]: {
@@ -1356,6 +1597,14 @@ export default function BenchV2Route() {
         [destinationKey]: created.record
       }
     }));
+
+    if (destinationKey === "custom.chain_material") {
+      syncAiHardwareLengthApprovalForNextHardwareState(
+        activeProductId,
+        latestProposedMap,
+        nextProdKeepOriginal
+      );
+    }
   };
 
   const {

@@ -406,12 +406,40 @@ export async function executeTab3FullRescanIntent({ intent, body, admin }) {
     delete parsedVision.primary_use;
     delete parsedVision.necklace_design;
     delete parsedVision.verified_color_pattern_choices;
+    // Strip any raw model length assertions BEFORE building rawVisionSnapshot or tab3Data;
+    // confirmed studio stock length ("18") is derived exclusively by buildBenchV2ProducerProposals.
+    delete parsedVision.chain_cord_length_in;
+    delete parsedVision["custom.chain_cord_length_in"];
     stripRetiredParkedProducerEntries(parsedVision, "PRODUCT");
+
+    let heldUnverifiedVisionSterlingSilver = false;
+    if (
+      parsedVision &&
+      typeof parsedVision === "object" &&
+      !Array.isArray(parsedVision) &&
+      typeof parsedVision.chain_material === "string" &&
+      /^sterling\s+silver\s+chain$/i.test(parsedVision.chain_material.trim())
+    ) {
+      const hasSavedOrLockedSterling = Boolean(
+        currentData.chain_material !== undefined &&
+          /^sterling\s+silver\s+chain$/i.test(String(currentData.chain_material).trim())
+      );
+      if (!hasSavedOrLockedSterling) {
+        delete parsedVision.chain_material;
+        heldUnverifiedVisionSterlingSilver = true;
+      }
+    }
 
     const rawVisionSnapshot = {};
     if (parsedVision && typeof parsedVision === "object" && !Array.isArray(parsedVision)) {
       for (const [vk, vv] of Object.entries(parsedVision)) {
-        if (vk === "verified_color_pattern_choices") continue;
+        if (
+          vk === "verified_color_pattern_choices" ||
+          vk === "chain_cord_length_in" ||
+          vk === "custom.chain_cord_length_in"
+        ) {
+          continue;
+        }
         if (typeof vv === "string" || typeof vv === "boolean" || typeof vv === "number") {
           rawVisionSnapshot[vk] = vv;
         }
@@ -544,7 +572,7 @@ export async function executeTab3FullRescanIntent({ intent, body, admin }) {
     const protectedKeys = [
       "color_pattern", "primary_color", "secondary_colors", "color",
       "cut_and_shape", "stone_shape",
-      "dimensions_mm", "overall_solid_length_in",
+      "dimensions_mm", "chain_cord_length_in", "overall_solid_length_in",
       "honest_flaws_and_character", "surface_finish", "jewelry_finding_type", "bail_included",
       "chain_material", "wire_material", "secondary_medium", "primary_medium", "material", "stone_family",
       "product_format", "jewelry_type", "chain_link_type",
@@ -786,6 +814,7 @@ export async function executeTab3FullRescanIntent({ intent, body, admin }) {
     if (currentData.price) payload.price = currentData.price;
     if (currentData.weight_grams) payload.weight_grams = currentData.weight_grams;
     if (currentData.shipping_weight_oz) payload.shipping_weight_oz = currentData.shipping_weight_oz;
+    if (currentData.chain_cord_length_in) payload.chain_cord_length_in = currentData.chain_cord_length_in;
 
     const finalPayload = {};
     for (const [k, v] of Object.entries(payload)) {
@@ -822,6 +851,15 @@ export async function executeTab3FullRescanIntent({ intent, body, admin }) {
       producerDiagnostics = producerDiagnostics && typeof producerDiagnostics === "object"
         ? producerDiagnostics
         : {};
+
+      if (
+        heldUnverifiedVisionSterlingSilver &&
+        !isOriginOrChainMatOperatorLocked(provenance, currentData) &&
+        !producerDiagnostics["custom.chain_material"]
+      ) {
+        producerDiagnostics["custom.chain_material"] =
+          'Held unverified Vision chain_material proposal "Sterling Silver Chain": silver-colored appearance is not proof of sterling silver composition.';
+      }
 
       applyBenchV2DbGeologyDiagnostics({
         geoFields,
@@ -866,6 +904,18 @@ export async function executeTab3FullRescanIntent({ intent, body, admin }) {
       error: `Vision API Failure (Tab 3: ${geminiRes.status})`
     },
     { status: 500 }
+  );
+}
+
+function isOriginOrChainMatOperatorLocked(provenance, currentData) {
+  return Boolean(
+    provenance &&
+      provenance.hasValidProvenance &&
+      provenance.operatorLockedSet instanceof Set &&
+      provenance.operatorLockedSet.has("chain_material") &&
+      currentData &&
+      currentData.chain_material !== undefined &&
+      String(currentData.chain_material).trim() !== ""
   );
 }
 

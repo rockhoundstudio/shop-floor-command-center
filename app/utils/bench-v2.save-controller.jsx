@@ -18,6 +18,7 @@ import {
   checkExistingWriterStringFidelity,
   isExactProductVariantGid,
   getFieldContractByDestination,
+  evaluateAiHardwareLengthSupport,
   validateBatch1ProposedValue,
   isExactValueApprovalValid,
   isKeepOriginalRecordValid
@@ -799,13 +800,73 @@ export function useBenchV2SaveController({
         continue;
       }
 
+      if (
+        contract.owner === "PRODUCT" &&
+        contract.destinationKey === "custom.chain_cord_length_in"
+      ) {
+        const isAiDerivedLengthEntry = Boolean(
+          rawPropEntry &&
+            typeof rawPropEntry === "object" &&
+            !Array.isArray(rawPropEntry) &&
+            rawPropEntry.origin === "AI"
+        );
+        const hasRecordedAiBasisSignature = Boolean(
+          approvalRec &&
+            typeof approvalRec === "object" &&
+            approvalRec.aiHardwareBasisSignature !== undefined &&
+            approvalRec.aiHardwareBasisSignature !== null
+        );
+
+        if (isAiDerivedLengthEntry || hasRecordedAiBasisSignature) {
+          if (
+            !isAiDerivedLengthEntry ||
+            typeof approvalRec?.aiHardwareBasisSignature !== "string" ||
+            approvalRec.aiHardwareBasisSignature === ""
+          ) {
+            recordLocalPreflightBlock(
+              destKey,
+              "Approval record for AI studio-stock chain/cord length is out of date or missing verified hardware basis provenance. Review the value and check Approve again."
+            );
+            continue;
+          }
+
+          const hwSupport = evaluateAiHardwareLengthSupport({
+            productId: activeProductId,
+            rawLengthPropEntry: rawPropEntry,
+            baselineSnapshot: currentBaseline,
+            proposedMapForProduct: currentProposedMap,
+            keepOriginalMapForProduct: currentKeepOriginalMap
+          });
+
+          if (!hwSupport.isAiHardwareDerived || !hwSupport.supported) {
+            recordLocalPreflightBlock(
+              destKey,
+              hwSupport.reason ||
+                "AI studio-stock chain/cord length proposal is no longer supported by the current hardware state."
+            );
+            continue;
+          }
+
+          if (hwSupport.effectiveHardwareSignature !== approvalRec.aiHardwareBasisSignature) {
+            recordLocalPreflightBlock(
+              destKey,
+              "Studio hardware basis changed since this 18 in length was approved. Review custom.chain_cord_length_in and check Approve again."
+            );
+            continue;
+          }
+        }
+      }
+
       const stillValidApproval = isExactValueApprovalValid({
         approvalRecord: approvalRec,
         productId: activeProductId,
         destinationKey: destKey,
         currentProposedValue,
         baselineSnapshot: currentBaseline,
-        allowExplicitReferenceListReplacement: allowExplicitReplacement
+        allowExplicitReferenceListReplacement: allowExplicitReplacement,
+        rawProposalEntry: rawPropEntry,
+        proposedMapForProduct: currentProposedMap,
+        keepOriginalMapForProduct: currentKeepOriginalMap
       });
 
       if (!stillValidApproval) {
@@ -971,7 +1032,7 @@ export function useBenchV2SaveController({
         title: `Saving ${submittedDestinations.length} valid approved field${
           submittedDestinations.length === 1 ? "" : "s"
         }; ${localBlockedDestKeys.length} blocked field${
-          localBlockedDestKeys.length === 1 ? " was" : "s were"
+          localBlockedDestKeys.length === 1 ? "" : "s were"
         } held back in Needs Review`,
         reasons: prevalidationErrors
       });

@@ -269,6 +269,7 @@ export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "secondary_colors",
   "color",
   "dimensions_mm",
+  "chain_cord_length_in",
   "weight_grams",
   "shipping_weight_oz",
   "price",
@@ -318,6 +319,174 @@ export const ENGINE_ALLOWED_PROVENANCE_BARE_KEYS = Object.freeze([
   "rock_formation",
   "geological_age"
 ]);
+
+// ==========================================================================
+// CONFIRMED STUDIO HARDWARE STOCK LENGTH & COMPATIBILITY HELPERS
+// Reuses DROPDOWN_OPTIONS.chain_material directly (supports string or {label, value}
+// entry shapes with zero duplicated stock list).
+// ==========================================================================
+
+export const KNOWN_STUDIO_HARDWARE_LENGTH_IN = "18";
+
+const CONFIRMED_SILVER_NECKLACE_STOCK_OPTION = "Silver Plated Snake Chain";
+
+function extractDropdownOptionCanonicalString(rawOpt) {
+  if (typeof rawOpt === "string") {
+    return rawOpt.trim();
+  }
+  if (rawOpt && typeof rawOpt === "object" && !Array.isArray(rawOpt)) {
+    if (typeof rawOpt.value === "string" && rawOpt.value.trim() !== "") {
+      return rawOpt.value.trim();
+    }
+    if (typeof rawOpt.label === "string" && rawOpt.label.trim() !== "") {
+      return rawOpt.label.trim();
+    }
+  }
+  return "";
+}
+
+const KNOWN_18_INCH_STUDIO_HARDWARE_BY_LOWER = Object.freeze(
+  (() => {
+    const map = new Map();
+    const rawOptions = Array.isArray(DROPDOWN_OPTIONS?.chain_material)
+      ? DROPDOWN_OPTIONS.chain_material
+      : [];
+
+    for (const rawOpt of rawOptions) {
+      const canonicalOption = extractDropdownOptionCanonicalString(rawOpt);
+      if (!canonicalOption) continue;
+
+      if (canonicalOption === CONFIRMED_SILVER_NECKLACE_STOCK_OPTION) {
+        map.set(
+          canonicalOption.toLowerCase(),
+          Object.freeze({
+            matched: true,
+            canonicalOption,
+            category: "silver_necklace_stock",
+            lengthIn: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+            isLegacyGenericCord: false
+          })
+        );
+      } else if (
+        canonicalOption.endsWith(" Cord") &&
+        canonicalOption.length > 5 &&
+        !/^none$/i.test(canonicalOption)
+      ) {
+        map.set(
+          canonicalOption.toLowerCase(),
+          Object.freeze({
+            matched: true,
+            canonicalOption,
+            category: "studio_cord_stock",
+            lengthIn: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+            isLegacyGenericCord: false
+          })
+        );
+      }
+    }
+    return map;
+  })()
+);
+
+const UNMATCHED_STUDIO_HARDWARE_LENGTH_RESULT = Object.freeze({
+  matched: false,
+  canonicalOption: "",
+  category: null,
+  lengthIn: "",
+  isLegacyGenericCord: false
+});
+
+/**
+ * Recognizes ONLY exact trimmed case-insensitive legacy generic `"Cord"`
+ * saved by earlier prompts (`/^cord$/i`). Rejects substring/compound strings
+ * such as `"Custom Hemp"`, `"Leather Cord 24"`, or color-specific picklist cords.
+ */
+export function isLegacyGenericStudioCordLabel(rawValue) {
+  if (typeof rawValue !== "string") return false;
+  return /^cord$/i.test(rawValue.trim());
+}
+
+/**
+ * Resolves whether a raw `chain_material` string matches one of the 12 confirmed
+ * 18-inch studio stock options in `DROPDOWN_OPTIONS.chain_material`
+ * (`"Silver Plated Snake Chain"` or one of the 11 `"<Color> Cord"` options).
+ *
+ * `"Gold Plated Snake Chain"`, `"Sterling Silver Chain"`, `"None"`, bare `"Cord"`,
+ * and any arbitrary non-picklist string return `matched: false`.
+ */
+export function resolveKnownStudioHardwareOptionLength(rawChainMaterial) {
+  if (typeof rawChainMaterial !== "string") {
+    return UNMATCHED_STUDIO_HARDWARE_LENGTH_RESULT;
+  }
+  const trimmed = rawChainMaterial.trim();
+  if (!trimmed) {
+    return UNMATCHED_STUDIO_HARDWARE_LENGTH_RESULT;
+  }
+  const found = KNOWN_18_INCH_STUDIO_HARDWARE_BY_LOWER.get(trimmed.toLowerCase());
+  return found || UNMATCHED_STUDIO_HARDWARE_LENGTH_RESULT;
+}
+
+/**
+ * Pure compatibility check between a canonical known studio hardware option label
+ * string (`matchedOption`, e.g. `"Black Cord"` or `"Silver Plated Snake Chain"`)
+ * and a saved or candidate `chain_material` string (`candidateOrSavedChainMaterial`).
+ *
+ * - `matchedOption` MUST be a canonical label string that resolves via
+ *   `resolveKnownStudioHardwareOptionLength(matchedOption)` (`matched === true`).
+ * - Blank/null/undefined `candidateOrSavedChainMaterial` is compatible (`true`)
+ *   so callers can explicitly control when blank baseline or Keep-Original-on-blank
+ *   is allowed vs. held.
+ * - Exact canonical picklist match (case-insensitive trimmed equality to
+ *   `resolvedMatched.canonicalOption`) is compatible (`true`).
+ * - Legacy generic `"Cord"` (`isLegacyGenericStudioCordLabel`) is compatible ONLY
+ *   when `allowLegacyGenericCord === true` AND `resolvedMatched.category === "studio_cord_stock"`
+ *   (never compatible with `"Silver Plated Snake Chain"`, and never overwrites the
+ *   saved `"Cord"` string).
+ * - Cross-color cords, cross-category hardware, `"None"`, `"Gold Plated Snake Chain"`,
+ *   `"Sterling Silver Chain"`, and arbitrary non-picklist strings return `false`.
+ */
+export function areHardwareOptionsCompatibleForKnownStudioLength({
+  matchedOption,
+  candidateOrSavedChainMaterial,
+  allowLegacyGenericCord = true
+} = {}) {
+  if (typeof matchedOption !== "string") {
+    return false;
+  }
+  const resolvedMatched = resolveKnownStudioHardwareOptionLength(matchedOption);
+  if (!resolvedMatched.matched) {
+    return false;
+  }
+
+  if (
+    candidateOrSavedChainMaterial === undefined ||
+    candidateOrSavedChainMaterial === null
+  ) {
+    return true;
+  }
+  if (typeof candidateOrSavedChainMaterial !== "string") {
+    return false;
+  }
+
+  const trimmedCandidate = candidateOrSavedChainMaterial.trim();
+  if (trimmedCandidate === "") {
+    return true;
+  }
+
+  if (trimmedCandidate.toLowerCase() === resolvedMatched.canonicalOption.toLowerCase()) {
+    return true;
+  }
+
+  if (
+    allowLegacyGenericCord === true &&
+    resolvedMatched.category === "studio_cord_stock" &&
+    isLegacyGenericStudioCordLabel(trimmedCandidate)
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 // Explicit accounting of non-rendered registry records (historical duplicate aliases,
 // product-level channel shadow representations superseded by variant/canonical slots,
@@ -405,7 +574,7 @@ export const BENCH_V2_DRAWERS = Object.freeze([
     subHarness: "SUB_HARNESS_2",
     batchStage: BENCH_V2_BATCH_STAGE.BATCH_1_IMPLEMENTED,
     isImplementedInBatch1: true,
-    description: "Manual chain or cord length (in), accessory exterior dimensions (mm), and fitting/opening/grip dimensions (mm) connected for manual entry and exact-value approval (excluded from AI scan; overall_solid_length_in omitted as cancelled)."
+    description: "Chain or cord length (in) for manual entry or human-reviewable confirmed 18-inch studio hardware stock proposals when blank, plus manual accessory exterior dimensions (mm) and fitting/opening/grip dimensions (mm) connected for manual entry and independent exact-value approval (caliper/opening dimensions excluded from AI scan; overall_solid_length_in omitted as cancelled)."
   }),
   Object.freeze({
     drawerId: "manual_title_and_collection_date",
@@ -919,7 +1088,7 @@ export const BENCH_V2_FIELD_CONTRACTS = Object.freeze([
     "SUB_HARNESS_2",
     "chain_cord_length_in",
     "Chain or Cord Length (in)",
-    "Manual chain or cord length measurement in inches (single_line_text_field, max 255 chars), preserving adjustable/extender notation. Excluded from AI generation/staging; requires independent exact-value approval.",
+    "Chain or cord length measurement in inches (single_line_text_field, max 255 chars), preserving adjustable/extender notation and saved individual exceptions. Supports manual measurement entry or a human-reviewable 18-inch proposal when blank and a compatible confirmed studio hardware stock option is identified; unverified AI guesses are rejected and independent exact-value approval is required.",
     { isManualOnlyNoAi: true }
   ),
   defineBatch1CustomField(

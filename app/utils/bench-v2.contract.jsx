@@ -33,6 +33,10 @@ import {
   BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+  isLegacyGenericStudioCordLabel,
+  resolveKnownStudioHardwareOptionLength,
+  areHardwareOptionsCompatibleForKnownStudioLength,
   BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS,
   BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS,
   isParkedOrProtectedDrawerId,
@@ -87,6 +91,10 @@ export {
   BENCH_V2_OPT_IN_UNHELD_CUSTOM_DESTINATIONS,
   REVIEWED_EXACT_DESTINATION_TYPE_CONTRACTS,
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+  isLegacyGenericStudioCordLabel,
+  resolveKnownStudioHardwareOptionLength,
+  areHardwareOptionsCompatibleForKnownStudioLength,
   BENCH_V2_NON_RENDERED_HISTORICAL_RECORDS,
   BENCH_V2_PARKED_AND_PROTECTED_DRAWER_IDS,
   isParkedOrProtectedDrawerId,
@@ -128,6 +136,9 @@ const PLAIN_TEXT_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 const isBlankOrWhitespaceOnly = (str) =>
   typeof str !== "string" || str.trim() === "";
 
+const isConfirmedBlankBaselinePresence = (presence) =>
+  presence === "absent" || presence === "null" || presence === "empty_string";
+
 export function getProposalValueString(rawEntry) {
   return rawEntry && typeof rawEntry === "object" && typeof rawEntry.value === "string"
     ? rawEntry.value
@@ -160,6 +171,280 @@ export function hasExplicitReferenceReplacementFlag(rawEntry, destinationKey, ex
       typeof rawEntry.explicitReplacementValue === "string" &&
       rawEntry.explicitReplacementValue === exactProposedValue
   );
+}
+
+/**
+ * Pure live-state support & hardware-basis signature evaluator restricted to
+ * AI-derived known-studio-stock `"18"` proposals on PRODUCT `custom.chain_cord_length_in`.
+ *
+ * - Complete no-op for Manual proposals (`origin !== "AI"`): returns
+ *   `{ isAiHardwareDerived: false, supported: true, effectiveHardwareSignature: null, reason: null }`.
+ * - Never calls `validateBatch1ProposedValue`, `createExactValueApprovalRecord`,
+ *   `isExactValueApprovalValid`, or `evaluateBenchV2FieldRow` (zero recursion).
+ * - Requires complete known-blank baseline evidence on `custom.chain_cord_length_in`
+ *   (`evidenceAvailable === true` and `presence` in `{"absent", "null", "empty_string"}`);
+ *   unknown/incomplete reads are NOT treated as blank, and a populated saved length
+ *   is strictly preserved.
+ * - Requires explicit `proposedMapForProduct` context to verify active sibling
+ *   `custom.chain_material` support; missing sibling context is never silently
+ *   treated as verified support for an AI-derived length proposal or approval.
+ */
+export function evaluateAiHardwareLengthSupport({
+  productId,
+  rawLengthPropEntry,
+  baselineSnapshot,
+  proposedMapForProduct,
+  keepOriginalMapForProduct
+} = {}) {
+  if (
+    !rawLengthPropEntry ||
+    typeof rawLengthPropEntry !== "object" ||
+    Array.isArray(rawLengthPropEntry) ||
+    rawLengthPropEntry.origin !== "AI"
+  ) {
+    return Object.freeze({
+      isAiHardwareDerived: false,
+      supported: true,
+      effectiveHardwareSignature: null,
+      reason: null
+    });
+  }
+
+  if (!isExactProductGid(productId)) {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason: "Exact Shopify Product GID is required to verify AI studio hardware length support."
+    });
+  }
+
+  const basis = rawLengthPropEntry.aiKnownStudioHardwareBasis;
+  const rawBasisMatchedOption =
+    basis && typeof basis === "object" && !Array.isArray(basis) && typeof basis.matchedHardwareOption === "string"
+      ? basis.matchedHardwareOption.trim()
+      : "";
+  const resolvedBasisHw = resolveKnownStudioHardwareOptionLength(rawBasisMatchedOption);
+
+  if (
+    !basis ||
+    typeof basis !== "object" ||
+    Array.isArray(basis) ||
+    rawLengthPropEntry.value !== KNOWN_STUDIO_HARDWARE_LENGTH_IN ||
+    basis.emittedValue !== KNOWN_STUDIO_HARDWARE_LENGTH_IN ||
+    !resolvedBasisHw.matched ||
+    resolvedBasisHw.canonicalOption !== rawBasisMatchedOption ||
+    (typeof basis.hardwareCategory === "string" && basis.hardwareCategory !== resolvedBasisHw.category)
+  ) {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason: "Unverified AI chain/cord length draft lacks confirmed studio hardware stock provenance."
+    });
+  }
+
+  const lengthBaselineObs = buildBaselineObservation(
+    baselineSnapshot,
+    "custom.chain_cord_length_in"
+  );
+  if (
+    !lengthBaselineObs.evidenceAvailable ||
+    lengthBaselineObs.metafieldsCompleteState !== "complete"
+  ) {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason:
+        "Saved baseline for custom.chain_cord_length_in is incomplete or unavailable; cannot confirm blank length for AI studio-stock proposal."
+    });
+  }
+
+  if (lengthBaselineObs.presence === "present") {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason:
+        "A saved chain/cord length now exists on this product; AI studio-stock draft is held so saved measurement is preserved."
+    });
+  }
+
+  if (!isConfirmedBlankBaselinePresence(lengthBaselineObs.presence)) {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason:
+        "Saved baseline state for custom.chain_cord_length_in could not be confirmed blank; AI studio-stock draft is held."
+    });
+  }
+
+  if (
+    !proposedMapForProduct ||
+    typeof proposedMapForProduct !== "object" ||
+    Array.isArray(proposedMapForProduct)
+  ) {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason:
+        "Live hardware proposal context is required to verify AI 18 in studio-stock length support."
+    });
+  }
+
+  const chainMatBaselineObs = buildBaselineObservation(
+    baselineSnapshot,
+    "custom.chain_material"
+  );
+  if (
+    !chainMatBaselineObs.evidenceAvailable ||
+    chainMatBaselineObs.metafieldsCompleteState !== "complete"
+  ) {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason:
+        "Saved baseline for custom.chain_material is incomplete or unavailable; cannot verify studio hardware compatibility for AI 18 in length."
+    });
+  }
+
+  const savedChainMat =
+    chainMatBaselineObs.presence === "present" && typeof chainMatBaselineObs.rawValue === "string"
+      ? chainMatBaselineObs.rawValue.trim()
+      : "";
+
+  const hasChainMatDraft = Object.prototype.hasOwnProperty.call(
+    proposedMapForProduct,
+    "custom.chain_material"
+  );
+  const chainMatProp = hasChainMatDraft ? proposedMapForProduct["custom.chain_material"] : undefined;
+  const chainMatVal = hasChainMatDraft ? getProposalValueString(chainMatProp) : "";
+
+  const safeKeepOriginalMap =
+    keepOriginalMapForProduct &&
+    typeof keepOriginalMapForProduct === "object" &&
+    !Array.isArray(keepOriginalMapForProduct)
+      ? keepOriginalMapForProduct
+      : null;
+  const chainMatKeepOrigRec = safeKeepOriginalMap?.["custom.chain_material"] || null;
+
+  const isChainMatKeepOriginal = Boolean(
+    hasChainMatDraft &&
+      !isBlankOrWhitespaceOnly(chainMatVal) &&
+      isKeepOriginalRecordValid({
+        keepOriginalRecord: chainMatKeepOrigRec,
+        productId,
+        destinationKey: "custom.chain_material",
+        currentProposedValue: chainMatVal,
+        baselineSnapshot
+      })
+  );
+
+  // Branch 1: Operator explicitly bound Keep Original on custom.chain_material
+  if (isChainMatKeepOriginal) {
+    if (savedChainMat === "") {
+      return Object.freeze({
+        isAiHardwareDerived: true,
+        supported: false,
+        effectiveHardwareSignature: null,
+        reason:
+          "Held AI 18 in studio length: custom.chain_material was marked Keep Original (Not set), removing the hardware basis for 18 in. Edit manually if needed or Reset to Saved."
+      });
+    }
+
+    const isCompatibleSavedWithBasis = areHardwareOptionsCompatibleForKnownStudioLength({
+      matchedOption: resolvedBasisHw.canonicalOption,
+      candidateOrSavedChainMaterial: savedChainMat,
+      allowLegacyGenericCord: true
+    });
+
+    if (isCompatibleSavedWithBasis) {
+      return Object.freeze({
+        isAiHardwareDerived: true,
+        supported: true,
+        effectiveHardwareSignature: `ai_hw_basis::keep_orig::saved:${savedChainMat}`,
+        reason: null
+      });
+    }
+
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason: `Held AI 18 in studio length: custom.chain_material is marked Keep Original ("${savedChainMat}"), which is not compatible with confirmed 18 in studio option "${resolvedBasisHw.canonicalOption}". Enter a manual measurement or Reset to Saved.`
+    });
+  }
+
+  // Branch 2: Active staged AI or Manual draft on custom.chain_material
+  if (hasChainMatDraft) {
+    const trimmedDraftMat = chainMatVal.trim();
+    if (trimmedDraftMat === "") {
+      return Object.freeze({
+        isAiHardwareDerived: true,
+        supported: false,
+        effectiveHardwareSignature: null,
+        reason: "Held AI 18 in studio length: custom.chain_material draft is currently blank."
+      });
+    }
+
+    const draftKnown = resolveKnownStudioHardwareOptionLength(trimmedDraftMat);
+    if (draftKnown.matched) {
+      return Object.freeze({
+        isAiHardwareDerived: true,
+        supported: true,
+        effectiveHardwareSignature: `ai_hw_basis::draft:${draftKnown.canonicalOption}::saved:${savedChainMat}`,
+        reason: null
+      });
+    }
+
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason: `AI 18 in studio-stock proposal is no longer supported because custom.chain_material was changed to "${trimmedDraftMat}", which is not a confirmed 18 in studio stock option. Enter a manual measurement or Reset to Saved.`
+    });
+  }
+
+  // Branch 3: No draft on custom.chain_material (e.g. Reset to Saved or saved in an earlier partial save)
+  if (savedChainMat === "") {
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: false,
+      effectiveHardwareSignature: null,
+      reason:
+        "Held AI 18 in studio length: custom.chain_material draft was cleared while saved Chain Material is Not set. Select a studio chain/cord option or enter a manual length."
+    });
+  }
+
+  const savedKnown = resolveKnownStudioHardwareOptionLength(savedChainMat);
+  const isSavedLegacyCompatible = areHardwareOptionsCompatibleForKnownStudioLength({
+    matchedOption: resolvedBasisHw.canonicalOption,
+    candidateOrSavedChainMaterial: savedChainMat,
+    allowLegacyGenericCord: true
+  });
+
+  if (savedKnown.matched || isSavedLegacyCompatible) {
+    const canonicalOrLegacySaved = savedKnown.matched
+      ? savedKnown.canonicalOption
+      : savedChainMat;
+    return Object.freeze({
+      isAiHardwareDerived: true,
+      supported: true,
+      effectiveHardwareSignature: `ai_hw_basis::saved_only:${canonicalOrLegacySaved}`,
+      reason: null
+    });
+  }
+
+  return Object.freeze({
+    isAiHardwareDerived: true,
+    supported: false,
+    effectiveHardwareSignature: null,
+    reason: `Held AI 18 in studio length: saved custom.chain_material ("${savedChainMat}") is not a confirmed 18 in studio stock option. Enter a manual measurement or Reset to Saved.`
+  });
 }
 
 function parseExactMoneyStringToCentsBigInt(moneyStr) {
@@ -1463,7 +1748,10 @@ export function createExactValueApprovalRecord({
   destinationKey,
   proposedValue,
   baselineSnapshot,
-  allowExplicitReferenceListReplacement = false
+  allowExplicitReferenceListReplacement = false,
+  rawProposalEntry = undefined,
+  proposedMapForProduct = undefined,
+  keepOriginalMapForProduct = undefined
 }) {
   const contract = getFieldContractByDestination(destinationKey);
   const validation = validateBatch1ProposedValue({
@@ -1490,6 +1778,51 @@ export function createExactValueApprovalRecord({
       code: "unchanged_from_baseline",
       record: null
     };
+  }
+
+  let aiHardwareBasisSignature = null;
+  if (contract.owner === "PRODUCT" && contract.destinationKey === "custom.chain_cord_length_in") {
+    const resolvedLengthPropEntry =
+      rawProposalEntry !== undefined
+        ? rawProposalEntry
+        : proposedMapForProduct &&
+            typeof proposedMapForProduct === "object" &&
+            !Array.isArray(proposedMapForProduct)
+          ? proposedMapForProduct["custom.chain_cord_length_in"]
+          : undefined;
+
+    if (
+      resolvedLengthPropEntry &&
+      typeof resolvedLengthPropEntry === "object" &&
+      !Array.isArray(resolvedLengthPropEntry) &&
+      resolvedLengthPropEntry.origin === "AI"
+    ) {
+      const hwSupport = evaluateAiHardwareLengthSupport({
+        productId,
+        rawLengthPropEntry: resolvedLengthPropEntry,
+        baselineSnapshot,
+        proposedMapForProduct,
+        keepOriginalMapForProduct
+      });
+
+      if (
+        !hwSupport.isAiHardwareDerived ||
+        !hwSupport.supported ||
+        typeof hwSupport.effectiveHardwareSignature !== "string" ||
+        hwSupport.effectiveHardwareSignature === ""
+      ) {
+        return {
+          ok: false,
+          error:
+            hwSupport.reason ||
+            "Cannot approve AI-derived chain/cord length: hardware stock basis is not verified or is no longer supported.",
+          code: "ai_hardware_basis_invalidated",
+          record: null
+        };
+      }
+
+      aiHardwareBasisSignature = hwSupport.effectiveHardwareSignature;
+    }
   }
 
   const obs = validation.baselineObservation;
@@ -1540,6 +1873,7 @@ export function createExactValueApprovalRecord({
       : null,
     allowExplicitReferenceListReplacement: effectiveAllowExplicitReplacement,
     removedStoredReferenceGids: removedStoredGids,
+    aiHardwareBasisSignature,
     destinationKey: obs.destinationKey,
     approvedValue: validation.normalizedValue,
     verifiedType: validation.verifiedActualType,
@@ -1557,7 +1891,10 @@ export function isExactValueApprovalValid({
   destinationKey,
   currentProposedValue,
   baselineSnapshot,
-  allowExplicitReferenceListReplacement = undefined
+  allowExplicitReferenceListReplacement = undefined,
+  rawProposalEntry = undefined,
+  proposedMapForProduct = undefined,
+  keepOriginalMapForProduct = undefined
 }) {
   if (!approvalRecord || typeof approvalRecord !== "object") return false;
   if (approvalRecord.kind !== "exact_value_approval") return false;
@@ -1647,6 +1984,50 @@ export function isExactValueApprovalValid({
     }
     if (!areStringArraysExactEqual(recordedRemovedGids, expectedRemovedGids)) {
       return false;
+    }
+  }
+
+  if (contract.owner === "PRODUCT" && contract.destinationKey === "custom.chain_cord_length_in") {
+    const resolvedLengthPropEntry =
+      rawProposalEntry !== undefined
+        ? rawProposalEntry
+        : proposedMapForProduct &&
+            typeof proposedMapForProduct === "object" &&
+            !Array.isArray(proposedMapForProduct)
+          ? proposedMapForProduct["custom.chain_cord_length_in"]
+          : undefined;
+
+    const isAiProposal = Boolean(
+      resolvedLengthPropEntry &&
+        typeof resolvedLengthPropEntry === "object" &&
+        !Array.isArray(resolvedLengthPropEntry) &&
+        resolvedLengthPropEntry.origin === "AI"
+    );
+    const hasRecordedAiBasisSignature = Boolean(
+      approvalRecord.aiHardwareBasisSignature !== undefined &&
+        approvalRecord.aiHardwareBasisSignature !== null
+    );
+
+    if (isAiProposal || hasRecordedAiBasisSignature) {
+      if (!isAiProposal || typeof approvalRecord.aiHardwareBasisSignature !== "string" || approvalRecord.aiHardwareBasisSignature === "") {
+        return false;
+      }
+
+      const hwSupport = evaluateAiHardwareLengthSupport({
+        productId,
+        rawLengthPropEntry: resolvedLengthPropEntry,
+        baselineSnapshot,
+        proposedMapForProduct,
+        keepOriginalMapForProduct
+      });
+
+      if (
+        !hwSupport.isAiHardwareDerived ||
+        !hwSupport.supported ||
+        hwSupport.effectiveHardwareSignature !== approvalRecord.aiHardwareBasisSignature
+      ) {
+        return false;
+      }
     }
   }
 
@@ -1870,7 +2251,7 @@ export function evaluateBenchV2FieldRow({
       baselineSnapshot
     });
 
-  const validation = hasNonEmptyProposal
+  const baseValidation = hasNonEmptyProposal
     ? validateBatch1ProposedValue({
         productId,
         destinationKey: contract.destinationKey,
@@ -1880,8 +2261,45 @@ export function evaluateBenchV2FieldRow({
       })
     : null;
 
+  const aiHardwareLengthSupport =
+    contract.owner === "PRODUCT" &&
+    contract.destinationKey === "custom.chain_cord_length_in" &&
+    hasNonEmptyProposal &&
+    rawPropEntry &&
+    typeof rawPropEntry === "object" &&
+    !Array.isArray(rawPropEntry) &&
+    rawPropEntry.origin === "AI"
+      ? evaluateAiHardwareLengthSupport({
+          productId,
+          rawLengthPropEntry: rawPropEntry,
+          baselineSnapshot,
+          proposedMapForProduct,
+          keepOriginalMapForProduct
+        })
+      : null;
+
+  const isAiHardwareLengthInvalidated = Boolean(
+    aiHardwareLengthSupport &&
+      aiHardwareLengthSupport.isAiHardwareDerived === true &&
+      aiHardwareLengthSupport.supported === false
+  );
+
+  const validation =
+    isAiHardwareLengthInvalidated && baseValidation && baseValidation.valid === true
+      ? Object.freeze({
+          valid: false,
+          code: "ai_hardware_basis_invalidated",
+          reason:
+            aiHardwareLengthSupport.reason ||
+            "AI studio-stock length proposal is no longer supported by the current hardware state.",
+          isUnchangedFromStored: false,
+          baselineObservation: baselineObs
+        })
+      : baseValidation;
+
   const isApproved =
     !isKeepOriginal &&
+    !isAiHardwareLengthInvalidated &&
     hasNonEmptyProposal &&
     Boolean(validation?.valid && !validation?.isUnchangedFromStored) &&
     isExactValueApprovalValid({
@@ -1890,7 +2308,10 @@ export function evaluateBenchV2FieldRow({
       destinationKey: contract.destinationKey,
       currentProposedValue: proposedValue,
       baselineSnapshot,
-      allowExplicitReferenceListReplacement
+      allowExplicitReferenceListReplacement,
+      rawProposalEntry: rawPropEntry,
+      proposedMapForProduct,
+      keepOriginalMapForProduct
     });
 
   let connectionStatus = "Read-Only";
@@ -2023,7 +2444,10 @@ export function evaluateBenchV2FieldRow({
             : `Approved exact value (${validation.verifiedActualType}).`;
   } else if (hasNonEmptyProposal) {
     if (!validation.valid) {
-      reviewStatus = "Blocked Proposal";
+      reviewStatus =
+        validation.code === "ai_hardware_basis_invalidated"
+          ? "Held Proposal (Hardware Basis Changed)"
+          : "Blocked Proposal";
       statusReason = validation.reason;
     } else if (validation.isUnchangedFromStored) {
       reviewStatus = "Unchanged (Matches Stored Value)";

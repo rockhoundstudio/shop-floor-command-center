@@ -20,6 +20,10 @@ import {
 } from "./meta-injector.standardized.jsx";
 import {
   ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
+  KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+  isLegacyGenericStudioCordLabel,
+  resolveKnownStudioHardwareOptionLength,
+  areHardwareOptionsCompatibleForKnownStudioLength,
   isExactProductGid
 } from "./bench-v2.contract.jsx";
 
@@ -33,9 +37,9 @@ export const INVALID_CANDIDATE_FILLERS = new Set([
   "not applicable"
 ]);
 
-// Producer-local provenance set: reuses the 54 shared ENGINE_ALLOWED_PROVENANCE_BARE_KEYS
-// plus legacy "overall_solid_length_in" (kept producer-only for legacy Tab 2/3 provenance;
-// permanently cancelled in Bench V2).
+// Producer-local provenance set: reuses the 55 shared ENGINE_ALLOWED_PROVENANCE_BARE_KEYS
+// (including "chain_cord_length_in") plus legacy "overall_solid_length_in"
+// (kept producer-only for legacy Tab 2/3 provenance; permanently cancelled in Bench V2).
 export const ALLOWED_PROVENANCE_FIELD_KEYS = new Set([
   ...ENGINE_ALLOWED_PROVENANCE_BARE_KEYS,
   "overall_solid_length_in"
@@ -1365,6 +1369,17 @@ export function buildBenchV2ProducerProposals({
 
   const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
   const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
+  const passiveStoredSet = hasValidProvenance ? provenance.passiveStoredSet : new Set();
+
+  const rawProductIdFromBody = String(
+    body?.get?.("pieceId") || body?.get?.("productId") || ""
+  ).trim();
+  const verifiedProductIdForRequest = isExactProductGid(rawProductIdFromBody)
+    ? rawProductIdFromBody
+    : null;
+  const rawRequestIdFromBody = String(body?.get?.("requestId") || "").trim();
+  const verifiedRequestIdForRequest =
+    rawRequestIdFromBody !== "" ? rawRequestIdFromBody : null;
 
   const isBareFieldOperatorLocked = (bareKey) =>
     hasValidProvenance
@@ -1885,7 +1900,7 @@ export function buildBenchV2ProducerProposals({
     );
   }
 
-  // 7. Setting and Hardware Drawer 6 Destinations
+  // 7. Setting and Hardware Drawer 8 Destinations
   const DRAWER_6_HARDWARE_KEYS = [
     "secondary_medium",
     "jewelry_type",
@@ -1906,11 +1921,150 @@ export function buildBenchV2ProducerProposals({
         : cleanNonBlankVisionStr(rawHwVal, hwKey);
     if (!cleanHwStr) continue;
 
+    if (
+      hwKey === "chain_material" &&
+      /^sterling\s+silver\s+chain$/i.test(cleanHwStr)
+    ) {
+      const hasCurrentSavedSterling =
+        currentData.chain_material !== undefined &&
+        /^sterling\s+silver\s+chain$/i.test(String(currentData.chain_material).trim());
+      if (!hasCurrentSavedSterling) {
+        producerDiagnostics["custom.chain_material"] =
+          'Held unverified Vision chain_material proposal "Sterling Silver Chain": silver-colored appearance is not proof of sterling silver composition.';
+        continue;
+      }
+    }
+
+    const normalizedHwStr =
+      hwKey === "chain_material" && resolveKnownStudioHardwareOptionLength(cleanHwStr).matched
+        ? resolveKnownStudioHardwareOptionLength(cleanHwStr).canonicalOption
+        : cleanHwStr;
+
     addProposal(
       `custom.${hwKey}`,
-      cleanHwStr,
+      normalizedHwStr,
       `Gemini Vision (${hwKey})`
     );
+  }
+
+  // 7B. Narrow Known Studio Hardware Stock Length (PRODUCT custom.chain_cord_length_in)
+  // Derives KNOWN_STUDIO_HARDWARE_LENGTH_IN ("18") exclusively from a positively matched
+  // studio hardware option in rawVisionSnapshot.chain_material, never from any model
+  // length assertion. Preserves all nonblank saved measurements, operator locks, and
+  // human hardware decisions; jewelry_type "N/A" alone is never a veto.
+  const hasNonBlankLengthInCurrentData =
+    (currentData.chain_cord_length_in !== undefined &&
+      String(currentData.chain_cord_length_in).trim() !== "") ||
+    (currentData["custom.chain_cord_length_in"] !== undefined &&
+      String(currentData["custom.chain_cord_length_in"]).trim() !== "");
+
+  const isChainCordLengthLockedOrPassive = Boolean(
+    hasNonBlankLengthInCurrentData ||
+      (hasValidProvenance &&
+        (operatorLockedSet.has("chain_cord_length_in") ||
+          passiveStoredSet.has("chain_cord_length_in")))
+  );
+
+  const rawVisChainMatForLength = cleanNonBlankVisionStr(
+    rawVisionSnapshot.chain_material,
+    "chain_material"
+  );
+
+  // Blank or omitted Vision chain_material means unidentified (never proof of absent hardware),
+  // and produces no length proposal or noise diagnostic.
+  if (!isChainCordLengthLockedOrPassive && rawVisChainMatForLength !== "") {
+    const isVisChainMatExplicitNone = /^none$/i.test(rawVisChainMatForLength);
+    const visKnownHw = resolveKnownStudioHardwareOptionLength(rawVisChainMatForLength);
+
+    if (!isVisChainMatExplicitNone && !visKnownHw.matched) {
+      producerDiagnostics["custom.chain_cord_length_in"] =
+        `Omitted studio length proposal: Vision chain_material "${rawVisChainMatForLength}" does not have a confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch studio stock length.`;
+    } else if (visKnownHw.matched) {
+      const rawSuppliedLockedOrSavedChainMat =
+        currentData.chain_material !== undefined
+          ? String(currentData.chain_material).trim()
+          : "";
+      const isChainMatOperatorLocked = Boolean(
+        hasValidProvenance &&
+          operatorLockedSet.has("chain_material") &&
+          rawSuppliedLockedOrSavedChainMat !== ""
+      );
+      const isChainLinkOperatorLockedToNone = Boolean(
+        hasValidProvenance &&
+          operatorLockedSet.has("chain_link_type") &&
+          currentData.chain_link_type !== undefined &&
+          /^none$/i.test(String(currentData.chain_link_type).trim())
+      );
+
+      if (!verifiedProductIdForRequest || !verifiedRequestIdForRequest) {
+        producerDiagnostics["custom.chain_cord_length_in"] =
+          `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal for "${visKnownHw.canonicalOption}": exact product GID and scan requestId are required to bind hardware length provenance.`;
+      } else if (isChainLinkOperatorLockedToNone) {
+        producerDiagnostics["custom.chain_cord_length_in"] =
+          `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: operator-locked custom.chain_link_type is "None".`;
+      } else if (isChainMatOperatorLocked) {
+        // Explicit human lock/Keep Original on chain_material:
+        // Allow legacy generic "Cord" ONLY when Keep Original / saved "Cord" is locked for a confirmed studio cord;
+        // reject "None", "Gold Plated Snake Chain", "Sterling Silver Chain", different color cords, or arbitrary strings.
+        const isLockedMatCompatible = areHardwareOptionsCompatibleForKnownStudioLength({
+          matchedOption: visKnownHw.canonicalOption,
+          candidateOrSavedChainMaterial: rawSuppliedLockedOrSavedChainMat,
+          allowLegacyGenericCord: isLegacyGenericStudioCordLabel(rawSuppliedLockedOrSavedChainMat)
+        });
+
+        if (!isLockedMatCompatible) {
+          producerDiagnostics["custom.chain_cord_length_in"] =
+            `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: operator-locked/kept custom.chain_material ("${rawSuppliedLockedOrSavedChainMat}") is not compatible with photo match "${visKnownHw.canonicalOption}".`;
+        } else {
+          const trustedKnownHardwareLengthProvenance = Object.freeze({
+            verified: true,
+            productId: verifiedProductIdForRequest,
+            requestId: verifiedRequestIdForRequest,
+            destinationKey: "custom.chain_cord_length_in",
+            matchedHardwareOption: visKnownHw.canonicalOption,
+            hardwareCategory: visKnownHw.category,
+            emittedValue: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+            basis: "vision_photo_match_known_studio_stock"
+          });
+
+          producerProposals["custom.chain_cord_length_in"] = {
+            value: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+            source: `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${visKnownHw.canonicalOption}; Gemini Vision photo match)`,
+            trustedKnownHardwareLengthProvenance
+          };
+        }
+      } else {
+        // Not operator-locked on chain_material: check passive saved chain_material compatibility
+        // (allowing passive saved generic "Cord" for confirmed studio cord stock without forcing recategorization).
+        const isSavedMatCompatible = areHardwareOptionsCompatibleForKnownStudioLength({
+          matchedOption: visKnownHw.canonicalOption,
+          candidateOrSavedChainMaterial: rawSuppliedLockedOrSavedChainMat,
+          allowLegacyGenericCord: true
+        });
+
+        if (!isSavedMatCompatible) {
+          producerDiagnostics["custom.chain_cord_length_in"] =
+            `Held ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: saved custom.chain_material ("${rawSuppliedLockedOrSavedChainMat}") conflicts with photo match "${visKnownHw.canonicalOption}". Review and save custom.chain_material first so length is never attached to an incompatible saved hardware option.`;
+        } else {
+          const trustedKnownHardwareLengthProvenance = Object.freeze({
+            verified: true,
+            productId: verifiedProductIdForRequest,
+            requestId: verifiedRequestIdForRequest,
+            destinationKey: "custom.chain_cord_length_in",
+            matchedHardwareOption: visKnownHw.canonicalOption,
+            hardwareCategory: visKnownHw.category,
+            emittedValue: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+            basis: "vision_photo_match_known_studio_stock"
+          });
+
+          producerProposals["custom.chain_cord_length_in"] = {
+            value: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
+            source: `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${visKnownHw.canonicalOption}; Gemini Vision photo match)`,
+            trustedKnownHardwareLengthProvenance
+          };
+        }
+      }
+    }
   }
 
   // 8. Geology Drawer 7 Destinations (12 active custom destinations + 4 producer-backed standardized companions from getGeoData ONLY)
@@ -1964,14 +2118,8 @@ export function buildBenchV2ProducerProposals({
   // Verify authoritative Postgres DB lookup metadata and selected-stone identity match
   // before serialization so _dbLookupMeta (non-enumerable on geoFields) can be bound
   // exclusively to authentic DB-derived geology proposals for this product/request.
-  const rawProductIdForGeo = String(
-    body?.get?.("pieceId") || body?.get?.("productId") || ""
-  ).trim();
-  const verifiedProductIdForGeo = isExactProductGid(rawProductIdForGeo)
-    ? rawProductIdForGeo
-    : null;
-  const rawRequestIdForGeo = String(body?.get?.("requestId") || "").trim();
-  const verifiedRequestIdForGeo = rawRequestIdForGeo !== "" ? rawRequestIdForGeo : null;
+  const verifiedProductIdForGeo = verifiedProductIdForRequest;
+  const verifiedRequestIdForGeo = verifiedRequestIdForRequest;
 
   const stoneIdentityContextForGeoVerify = resolveVerifiedStoneIdentityContext(
     currentData,

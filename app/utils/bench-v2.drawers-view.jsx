@@ -116,6 +116,10 @@ function formatDrawerFieldCopyBlock(row, indexNumber) {
     contract.destinationKey,
     contract
   );
+  const isProductChainCordLength =
+    contract.owner === "PRODUCT" &&
+    contract.namespace === "custom" &&
+    contract.destinationKey === "custom.chain_cord_length_in";
 
   const ownerLineParts = [
     `Owner: ${contract.owner}`,
@@ -140,7 +144,11 @@ function formatDrawerFieldCopyBlock(row, indexNumber) {
     }
   }
   if (isManualOnlyField) {
-    ownerLineParts.push("Manual-Only (No AI Scan)");
+    ownerLineParts.push(
+      isProductChainCordLength
+        ? "Manual / Known 18 in Studio Stock Only"
+        : "Manual-Only (No AI Scan)"
+    );
   }
 
   const loadedBaselineLine = `Loaded Baseline [presence=${obs?.presence || "unavailable"}, evidenceAvailable=${String(Boolean(obs?.evidenceAvailable))}]: ${formatExactLoadedBaselineForCopySafe(row)}`;
@@ -336,10 +344,25 @@ function buildSingleDrawerCopyPacket({
   const drawerKeepOriginalCount = evaluatedRows.filter((r) => r.isKeepOriginal).length;
   const drawerHeldAltCount = evaluatedRows.filter((r) => Boolean(r.heldAiAlternative)).length;
 
+  const hasProductChainCordLengthInDrawer = evaluatedRows.some(
+    (r) =>
+      r.contract.owner === "PRODUCT" &&
+      r.contract.namespace === "custom" &&
+      r.contract.destinationKey === "custom.chain_cord_length_in"
+  );
+  const rawDrawerSubtitle = getDrawerConnectionSubtitle(drawer);
+  const effectiveDrawerSubtitleForCopy =
+    hasProductChainCordLengthInDrawer && typeof rawDrawerSubtitle === "string"
+      ? rawDrawerSubtitle.replace(
+          /^(\d+\/\d+)\s+manual-only\s+ready/,
+          "$1 manual / known-18-in-stock ready"
+        )
+      : rawDrawerSubtitle;
+
   const drawerIdentityBlock = [
     `--- DRAWER & SESSION IDENTITY ---`,
     `Drawer ID: ${drawer.drawerId} | Drawer Number: ${drawer.drawerNumber ?? "Not recorded"} | Title: ${plainDrawerTitle}`,
-    `Drawer Subtitle: ${getDrawerConnectionSubtitle(drawer)}`,
+    `Drawer Subtitle: ${effectiveDrawerSubtitleForCopy}`,
     `Product Title: ${resolvedProductTitle} | Product GID: ${resolvedProductId}`,
     `Bench Session ID: ${resolvedSessionId} | Bench Revision: ${resolvedRevision} | Baseline Loaded At: ${baselineLoadedAt}`,
     `Row Scope: Complete drawer dataset (${evaluatedRows.length} evaluated contract row${evaluatedRows.length === 1 ? "" : "s"} included below; active UI filter="${activeFilter || "All"}", visible in UI=${visibleRows.length}/${evaluatedRows.length})`,

@@ -253,6 +253,10 @@ export function BenchV2FieldCard({
     contract.owner === "PRODUCTVARIANT" &&
     contract.namespace === "native" &&
     contract.destinationKey === "native_price";
+  const isProductChainCordLength =
+    contract.owner === "PRODUCT" &&
+    contract.namespace === "custom" &&
+    contract.destinationKey === "custom.chain_cord_length_in";
   const isDecimalInputModeField =
     isNativeVariantPrice ||
     contract.expectedType === "number_decimal";
@@ -454,6 +458,9 @@ export function BenchV2FieldCard({
     }
   } else if (isNativeVariantPrice) {
     inputPlaceholder = "Enter price in USD, e.g. 45.00";
+  } else if (isProductChainCordLength) {
+    inputPlaceholder =
+      "Enter manual length in inches (e.g. 18 or 18 + 2 extender), or review a confirmed-stock 18 suggestion...";
   } else if (contract.destinationKey === "custom.dimensions_mm") {
     inputPlaceholder = "Enter manual measurement (e.g. 38 x 24 x 6 mm)...";
   } else if (contract.destinationKey === "custom.weight_grams") {
@@ -569,7 +576,9 @@ export function BenchV2FieldCard({
                   marginLeft: "8px"
                 }}
               >
-                (Manual entry only — no AI scan)
+                {isProductChainCordLength
+                  ? "(Manual measurement or confirmed 18 in studio hardware stock)"
+                  : "(Manual entry only — no AI scan)"}
               </span>
             )}
         </div>
