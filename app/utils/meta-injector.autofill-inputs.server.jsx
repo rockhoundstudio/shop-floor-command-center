@@ -287,9 +287,12 @@ const EXACT_CANONICAL_ROCK_COMPOSITION_LABELS = Object.freeze({
  *       `SiO2` / chemical descriptions to a rock identity when stone identity is
  *       not an exact canonical rock label; retains the original descriptive string
  *       so downstream resolution holds it with a clear diagnostic reason.
- *     * `shopify.rock-formation`: multi-mechanism strings such as
- *       `"Sedimentary / Hydrothermal precipitation"` are never forced into one side
- *       and remain as-is so downstream resolution holds them as ambiguous/unmatched.
+ *     * `shopify.rock-formation`: maps exact `"Sedimentary"` or the accepted
+ *       combined Geo Library phrase `"Sedimentary / Hydrothermal precipitation"`
+ *       (ignoring case and permitting whitespace around `/`) -> `"Sedimentary"`.
+ *       All other multi-mechanism or unrecognized formation strings remain as-is
+ *       so downstream resolution holds them as ambiguous/unmatched without global
+ *       hydrothermal stripping or arbitrary mixed-label classification.
  */
 export function normalizeCanonicalGeologyReferenceCandidate(
   geoKey,
@@ -336,6 +339,16 @@ export function normalizeCanonicalGeologyReferenceCandidate(
       Object.prototype.hasOwnProperty.call(EXACT_CANONICAL_ROCK_COMPOSITION_LABELS, cleanIdentity)
     ) {
       return EXACT_CANONICAL_ROCK_COMPOSITION_LABELS[cleanIdentity];
+    }
+    return collapsed;
+  }
+
+  if (geoKey === "rock_formation" || geoKey === "shopify.rock-formation") {
+    if (
+      lower === "sedimentary" ||
+      /^sedimentary\s*\/\s*hydrothermal\s+precipitation$/i.test(collapsed)
+    ) {
+      return "Sedimentary";
     }
     return collapsed;
   }
@@ -618,7 +631,7 @@ export function parseIdentityAndOriginInputs(body, provenance = null) {
     validLockedStoneFamily ||
     titleFamilyCandidate ||
     validPassiveStoneFamily ||
-    "";
+     "";
   const derivedFamily = resolvePicklistStoneFamily(
     !validLockedStoneFamily && titleFamilyCandidate && extractStoneName(titleFamilyCandidate) !== "Unknown"
       ? extractStoneName(titleFamilyCandidate)
