@@ -368,15 +368,16 @@ const KNOWN_18_INCH_STUDIO_HARDWARE_BY_LOWER = Object.freeze(
           })
         );
       } else if (
-        canonicalOption.endsWith(" Cord") &&
-        canonicalOption.length > 5 &&
-        !/^none$/i.test(canonicalOption)
+        /^cord$/i.test(canonicalOption) ||
+        (canonicalOption.endsWith(" Cord") &&
+          canonicalOption.length > 5 &&
+          !/^none$/i.test(canonicalOption))
       ) {
         map.set(
           canonicalOption.toLowerCase(),
           Object.freeze({
             matched: true,
-            canonicalOption,
+            canonicalOption: /^cord$/i.test(canonicalOption) ? "Cord" : canonicalOption,
             category: "studio_cord_stock",
             lengthIn: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
             isLegacyGenericCord: false
@@ -397,9 +398,9 @@ const UNMATCHED_STUDIO_HARDWARE_LENGTH_RESULT = Object.freeze({
 });
 
 /**
- * Recognizes ONLY exact trimmed case-insensitive legacy generic `"Cord"`
- * saved by earlier prompts (`/^cord$/i`). Rejects substring/compound strings
- * such as `"Custom Hemp"`, `"Leather Cord 24"`, or color-specific picklist cords.
+ * Recognizes ONLY exact trimmed case-insensitive generic `"Cord"` (`/^cord$/i`).
+ * Rejects substring/compound strings such as `"Custom Hemp"`, `"Leather Cord 24"`,
+ * or color-specific picklist cords.
  */
 export function isLegacyGenericStudioCordLabel(rawValue) {
   if (typeof rawValue !== "string") return false;
@@ -407,12 +408,13 @@ export function isLegacyGenericStudioCordLabel(rawValue) {
 }
 
 /**
- * Resolves whether a raw `chain_material` string matches one of the 12 confirmed
+ * Resolves whether a raw `chain_material` string matches one of the confirmed
  * 18-inch studio stock options in `DROPDOWN_OPTIONS.chain_material`
- * (`"Silver Plated Snake Chain"` or one of the 11 `"<Color> Cord"` options).
+ * (`"Silver Plated Snake Chain"`, canonical generic `"Cord"`, or one of the 11
+ * supported `"<Color> Cord"` options, each retaining its own picklist `canonicalOption`).
  *
- * `"Gold Plated Snake Chain"`, `"Sterling Silver Chain"`, `"None"`, bare `"Cord"`,
- * and any arbitrary non-picklist string return `matched: false`.
+ * `"Gold Plated Snake Chain"`, `"Sterling Silver Chain"`, `"None"`, and any
+ * arbitrary non-picklist string return `matched: false`.
  */
 export function resolveKnownStudioHardwareOptionLength(rawChainMaterial) {
   if (typeof rawChainMaterial !== "string") {
@@ -428,7 +430,7 @@ export function resolveKnownStudioHardwareOptionLength(rawChainMaterial) {
 
 /**
  * Pure compatibility check between a canonical known studio hardware option label
- * string (`matchedOption`, e.g. `"Black Cord"` or `"Silver Plated Snake Chain"`)
+ * string (`matchedOption`, e.g. `"Cord"`, `"Black Cord"`, or `"Silver Plated Snake Chain"`)
  * and a saved or candidate `chain_material` string (`candidateOrSavedChainMaterial`).
  *
  * - `matchedOption` MUST be a canonical label string that resolves via
@@ -438,12 +440,15 @@ export function resolveKnownStudioHardwareOptionLength(rawChainMaterial) {
  *   is allowed vs. held.
  * - Exact canonical picklist match (case-insensitive trimmed equality to
  *   `resolvedMatched.canonicalOption`) is compatible (`true`).
- * - Legacy generic `"Cord"` (`isLegacyGenericStudioCordLabel`) is compatible ONLY
- *   when `allowLegacyGenericCord === true` AND `resolvedMatched.category === "studio_cord_stock"`
- *   (never compatible with `"Silver Plated Snake Chain"`, and never overwrites the
- *   saved `"Cord"` string).
- * - Cross-color cords, cross-category hardware, `"None"`, `"Gold Plated Snake Chain"`,
- *   `"Sterling Silver Chain"`, and arbitrary non-picklist strings return `false`.
+ * - Any two recognized `studio_cord_stock` options in `DROPDOWN_OPTIONS.chain_material`
+ *   (canonical `"Cord"` and the 11 supported `"<Color> Cord"` options) are mutually
+ *   compatible (`true`) when `resolvedMatched.category === "studio_cord_stock"` and
+ *   either `candidateOrSavedChainMaterial` is not bare `"Cord"` or
+ *   `allowLegacyGenericCord === true` (or `resolvedMatched.canonicalOption === "Cord"`).
+ *   Arbitrary non-picklist strings ending in `"Cord"` are rejected (`false`).
+ * - Cross-category hardware (`"Silver Plated Snake Chain"` vs. any studio cord),
+ *   `"None"`, `"Gold Plated Snake Chain"`, `"Sterling Silver Chain"`, and arbitrary
+ *   non-picklist strings return `false`.
  */
 export function areHardwareOptionsCompatibleForKnownStudioLength({
   matchedOption,
@@ -477,12 +482,17 @@ export function areHardwareOptionsCompatibleForKnownStudioLength({
     return true;
   }
 
-  if (
-    allowLegacyGenericCord === true &&
-    resolvedMatched.category === "studio_cord_stock" &&
-    isLegacyGenericStudioCordLabel(trimmedCandidate)
-  ) {
-    return true;
+  if (resolvedMatched.category === "studio_cord_stock") {
+    if (isLegacyGenericStudioCordLabel(trimmedCandidate)) {
+      return Boolean(allowLegacyGenericCord === true);
+    }
+    const resolvedCandidate = resolveKnownStudioHardwareOptionLength(trimmedCandidate);
+    if (
+      resolvedCandidate.matched &&
+      resolvedCandidate.category === "studio_cord_stock"
+    ) {
+      return true;
+    }
   }
 
   return false;

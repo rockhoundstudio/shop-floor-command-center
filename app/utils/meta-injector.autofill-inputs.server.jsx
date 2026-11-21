@@ -1925,6 +1925,20 @@ export function buildBenchV2ProducerProposals({
     "wire_material"
   ];
 
+  const isPassiveStoredChainMaterialVerified = Boolean(
+    hasValidProvenance &&
+      passiveStoredSet.has("chain_material") &&
+      !operatorLockedSet.has("chain_material") &&
+      currentData.chain_material !== undefined &&
+      String(currentData.chain_material).trim() !== ""
+  );
+  const rawPassiveStoredChainMat = isPassiveStoredChainMaterialVerified
+    ? String(currentData.chain_material).trim()
+    : "";
+  const resolvedPassiveStoredChainMat = isPassiveStoredChainMaterialVerified
+    ? resolveKnownStudioHardwareOptionLength(rawPassiveStoredChainMat)
+    : null;
+
   for (const hwKey of DRAWER_6_HARDWARE_KEYS) {
     if (isBareFieldOperatorLocked(hwKey)) continue;
     const rawHwVal = rawVisionSnapshot[hwKey];
@@ -1948,10 +1962,28 @@ export function buildBenchV2ProducerProposals({
       }
     }
 
-    const normalizedHwStr =
-      hwKey === "chain_material" && resolveKnownStudioHardwareOptionLength(cleanHwStr).matched
-        ? resolveKnownStudioHardwareOptionLength(cleanHwStr).canonicalOption
-        : cleanHwStr;
+    let normalizedHwStr = cleanHwStr;
+    if (hwKey === "chain_material") {
+      const knownHwInfo = resolveKnownStudioHardwareOptionLength(cleanHwStr);
+      if (knownHwInfo.matched) {
+        if (knownHwInfo.category === "studio_cord_stock") {
+          // If verified passive stored chain_material is already "Cord" or a supported
+          // studio_cord_stock alias (e.g. "Black Cord"), emit its exact stored canonicalOption
+          // so downstream validation classifies custom.chain_material as unchanged_from_baseline
+          // (no redundant cord-color/alias recategorization draft) while keeping
+          // combinedProducerAndVisionProposals["custom.chain_material"] available for 18 in
+          // length verification when chain_cord_length_in is blank.
+          normalizedHwStr =
+            resolvedPassiveStoredChainMat &&
+            resolvedPassiveStoredChainMat.matched &&
+            resolvedPassiveStoredChainMat.category === "studio_cord_stock"
+              ? resolvedPassiveStoredChainMat.canonicalOption
+              : "Cord";
+        } else {
+          normalizedHwStr = knownHwInfo.canonicalOption;
+        }
+      }
+    }
 
     addProposal(
       `custom.${hwKey}`,
@@ -2009,32 +2041,56 @@ export function buildBenchV2ProducerProposals({
           /^none$/i.test(String(currentData.chain_link_type).trim())
       );
 
+      // Canonical studio_cord_stock target for current-scan provenance:
+      // - When custom.chain_material is operator-locked, new studio_cord_stock scans bind
+      //   matchedHardwareOption to canonical "Cord" (compatible via the shared registry with
+      //   locked "Cord" or any locked supported "<Color> Cord" alias).
+      // - When custom.chain_material is unlocked, match the exact studio_cord_stock option
+      //   emitted on producerProposals["custom.chain_material"] ("Cord" for new/changed cord
+      //   proposals, or the preserved passive stored studio_cord_stock canonicalOption when
+      //   suppressing redundant cord-color recategorization) so client response cross-checks
+      //   pass without mutating rawVisionSnapshot or weakening exact canonical comparisons.
+      const canonicalMatchedHwOption =
+        visKnownHw.category === "studio_cord_stock"
+          ? (!isChainMatOperatorLocked &&
+              resolvedPassiveStoredChainMat &&
+              resolvedPassiveStoredChainMat.matched &&
+              resolvedPassiveStoredChainMat.category === "studio_cord_stock"
+              ? resolvedPassiveStoredChainMat.canonicalOption
+              : "Cord")
+          : visKnownHw.canonicalOption;
+
+      const photoMatchEvidenceNote =
+        rawVisChainMatForLength.toLowerCase() !== canonicalMatchedHwOption.toLowerCase()
+          ? `Gemini Vision photo match: "${rawVisChainMatForLength}"`
+          : "Gemini Vision photo match";
+
       if (!verifiedProductIdForRequest || !verifiedRequestIdForRequest) {
         producerDiagnostics["custom.chain_cord_length_in"] =
-          `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal for "${visKnownHw.canonicalOption}": exact product GID and scan requestId are required to bind hardware length provenance.`;
+          `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal for "${canonicalMatchedHwOption}": exact product GID and scan requestId are required to bind hardware length provenance.`;
       } else if (isChainLinkOperatorLockedToNone) {
         producerDiagnostics["custom.chain_cord_length_in"] =
           `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: operator-locked custom.chain_link_type is "None".`;
       } else if (isChainMatOperatorLocked) {
         // Explicit human lock/Keep Original on chain_material:
-        // Allow legacy generic "Cord" ONLY when Keep Original / saved "Cord" is locked for a confirmed studio cord;
-        // reject "None", "Gold Plated Snake Chain", "Sterling Silver Chain", different color cords, or arbitrary strings.
+        // Allow canonical "Cord" and any supported studio_cord_stock alias for confirmed studio cord;
+        // reject "None", "Gold Plated Snake Chain", "Sterling Silver Chain", cross-category hardware, or arbitrary strings.
         const isLockedMatCompatible = areHardwareOptionsCompatibleForKnownStudioLength({
-          matchedOption: visKnownHw.canonicalOption,
+          matchedOption: canonicalMatchedHwOption,
           candidateOrSavedChainMaterial: rawSuppliedLockedOrSavedChainMat,
-          allowLegacyGenericCord: isLegacyGenericStudioCordLabel(rawSuppliedLockedOrSavedChainMat)
+          allowLegacyGenericCord: true
         });
 
         if (!isLockedMatCompatible) {
           producerDiagnostics["custom.chain_cord_length_in"] =
-            `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: operator-locked/kept custom.chain_material ("${rawSuppliedLockedOrSavedChainMat}") is not compatible with photo match "${visKnownHw.canonicalOption}".`;
+            `Omitted ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: operator-locked/kept custom.chain_material ("${rawSuppliedLockedOrSavedChainMat}") is not compatible with photo match "${canonicalMatchedHwOption}".`;
         } else {
           const trustedKnownHardwareLengthProvenance = Object.freeze({
             verified: true,
             productId: verifiedProductIdForRequest,
             requestId: verifiedRequestIdForRequest,
             destinationKey: "custom.chain_cord_length_in",
-            matchedHardwareOption: visKnownHw.canonicalOption,
+            matchedHardwareOption: canonicalMatchedHwOption,
             hardwareCategory: visKnownHw.category,
             emittedValue: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
             basis: "vision_photo_match_known_studio_stock"
@@ -2042,29 +2098,30 @@ export function buildBenchV2ProducerProposals({
 
           producerProposals["custom.chain_cord_length_in"] = {
             value: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
-            source: `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${visKnownHw.canonicalOption}; Gemini Vision photo match)`,
+            source: `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${canonicalMatchedHwOption}; ${photoMatchEvidenceNote})`,
             trustedKnownHardwareLengthProvenance
           };
         }
       } else {
         // Not operator-locked on chain_material: check passive saved chain_material compatibility
-        // (allowing passive saved generic "Cord" for confirmed studio cord stock without forcing recategorization).
+        // (supporting passive saved "Cord" or supported "<Color> Cord" aliases for studio_cord_stock
+        // without forcing recategorization, while rejecting cross-category or unsupported hardware).
         const isSavedMatCompatible = areHardwareOptionsCompatibleForKnownStudioLength({
-          matchedOption: visKnownHw.canonicalOption,
+          matchedOption: canonicalMatchedHwOption,
           candidateOrSavedChainMaterial: rawSuppliedLockedOrSavedChainMat,
           allowLegacyGenericCord: true
         });
 
         if (!isSavedMatCompatible) {
           producerDiagnostics["custom.chain_cord_length_in"] =
-            `Held ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: saved custom.chain_material ("${rawSuppliedLockedOrSavedChainMat}") conflicts with photo match "${visKnownHw.canonicalOption}". Review and save custom.chain_material first so length is never attached to an incompatible saved hardware option.`;
+            `Held ${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in studio length proposal: saved custom.chain_material ("${rawSuppliedLockedOrSavedChainMat}") conflicts with photo match "${canonicalMatchedHwOption}". Review and save custom.chain_material first so length is never attached to an incompatible saved hardware option.`;
         } else {
           const trustedKnownHardwareLengthProvenance = Object.freeze({
             verified: true,
             productId: verifiedProductIdForRequest,
             requestId: verifiedRequestIdForRequest,
             destinationKey: "custom.chain_cord_length_in",
-            matchedHardwareOption: visKnownHw.canonicalOption,
+            matchedHardwareOption: canonicalMatchedHwOption,
             hardwareCategory: visKnownHw.category,
             emittedValue: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
             basis: "vision_photo_match_known_studio_stock"
@@ -2072,7 +2129,7 @@ export function buildBenchV2ProducerProposals({
 
           producerProposals["custom.chain_cord_length_in"] = {
             value: KNOWN_STUDIO_HARDWARE_LENGTH_IN,
-            source: `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${visKnownHw.canonicalOption}; Gemini Vision photo match)`,
+            source: `Known Studio Hardware Stock (${KNOWN_STUDIO_HARDWARE_LENGTH_IN} in confirmed for ${canonicalMatchedHwOption}; ${photoMatchEvidenceNote})`,
             trustedKnownHardwareLengthProvenance
           };
         }

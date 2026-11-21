@@ -226,6 +226,7 @@ DROPDOWN_OPTIONS.chain_material = [
   { label: "Silver Plated Snake Chain", value: "Silver Plated Snake Chain" },
   { label: "Gold Plated Snake Chain", value: "Gold Plated Snake Chain" },
   { label: "Sterling Silver Chain", value: "Sterling Silver Chain" },
+  { label: "Cord", value: "Cord" },
   { label: "Black Cord", value: "Black Cord" },
   { label: "Brown Cord", value: "Brown Cord" },
   { label: "Tan Cord", value: "Tan Cord" },

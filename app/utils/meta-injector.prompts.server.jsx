@@ -46,29 +46,41 @@ function getSuppliedChainMaterialPromptContext() {
   const rawOptions = Array.isArray(DROPDOWN_OPTIONS?.chain_material)
     ? DROPDOWN_OPTIONS.chain_material
     : [];
-  const allChoices = [];
-  const confirmedCordChoices = [];
+  const activePromptChoices = [];
+  const retainedColorCordAliases = [];
   let confirmedSilverNecklaceChoice = "Silver Plated Snake Chain";
+  let canonicalCordChoice = "Cord";
 
   for (const rawOpt of rawOptions) {
     const label = extractChainMaterialOptionString(rawOpt);
     if (!label) continue;
-    allChoices.push(label);
 
     const knownInfo = resolveKnownStudioHardwareOptionLength(label);
     if (knownInfo.matched) {
       if (knownInfo.category === "silver_necklace_stock") {
         confirmedSilverNecklaceChoice = knownInfo.canonicalOption;
+        activePromptChoices.push(knownInfo.canonicalOption);
       } else if (knownInfo.category === "studio_cord_stock") {
-        confirmedCordChoices.push(knownInfo.canonicalOption);
+        if (/^cord$/i.test(knownInfo.canonicalOption)) {
+          canonicalCordChoice = knownInfo.canonicalOption;
+          activePromptChoices.push(knownInfo.canonicalOption);
+        } else {
+          retainedColorCordAliases.push(knownInfo.canonicalOption);
+        }
       }
+    } else {
+      activePromptChoices.push(label);
     }
   }
 
   return {
-    allChoicesPromptStr: allChoices.map((lbl) => JSON.stringify(lbl)).join(", "),
+    allChoicesPromptStr: activePromptChoices
+      .map((lbl) => JSON.stringify(lbl))
+      .join(", "),
     confirmedSilverNecklaceChoice,
-    confirmedCordChoicesPromptStr: confirmedCordChoices
+    canonicalCordChoice,
+    confirmedCordChoicesPromptStr: JSON.stringify(canonicalCordChoice),
+    retainedColorCordAliasesPromptStr: retainedColorCordAliases
       .map((lbl) => JSON.stringify(lbl))
       .join(", ")
   };
@@ -367,11 +379,11 @@ PHYSICAL FORM, HARDWARE & SETTING INFERENCE RULES:
 - When a stone is visibly mounted in a metal rim/backing with a top loop but fastening is not explicitly specified in SUPPLIED HUMAN / BENCH FACTS, use neutral supported values ("Yes" for setting_ready and bail_included, and neutral wording in alt_text / generated_description such as "in a metal setting with a top loop") and omit jewelry_finding_type rather than guessing bezel or glue-on.
 - When a pinch bail is visibly gripping a drilled hole in the stone, use "Silver Plated Pinch Bail" (or supplied pinch-bail wording).
 - STUDIO NECKLACE CHAIN & CORD STOCK IDENTIFICATION (CONFIRMED ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-INCH STUDIO STOCK):
-  * Supplied chain_material choices: ${chainMaterialPromptCtx.allChoicesPromptStr}.
-  * Confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch studio stock options are "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" and the color-specific studio cords (${chainMaterialPromptCtx.confirmedCordChoicesPromptStr}). You identify ONLY the exact matching supplied chain_material option from the photograph(s); the connected application derives the confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch length. NEVER output chain_cord_length_in in JSON and NEVER ruler-measure a flexible or cropped necklace.
+  * Active chain_material choices: ${chainMaterialPromptCtx.allChoicesPromptStr}. (Historical color-specific cord choices [${chainMaterialPromptCtx.retainedColorCordAliasesPromptStr}] remain in the shared picklist for backward compatibility with existing saved records ONLY; NEVER output a color-specific "<Color> Cord" label for new Vision identification unless preserving an explicit nonblank operator fact in SUPPLIED HUMAN / BENCH FACTS.)
+  * Confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch studio stock options are "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" and "${chainMaterialPromptCtx.canonicalCordChoice}". You identify ONLY the exact matching active chain_material option from the photograph(s); the connected application derives the confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch length. NEVER output chain_cord_length_in in JSON and NEVER ruler-measure a flexible or cropped necklace.
   * Silver-colored appearance in a photo is NOT independent proof of precious-metal alloy, plating, or "Sterling Silver Chain". Use "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" ONLY as the supplied studio stock label when the studio's smooth round silver-colored snake chain is clearly pictured (unless SUPPLIED HUMAN / BENCH FACTS explicitly provide "Sterling Silver Chain", which you must preserve verbatim). Never infer "Sterling Silver Chain", precious-metal composition, secondary_medium, or standardized construction claims from silver-colored appearance alone.
-  * Select an exact color-specific studio cord label ONLY when both the studio cord and its color are clearly identifiable in the photo (do not mistake an end clasp or bail metal for chain_material).
-  * Missing hardware in a single photo or cropped view is unknown, NOT positive proof of no hardware: if chain/cord presence, link style, or cord color is ambiguous, cropped, or unidentified, OMIT chain_material completely. Output "None" ONLY when affirmative evidence establishes a loose/unmounted piece with no chain or cord included.
+  * Select exact "${chainMaterialPromptCtx.canonicalCordChoice}" whenever studio cord necklace hardware is clearly identifiable in the photo, irrespective of cord color (do NOT classify cord color, do NOT output "<Color> Cord" labels, do NOT omit an identifiable studio cord merely because its color is uncertain, and do NOT mistake an end clasp or bail metal for chain_material).
+  * Distinguish hardware TYPE uncertainty from cord COLOR uncertainty: missing hardware in a single photo or cropped view is unknown, NOT positive proof of no hardware. If chain-vs-cord presence or hardware type is ambiguous, cropped, or unidentified, OMIT chain_material completely (never force "${chainMaterialPromptCtx.canonicalCordChoice}" without visible cord evidence). Output "None" ONLY when affirmative evidence establishes a loose/unmounted piece with no chain or cord included.
 
 REQUIRED JSON KEYS:
 - primary_color
@@ -384,7 +396,7 @@ REQUIRED JSON KEYS:
 - wire_material: Plain text description of wire material if visibly wire-wrapped or supplied in bench facts; omit if not applicable.
 - setting_ready: Exact supplied value ("Yes" / "No" / "true"), or "Yes" if visibly mounted/wear-ready, or "No" if confirmed loose/unmounted. Never infer "Bezel Setting - Ready to Wear" from a photo unless explicitly supplied in bench facts.
 - bail_included: Exact supplied value ("Yes" / "No" / "true"), "Silver Plated Pinch Bail" if visibly a pinch bail, or "Yes" if a top loop/bail is visibly present. Never output "Integrated Bezel Bail" unless explicitly supplied in bench facts.
-- chain_material: Select ONLY an exact label from [${chainMaterialPromptCtx.allChoicesPromptStr}] when supported by clear photo evidence or supplied bench facts. Preserve explicitly supplied "Sterling Silver Chain" when provided in SUPPLIED HUMAN / BENCH FACTS, never inferring "Sterling Silver Chain" from appearance alone. Omit if uncertain, cropped, or out of view; use "None" only when affirmative evidence establishes no chain or cord is included. Do NOT output chain_cord_length_in.
+- chain_material: Preserve any explicit nonblank chain_material supplied in SUPPLIED HUMAN / BENCH FACTS verbatim (including "Sterling Silver Chain" or an explicit cord/chain exception). Otherwise select ONLY an exact active label from [${chainMaterialPromptCtx.allChoicesPromptStr}] when supported by clear photo evidence: select exact "${chainMaterialPromptCtx.canonicalCordChoice}" whenever studio cord hardware is visibly identifiable regardless of cord color (never output color-specific "<Color> Cord" labels or omit an identifiable cord due to cord color uncertainty), and select "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" when the studio smooth round silver-colored snake chain is clearly pictured (never inferring "Sterling Silver Chain" from appearance alone). Omit if hardware presence or chain-vs-cord type is uncertain, cropped, or out of view; use "None" only when affirmative evidence establishes no chain or cord is included. Do NOT output chain_cord_length_in.
 - chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
 - jewelry_finding_type: INVENTORY OPTIONS: "Silver Plated Pinch Bail", "Glue-On Bail", "Assorted Glue-In Setting". Preserve explicitly supplied construction descriptions verbatim. Do NOT guess "Bezel Setting", "Integrated Bezel Bail", or "Glue-On Bail" from a front photo alone; omit if fastening method is not visually certain (e.g., pinch bail) or explicitly supplied.
 - jewelry_type: Select EXACTLY one: Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A. Select "N/A" when the piece is an unmounted loose stone, cabochon, display piece, or specimen without mounted/wear-ready evidence or explicit finished-jewelry bench facts.
@@ -499,17 +511,17 @@ ${passiveClassificationsStr || "- None."}
 
 CRITICAL RULES FOR TAB 3:
 1. Explicit operator-locked corrections in CURRENT KNOWN DATA take strict priority over passive stored baseline/hardware/classifications, image inference, product titles, and collection names.
-​2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim (including any nonblank chain_cord_length_in or operator-locked "Sterling Silver Chain"). When setting_ready, bail_included, jewelry_finding_type, chain_material, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED PRODUCT BASELINE & PRIOR DRAFTS and PASSIVE STORED HARDWARE / SETTING CONTEXT (which are stored context, NOT operator-locked), re-evaluate against the photos and authoritative facts in CURRENT KNOWN DATA so stale, generic, or misidentified stored values can be replaced for human review when evidence supports a correction, while accurate stored values remain unchanged (e.g., stale carried "Pendant" labels do not force a loose stone into finished jewelry, passive generic "Cord" in PASSIVE STORED HARDWARE / SETTING CONTEXT can be refined to the clearly visible color-specific studio cord choice without overwriting locked human data, and stale river-origin/SEO drafts do not contradict confirmed purchase provenance).
+​2. Preserve nonblank CURRENT KNOWN DATA values and operator-locked finding details verbatim (including any nonblank chain_cord_length_in or operator-locked "Sterling Silver Chain"). When setting_ready, bail_included, jewelry_finding_type, chain_material, secondary_medium, or alt_text are in CURRENT KNOWN DATA, your proposed fields, alt_text, and imageAlts MUST align with those reviewed construction facts and never contradict them. For PASSIVE STORED PRODUCT BASELINE & PRIOR DRAFTS and PASSIVE STORED HARDWARE / SETTING CONTEXT (which are stored context, NOT operator-locked), re-evaluate against the photos and authoritative facts in CURRENT KNOWN DATA so stale, generic, or misidentified stored values can be replaced for human review when evidence supports a correction, while accurate stored values remain unchanged (e.g., stale carried "Pendant" labels do not force a loose stone into finished jewelry, passive stored "${chainMaterialPromptCtx.canonicalCordChoice}" or a supported color-specific cord in PASSIVE STORED HARDWARE / SETTING CONTEXT is already studio cord hardware and must NOT be refined or changed by cord color, and stale river-origin/SEO drafts do not contradict confirmed purchase provenance).
 3. Never infer "Bezel Setting", "Integrated Bezel Bail", "bezel-set", or "glue-on" from a decorative rim, backing frame, front photo, or top chain loop alone. Do not infer metal alloy fineness or plating from photos.
 4. STONE IDENTITY VS. SETTING MATERIAL: primary_medium, material, and stone_family must NEVER contain metal, plating, alloy, wire, or setting hardware (such as "Silver Plated", "Sterling Silver", "Silver Alloy", "Copper Wire", or "Pinch Bail"). Keep mineral family (stone_family, e.g., "Agate") and stone variety (material / primary_medium, e.g., "Botswana Agate") distinct when evidenced; do not force them to be identical. Do not infer a stone variety from a generic test title. If stone identity is uncertain, omit primary_medium and material rather than guessing.
 5. PINCH BAIL & STUDIO HARDWARE STOCK IDENTIFICATION (CONFIRMED ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-INCH STUDIO STOCK):
    - Preserve pinch-bail construction ("Silver Plated Pinch Bail", whose pins pass through a drilled hole in the stone) when visibly present or stated in facts. Keep bail/top loop, decorative metal setting/rim, necklace chain/cord, and end clasp/extender strictly distinct (never mistake a metal bail or cord end clasp for a metal chain).
-   - Supplied chain_material picklist options: ${chainMaterialPromptCtx.allChoicesPromptStr}.
-   - Studio stock fact: "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" and the studio color-specific cord options (${chainMaterialPromptCtx.confirmedCordChoicesPromptStr}) are confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch studio stock. Your job is ONLY to identify the exact matching supplied chain_material label when clearly supported by the photograph(s); the connected application derives the confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch length for human review. NEVER output chain_cord_length_in in JSON and NEVER ruler-measure a flexible or cropped necklace.
+   - Active chain_material picklist options: ${chainMaterialPromptCtx.allChoicesPromptStr}. (Historical color-specific cord options [${chainMaterialPromptCtx.retainedColorCordAliasesPromptStr}] remain in the shared picklist for backward compatibility with existing saved records ONLY; NEVER propose a color-specific "<Color> Cord" label during Vision identification.)
+   - Studio stock fact: "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" and "${chainMaterialPromptCtx.canonicalCordChoice}" are confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch studio stock. Your job is ONLY to identify the exact matching active chain_material label when clearly supported by the photograph(s); the connected application derives the confirmed ${KNOWN_STUDIO_HARDWARE_LENGTH_IN}-inch length for human review. NEVER output chain_cord_length_in in JSON and NEVER ruler-measure a flexible or cropped necklace.
    - Silver-colored appearance in a photo is NOT independent proof of silver alloy, plating, or "Sterling Silver Chain". Propose "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" ONLY when the studio's smooth round silver-colored snake chain is clearly pictured and chain_material is not locked in CURRENT KNOWN DATA (if CURRENT KNOWN DATA locks "Sterling Silver Chain" or passive stored hardware already specifies "Sterling Silver Chain" without contradicting evidence, preserve/respect human facts and never invent "Sterling Silver Chain" from appearance). Never infer secondary_medium or standardized construction ("Plated" / "Solid") solely from chain appearance.
-   - When a studio cord and its color are clearly identifiable in the photo(s), propose that exact color-specific "<Color> Cord" label from the supplied list (even if PASSIVE STORED HARDWARE / SETTING CONTEXT currently holds legacy generic "Cord", provided chain_material is NOT operator-locked in CURRENT KNOWN DATA).
+   - When studio cord necklace hardware is clearly identifiable in the photo(s), propose exact "${chainMaterialPromptCtx.canonicalCordChoice}" irrespective of cord color (provided chain_material is NOT operator-locked in CURRENT KNOWN DATA). Do NOT classify cord color, do NOT propose "<Color> Cord" refinements, do NOT refine a saved "${chainMaterialPromptCtx.canonicalCordChoice}" or supported color-specific cord solely by color, and do NOT omit an identifiable studio cord merely because its color is uncertain.
    - Stone-first jewelry_type "N/A" alone does NOT prove there is no cord or chain when actual studio cord/chain hardware is visibly pictured.
-   - If the pictured hardware link style or cord color is ambiguous, cropped, out of view, or does not clearly match a supplied studio option, OMIT chain_material completely. Omission means unknown/unidentified, NOT proof of no hardware; propose "None" ONLY when affirmative multi-angle/full-piece evidence establishes an unmounted/loose piece with no chain or cord included.
+   - Distinguish hardware TYPE uncertainty from cord COLOR uncertainty: if the pictured hardware presence or chain-vs-cord type is ambiguous, cropped, out of view, or does not clearly match an active studio option, OMIT chain_material completely (never force "${chainMaterialPromptCtx.canonicalCordChoice}" without visible cord evidence). Omission means unknown/unidentified, NOT proof of no hardware; propose "None" ONLY when affirmative multi-angle/full-piece evidence establishes an unmounted/loose piece with no chain or cord included.
 6. Never change setting_ready to "No" merely because fastening wording is unconfirmed; if a piece is visibly mounted/wear-ready with a setting or bail, setting_ready remains "Yes" (or its exact supplied value).
 7. Never generate, rename, or propose a shopify_title, piece_name, or price during repair/rescan.
 8. Do not infer jewelry, chain material, cord, bail, wire wrapping, or readiness from an image when the source data and visible evidence don't establish it. Missing hardware in a single photo alone is not conclusive; leave uncertain values unresolved.
@@ -561,7 +573,7 @@ Potential JSON Keys to evaluate and propose if blank or when replacing a passive
 - wire_material: Plain text wire material when supported by facts/visible wire wrap.
 - setting_ready: Preserve operator-locked value in CURRENT KNOWN DATA. Never infer "Bezel Setting - Ready to Wear" from photos alone.
 - bail_included: Preserve operator-locked value in CURRENT KNOWN DATA. Never infer "Integrated Bezel Bail" from photos alone.
-- chain_material: Preserve operator-locked value in CURRENT KNOWN DATA verbatim. When not operator-locked, propose ONLY an exact matching label from [${chainMaterialPromptCtx.allChoicesPromptStr}] when clearly supported by the photo(s). Use "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" only when the studio smooth round silver-colored snake chain is clearly visible; never infer "Sterling Silver Chain" or metal fineness/plating from appearance. Propose an exact color-specific "<Color> Cord" label when both studio cord and color are clearly visible (including when refining passive stored generic "Cord"). Omit chain_material if hardware or cord color is cropped, ambiguous, or unidentified (omission means unknown, not absent); propose "None" only when affirmative evidence establishes no chain or cord is included. Never output chain_cord_length_in.
+- chain_material: Preserve operator-locked value in CURRENT KNOWN DATA verbatim. When not operator-locked, propose ONLY an exact matching active label from [${chainMaterialPromptCtx.allChoicesPromptStr}] when clearly supported by the photo(s). Use "${chainMaterialPromptCtx.confirmedSilverNecklaceChoice}" only when the studio smooth round silver-colored snake chain is clearly visible; never infer "Sterling Silver Chain" or metal fineness/plating from appearance. Propose exact "${chainMaterialPromptCtx.canonicalCordChoice}" whenever studio cord hardware is clearly visible irrespective of cord color (never classify cord color, never propose "<Color> Cord" labels, never refine a saved "${chainMaterialPromptCtx.canonicalCordChoice}" or supported color-specific cord solely by color, and never omit an identifiable cord due to cord color uncertainty). Omit chain_material if hardware presence or chain-vs-cord type is cropped, ambiguous, or unidentified (omission means unknown, not absent); propose "None" only when affirmative evidence establishes no chain or cord is included. Never output chain_cord_length_in.
 - chain_link_type: Cord or Snake Chain (when applicable). Never turn Cord into Snake Chain.
 - jewelry_finding_type: Preserve operator-locked construction details in CURRENT KNOWN DATA verbatim. If not operator-locked, propose "Silver Plated Pinch Bail" only when a pinch bail is clearly visible; never guess bezel or glue-on fastening from a front photo.
 - jewelry_type: Select from Pendant, Necklace, Artisan jewelry, Fine jewelry, Accessories, N/A when supported by facts. Select "N/A" when clear evidence establishes an unmounted loose stone, cabochon, display piece, or specimen without mounted/wear-ready hardware.
