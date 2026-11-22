@@ -123,19 +123,227 @@ export function splitSegmentedTitle(val) {
   return normalized.split(/\s+[—–-]\s+/).map(s => s.trim()).filter(Boolean);
 }
 
+const STONE_NAME_ADJECTIVES = [
+  "Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White",
+  "Grey", "Gray", "Brown", "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume",
+  "Moss", "Dendritic", "Banded", "Polychrome", "Imperial", "Royal", "Dark", "Light",
+  "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled", "Polished", "Natural",
+  "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"
+];
+
+function extractLastBaseRockWordFromPlainSection(sectionStr) {
+  if (typeof sectionStr !== "string") return "Unknown";
+  const cleanedSection = cleanStoneFamilyShape(sectionStr.trim());
+  if (!cleanedSection) return "Unknown";
+  let words = cleanedSection.split(/\s+/).filter(Boolean);
+  words = words.filter(
+    word => !STONE_NAME_ADJECTIVES.some(adj => adj.toLowerCase() === word.toLowerCase())
+  );
+  if (words.length > 0) {
+    const baseRock = words[words.length - 1];
+    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
+  }
+  return "Unknown";
+}
+
+function findMatchedPicklistStoneFamilyOption(rawFamily) {
+  const cleaned = cleanStoneFamilyShape(String(rawFamily || "").trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return "";
+  }
+
+  const options = DROPDOWN_OPTIONS?.stone_family || [];
+  const checkOptionMatch = (candidateStr) => {
+    const cleanCand = String(candidateStr || "").trim();
+    if (!cleanCand) return "";
+    const lowerCand = cleanCand.toLowerCase();
+    for (const opt of options) {
+      if (typeof opt === "object" && opt !== null) {
+        const val = String(opt.value || "").trim();
+        const label = String(opt.label || "").trim();
+        if (val && val.toLowerCase() === lowerCand) return val;
+        if (label && label.toLowerCase() === lowerCand) return val || label;
+      } else {
+        const val = String(opt || "").trim();
+        if (val && val.toLowerCase() === lowerCand) return val;
+      }
+    }
+    return "";
+  };
+
+  if (typeof normalizeDropdownValue === "function") {
+    const normalized = normalizeDropdownValue("stone_family", cleaned);
+    if (normalized) {
+      const verifiedNormalized = checkOptionMatch(normalized);
+      if (verifiedNormalized) return verifiedNormalized;
+    }
+  }
+
+  return checkOptionMatch(cleaned);
+}
+
+function resolveCanonicalBaseFamilyWithoutInclusionSplit(rawCandidate) {
+  if (typeof rawCandidate !== "string") return "";
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return "";
+  }
+  const directPicklist = findMatchedPicklistStoneFamilyOption(cleaned);
+  if (directPicklist) {
+    return directPicklist;
+  }
+  const extracted = extractLastBaseRockWordFromPlainSection(cleaned);
+  if (extracted && extracted !== "Unknown") {
+    const extractedPicklist = findMatchedPicklistStoneFamilyOption(extracted);
+    if (extractedPicklist) {
+      return extractedPicklist;
+    }
+  }
+  const derived = getDerivedMaterial(cleaned);
+  if (derived && derived !== cleaned) {
+    const derivedPicklist = findMatchedPicklistStoneFamilyOption(derived);
+    if (derivedPicklist) {
+      return derivedPicklist;
+    }
+  }
+  return "";
+}
+
+function splitLeadingInclusionClauses(cleanedStr) {
+  if (typeof cleanedStr !== "string") return [];
+  const trimmed = cleanStoneFamilyShape(cleanedStr.trim());
+  if (!trimmed) return [];
+  const stems = [];
+  const withRegex = /\s+with\s+/gi;
+  let match;
+  while ((match = withRegex.exec(trimmed)) !== null) {
+    const leadingStem = cleanStoneFamilyShape(trimmed.slice(0, match.index).trim());
+    const trailingQualifier = trimmed.slice(match.index + match[0].length).trim();
+    if (leadingStem && trailingQualifier) {
+      stems.push(leadingStem);
+    }
+  }
+  return stems;
+}
+
+/**
+ * Separates a trailing `with <inclusion...>` qualifier ONLY when the remaining
+ * leading stone identity validates under existing canonical stone-family/variety
+ * rules (while preserving any full phrase that is itself a direct picklist option).
+ * Returns `""` when no `with ...` clause is present or when the remaining stem is
+ * ambiguous/unrecognized so unsupported names stay held without guessing.
+ */
+export function extractValidatedInclusionFreeStoneStem(rawCandidate) {
+  if (typeof rawCandidate !== "string") return "";
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return "";
+  }
+
+  // Never split a phrase that is itself an exact supported picklist family.
+  if (findMatchedPicklistStoneFamilyOption(cleaned)) {
+    return "";
+  }
+
+  const candidateStems = splitLeadingInclusionClauses(cleaned);
+  for (const stem of candidateStems) {
+    if (
+      !stem ||
+      INVALID_CANDIDATE_FILLERS.has(stem.toLowerCase()) ||
+      isGenericBareStoneProposal(stem) ||
+      isSettingOrHardwareMediumValue(stem)
+    ) {
+      continue;
+    }
+    if (resolveCanonicalBaseFamilyWithoutInclusionSplit(stem) !== "") {
+      return stem;
+    }
+  }
+  return "";
+}
+
+/**
+ * Resolves the canonical stone-identity stem for a specific variety or stone
+ * candidate: returns the validated inclusion-free variety stem when a trailing
+ * `with <inclusion...>` qualifier was separated (e.g. `"Leopard Rhyolite with Mica"`
+ * -> `"Leopard Rhyolite"`), or the shape-cleaned stone string itself when it
+ * directly validates under canonical stone rules. Returns `""` for unvalidated
+ * or ambiguous strings.
+ */
+export function resolveValidatedStoneVarietyStem(rawCandidate) {
+  if (typeof rawCandidate !== "string") return "";
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (
+    !cleaned ||
+    cleaned.toLowerCase() === "unknown" ||
+    cleaned.toLowerCase() === "unknown stone" ||
+    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
+    isGenericBareStoneProposal(cleaned) ||
+    isSettingOrHardwareMediumValue(cleaned)
+  ) {
+    return "";
+  }
+
+  if (findMatchedPicklistStoneFamilyOption(cleaned)) {
+    return cleaned;
+  }
+
+  const inclusionFreeStem = extractValidatedInclusionFreeStoneStem(cleaned);
+  if (inclusionFreeStem) {
+    return inclusionFreeStem;
+  }
+
+  if (resolveCanonicalBaseFamilyWithoutInclusionSplit(cleaned) !== "") {
+    return cleaned;
+  }
+
+  return "";
+}
+
 export function extractStoneName(title) {
   if (!title) return "Unknown";
   const normalized = normalizeTitleMojibakeEmDashes(title);
   const segs = splitSegmentedTitle(normalized);
-  const sectionOne = segs.length >= 2 ? segs[0] : normalized.split(/[—–-]/)[0].trim();
-  const adjectives = ["Green", "Blue", "Red", "Yellow", "Orange", "Purple", "Pink", "Black", "White", "Grey", "Gray", "Brown", "Brecciated", "Picture", "Ocean", "Crazy Lace", "Plume", "Moss", "Dendritic", "Banded", "Polychrome", "Imperial", "Royal", "Dark", "Light", "Clear", "Opaque", "Translucent", "Raw", "Rough", "Tumbled", "Polished", "Natural", "Fossil", "Petrified", "Mookaite", "Kambaba", "Bumblebee", "Dalmatian", "Dragon Blood"];
-  let words = sectionOne.split(/\s+/);
-  words = words.filter(word => !adjectives.some(adj => adj.toLowerCase() === word.toLowerCase()));
-  if (words.length > 0) {
-    let baseRock = words[words.length - 1];
-    return baseRock.charAt(0).toUpperCase() + baseRock.slice(1).toLowerCase();
+  const rawSectionOne = segs.length >= 2 ? segs[0] : normalized.split(/[—–-]/)[0].trim();
+  const cleanedSectionOne = cleanStoneFamilyShape(rawSectionOne);
+  if (!cleanedSectionOne) return "Unknown";
+
+  const validatedInclusionFreeStem = extractValidatedInclusionFreeStoneStem(cleanedSectionOne);
+  const targetSection = validatedInclusionFreeStem || cleanedSectionOne;
+
+  // Guard: if an unvalidated "X with Y" phrase did not resolve to a supported
+  // stone stem, never derive the trailing inclusion noun ("Mica", "Inclusions", etc.)
+  // as the rock name.
+  if (!validatedInclusionFreeStem && /\s+with\s+/i.test(cleanedSectionOne)) {
+    const plainExtracted = extractLastBaseRockWordFromPlainSection(cleanedSectionOne);
+    if (!plainExtracted || !findMatchedPicklistStoneFamilyOption(plainExtracted)) {
+      return "Unknown";
+    }
+    return plainExtracted;
   }
-  return "Unknown";
+
+  return extractLastBaseRockWordFromPlainSection(targetSection);
 }
 
 export function resolvePicklistStoneFamily(rawFamily) {
@@ -152,40 +360,41 @@ export function resolvePicklistStoneFamily(rawFamily) {
   if (isSettingOrHardwareMediumValue(cleaned)) {
     return "";
   }
-  if (typeof normalizeDropdownValue === "function") {
-    const normalized = normalizeDropdownValue("stone_family", cleaned);
-    if (normalized) return normalized;
+
+  const directPicklistMatch = findMatchedPicklistStoneFamilyOption(cleaned);
+  if (directPicklistMatch) {
+    return directPicklistMatch;
   }
-  const options = DROPDOWN_OPTIONS?.stone_family || [];
-  const lower = cleaned.toLowerCase();
-  for (const opt of options) {
-    const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
-    if (val.toLowerCase() === lower) return val;
+
+  const inclusionFreeStem = extractValidatedInclusionFreeStoneStem(cleaned);
+  if (inclusionFreeStem) {
+    const stemBaseFamily = resolveCanonicalBaseFamilyWithoutInclusionSplit(inclusionFreeStem);
+    if (stemBaseFamily) {
+      return stemBaseFamily;
+    }
   }
-  return cleaned;
+
+  const extracted = extractStoneName(cleaned);
+  if (extracted && extracted !== "Unknown") {
+    const extractedPicklistMatch = findMatchedPicklistStoneFamilyOption(extracted);
+    if (extractedPicklistMatch) {
+      return extractedPicklistMatch;
+    }
+  }
+
+  const derived = getDerivedMaterial(cleaned);
+  if (derived && derived !== cleaned) {
+    const derivedPicklistMatch = findMatchedPicklistStoneFamilyOption(derived);
+    if (derivedPicklistMatch) {
+      return derivedPicklistMatch;
+    }
+  }
+
+  return "";
 }
 
 export function isSupportedPicklistStoneFamily(rawFamily) {
-  const cleaned = cleanStoneFamilyShape(String(rawFamily || "").trim());
-  if (
-    !cleaned ||
-    cleaned.toLowerCase() === "unknown" ||
-    cleaned.toLowerCase() === "unknown stone" ||
-    INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
-    isGenericBareStoneProposal(cleaned) ||
-    isSettingOrHardwareMediumValue(cleaned)
-  ) {
-    return false;
-  }
-  const options = DROPDOWN_OPTIONS?.stone_family || [];
-  const lower = cleaned.toLowerCase();
-  for (const opt of options) {
-    const val = typeof opt === "object" ? (opt.value || opt.label || "") : String(opt);
-    if (val && val.toLowerCase().trim() === lower) {
-      return true;
-    }
-  }
-  return false;
+  return findMatchedPicklistStoneFamilyOption(rawFamily) !== "";
 }
 
 export function resolveCanonicalBaseFamilyForStoneCandidate(rawCandidate) {
@@ -201,26 +410,18 @@ export function resolveCanonicalBaseFamilyForStoneCandidate(rawCandidate) {
   ) {
     return "";
   }
-  if (isSupportedPicklistStoneFamily(cleaned)) {
-    return resolvePicklistStoneFamily(cleaned);
+
+  const directPicklistMatch = findMatchedPicklistStoneFamilyOption(cleaned);
+  if (directPicklistMatch) {
+    return directPicklistMatch;
   }
-  const extracted = extractStoneName(cleaned);
-  if (
-    extracted &&
-    extracted !== "Unknown" &&
-    isSupportedPicklistStoneFamily(extracted)
-  ) {
-    return resolvePicklistStoneFamily(extracted);
+
+  const inclusionFreeStem = extractValidatedInclusionFreeStoneStem(cleaned);
+  if (inclusionFreeStem) {
+    return resolveCanonicalBaseFamilyWithoutInclusionSplit(inclusionFreeStem);
   }
-  const derived = getDerivedMaterial(cleaned);
-  if (
-    derived &&
-    derived !== cleaned &&
-    isSupportedPicklistStoneFamily(derived)
-  ) {
-    return resolvePicklistStoneFamily(derived);
-  }
-  return "";
+
+  return resolveCanonicalBaseFamilyWithoutInclusionSplit(cleaned);
 }
 
 export function isValidatedSpecificVarietyOfBaseFamily(rawCandidate, targetBaseFamily = "") {
@@ -229,9 +430,15 @@ export function isValidatedSpecificVarietyOfBaseFamily(rawCandidate, targetBaseF
   if (!cleaned) return false;
   const candidateBaseFamily = resolveCanonicalBaseFamilyForStoneCandidate(cleaned);
   if (!candidateBaseFamily) return false;
-  if (cleaned.toLowerCase() === candidateBaseFamily.toLowerCase()) {
+
+  const varietyStem = resolveValidatedStoneVarietyStem(cleaned) || cleaned;
+  if (
+    cleaned.toLowerCase() === candidateBaseFamily.toLowerCase() ||
+    varietyStem.toLowerCase() === candidateBaseFamily.toLowerCase()
+  ) {
     return false;
   }
+
   if (targetBaseFamily) {
     const cleanTargetFamily = resolveCanonicalBaseFamilyForStoneCandidate(targetBaseFamily);
     if (
@@ -242,6 +449,48 @@ export function isValidatedSpecificVarietyOfBaseFamily(rawCandidate, targetBaseF
     }
   }
   return true;
+}
+
+/**
+ * Returns the ordered exact authoritative-DB lookup keys (`lowercase`) that are
+ * allowed to satisfy a validated specific stone variety without degrading to its
+ * generic base family:
+ *   1) Full shape-cleaned candidate (e.g. `"leopard rhyolite with mica inclusions"`)
+ *   2) Validated inclusion-free variety stem when distinct and still a specific
+ *      variety of the same base family (e.g. `"leopard rhyolite"`)
+ * Never includes the generic base family (e.g. `"rhyolite"`).
+ */
+export function buildAllowedSpecificVarietyDbMatchNames(rawCandidate, targetBaseFamily = "") {
+  if (typeof rawCandidate !== "string") return [];
+  const cleaned = cleanStoneFamilyShape(rawCandidate.trim());
+  if (!cleaned) return [];
+  if (!isValidatedSpecificVarietyOfBaseFamily(cleaned, targetBaseFamily)) {
+    return [];
+  }
+
+  const allowed = [];
+  const seenLower = new Set();
+  const pushUnique = (val) => {
+    if (typeof val !== "string") return;
+    const trimmed = cleanStoneFamilyShape(val.trim());
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    if (!seenLower.has(lower)) {
+      seenLower.add(lower);
+      allowed.push(lower);
+    }
+  };
+
+  pushUnique(cleaned);
+  const varietyStem = extractValidatedInclusionFreeStoneStem(cleaned);
+  if (
+    varietyStem &&
+    isValidatedSpecificVarietyOfBaseFamily(varietyStem, targetBaseFamily)
+  ) {
+    pushUnique(varietyStem);
+  }
+
+  return allowed;
 }
 
 function isConfirmedPicklistOrVarietyStoneIdentity(rawCandidate) {
@@ -691,13 +940,14 @@ export function buildGeoLookupCandidates({
   const candidates = [];
   const seenLower = new Set();
 
-  const pushCandidate = (rawVal) => {
+  const pushSingleCandidate = (rawVal) => {
     if (typeof rawVal !== "string") return;
     const cleaned = cleanStoneFamilyShape(rawVal.trim());
     if (
       !cleaned ||
       cleaned.toLowerCase() === "unknown" ||
       cleaned.toLowerCase() === "unknown stone" ||
+      INVALID_CANDIDATE_FILLERS.has(cleaned.toLowerCase()) ||
       isGenericBareStoneProposal(cleaned) ||
       isSettingOrHardwareMediumValue(cleaned)
     ) {
@@ -710,29 +960,43 @@ export function buildGeoLookupCandidates({
     }
   };
 
+  const pushCandidateWithVarietyStem = (rawVal) => {
+    if (typeof rawVal !== "string") return;
+    const cleaned = cleanStoneFamilyShape(rawVal.trim());
+    if (!cleaned) return;
+    pushSingleCandidate(cleaned);
+    const inclusionFreeStem = extractValidatedInclusionFreeStoneStem(cleaned);
+    if (
+      inclusionFreeStem &&
+      isValidatedSpecificVarietyOfBaseFamily(inclusionFreeStem)
+    ) {
+      pushSingleCandidate(inclusionFreeStem);
+    }
+  };
+
   const hasValidProvenance = Boolean(provenance && provenance.hasValidProvenance);
   const operatorLockedSet = hasValidProvenance ? provenance.operatorLockedSet : new Set();
 
   if (operatorLockedSet.has("material") && currentData.material) {
-    pushCandidate(currentData.material);
+    pushCandidateWithVarietyStem(currentData.material);
   }
   if (operatorLockedSet.has("primary_medium") && currentData.primary_medium) {
-    pushCandidate(currentData.primary_medium);
+    pushCandidateWithVarietyStem(currentData.primary_medium);
   }
   if (operatorLockedSet.has("stone_family") && currentData.stone_family) {
-    pushCandidate(currentData.stone_family);
+    pushCandidateWithVarietyStem(currentData.stone_family);
   }
   if (idOrigin?.titleStoneSegment && isConfirmedPicklistOrVarietyStoneIdentity(idOrigin.titleStoneSegment)) {
-    pushCandidate(idOrigin.titleStoneSegment);
+    pushCandidateWithVarietyStem(idOrigin.titleStoneSegment);
   }
   if (stoneIdentityContext?.effectiveMaterial) {
-    pushCandidate(stoneIdentityContext.effectiveMaterial);
+    pushCandidateWithVarietyStem(stoneIdentityContext.effectiveMaterial);
   }
   if (stoneIdentityContext?.effectiveFamily) {
-    pushCandidate(stoneIdentityContext.effectiveFamily);
+    pushSingleCandidate(stoneIdentityContext.effectiveFamily);
   }
   if (idOrigin?.derivedFamily) {
-    pushCandidate(idOrigin.derivedFamily);
+    pushSingleCandidate(idOrigin.derivedFamily);
   }
 
   return candidates;
@@ -2221,6 +2485,10 @@ export function buildBenchV2ProducerProposals({
       return;
     }
     activeSelectedStoneCandidatesLower.add(cleaned.toLowerCase());
+    const varietyStem = extractValidatedInclusionFreeStoneStem(cleaned);
+    if (varietyStem && isConfirmedPicklistOrVarietyStoneIdentity(varietyStem)) {
+      activeSelectedStoneCandidatesLower.add(varietyStem.toLowerCase());
+    }
     const baseFam = resolveCanonicalBaseFamilyForStoneCandidate(cleaned);
     if (baseFam) {
       activeSelectedStoneCandidatesLower.add(baseFam.toLowerCase());
@@ -2297,34 +2565,87 @@ export function buildBenchV2ProducerProposals({
       activeStoneBaseFamiliesLower.has(matchedBaseFamily.toLowerCase()))
   );
 
-  // If a specific variety was produced for custom.material (and not operator-locked to
-  // another identity), verify that a generic base-family DB match is never treated as
-  // verified provenance for that specific variety.
+  // Enforce specific-variety DB matching for BOTH operator-locked and unlocked
+  // stone identities so a generic base-family DB record (e.g. "rhyolite") is
+  // NEVER treated as verified geology for a specific variety (e.g. "Leopard Rhyolite"
+  // or "Leopard Rhyolite with Mica Inclusions").
+  const isStoneFamExplicitlyLockedToBaseFamily = Boolean(
+    isBareFieldOperatorLocked("stone_family") &&
+    !isBareFieldOperatorLocked("material") &&
+    !isBareFieldOperatorLocked("primary_medium") &&
+    currentData.stone_family &&
+    isSupportedPicklistStoneFamily(currentData.stone_family)
+  );
+
+  const lockedSpecificVarietyRaw =
+    isBareFieldOperatorLocked("material") && currentData.material
+      ? cleanStoneFamilyShape(String(currentData.material).trim())
+      : isBareFieldOperatorLocked("primary_medium") && currentData.primary_medium
+        ? cleanStoneFamilyShape(String(currentData.primary_medium).trim())
+        : "";
+
   const producedMaterialVarietyCleaned =
     materialProposal?.value && typeof materialProposal.value === "string"
       ? cleanStoneFamilyShape(materialProposal.value.trim())
       : "";
-  const isProducedMaterialSpecificVariety = Boolean(
-    producedMaterialVarietyCleaned &&
-    isValidatedSpecificVarietyOfBaseFamily(
-      producedMaterialVarietyCleaned,
-      effectiveBaseFamily || matchedBaseFamily
-    )
-  );
-  const violatesSpecificVarietyRequirement = Boolean(
-    isProducedMaterialSpecificVariety &&
-    !isBareFieldOperatorLocked("material") &&
-    !isBareFieldOperatorLocked("primary_medium") &&
-    dbMatchedStoneNameLower !== producedMaterialVarietyCleaned.toLowerCase() &&
-    !(
+
+  const effectiveTargetBaseFamilyForVarietyVerify =
+    effectiveBaseFamily ||
+    matchedBaseFamily ||
+    stoneIdentityContextForGeoVerify.effectiveFamily ||
+    "";
+
+  const governingSpecificVarietyCandidate = lockedSpecificVarietyRaw
+    ? (isValidatedSpecificVarietyOfBaseFamily(
+        lockedSpecificVarietyRaw,
+        effectiveTargetBaseFamilyForVarietyVerify
+      )
+        ? lockedSpecificVarietyRaw
+        : "")
+    : (!isStoneFamExplicitlyLockedToBaseFamily &&
+       producedMaterialVarietyCleaned &&
+       isValidatedSpecificVarietyOfBaseFamily(
+         producedMaterialVarietyCleaned,
+         effectiveTargetBaseFamilyForVarietyVerify
+       )
+        ? producedMaterialVarietyCleaned
+        : (!isStoneFamExplicitlyLockedToBaseFamily &&
+           preVisionGeoCandidates.length > 0 &&
+           isValidatedSpecificVarietyOfBaseFamily(
+             preVisionGeoCandidates[0],
+             effectiveTargetBaseFamilyForVarietyVerify
+           )
+            ? cleanStoneFamilyShape(preVisionGeoCandidates[0].trim())
+            : ""));
+
+  const allowedSpecificMatchNamesLower = new Set();
+  if (governingSpecificVarietyCandidate) {
+    for (const allowedLower of buildAllowedSpecificVarietyDbMatchNames(
+      governingSpecificVarietyCandidate,
+      effectiveTargetBaseFamilyForVarietyVerify
+    )) {
+      allowedSpecificMatchNamesLower.add(allowedLower);
+    }
+    if (
+      !lockedSpecificVarietyRaw &&
       preVisionGeoCandidates.length > 0 &&
       isValidatedSpecificVarietyOfBaseFamily(
         preVisionGeoCandidates[0],
-        effectiveBaseFamily || matchedBaseFamily
-      ) &&
-      dbMatchedStoneNameLower ===
-        cleanStoneFamilyShape(preVisionGeoCandidates[0]).toLowerCase()
-    )
+        effectiveTargetBaseFamilyForVarietyVerify
+      )
+    ) {
+      for (const allowedPreLower of buildAllowedSpecificVarietyDbMatchNames(
+        preVisionGeoCandidates[0],
+        effectiveTargetBaseFamilyForVarietyVerify
+      )) {
+        allowedSpecificMatchNamesLower.add(allowedPreLower);
+      }
+    }
+  }
+
+  const violatesSpecificVarietyRequirement = Boolean(
+    governingSpecificVarietyCandidate &&
+    !allowedSpecificMatchNamesLower.has(dbMatchedStoneNameLower)
   );
 
   const isTrustedDbGeologyLookupVerified = Boolean(
@@ -2337,7 +2658,7 @@ export function buildBenchV2ProducerProposals({
     !violatesSpecificVarietyRequirement
   );
 
-  if (geoSourceTag !== "none") {
+  if (geoSourceTag !== "none" && !violatesSpecificVarietyRequirement) {
     const resolveGeologySourceLabel = (geoKey) => {
       if (geoSourceTag === "library") {
         return geoKey === "luster"
