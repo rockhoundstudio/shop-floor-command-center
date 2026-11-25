@@ -26,6 +26,7 @@ export { ALLOWED_READ_SECTIONS, ALLOWED_READ_VIEWS };
 
 const CACHE_GLOBAL_KEY = "__ROCKHOUND_META_INJECTOR_SIDEKICK_REPORT_CACHE_V1__";
 const CACHE_SCHEMA_VERSION = 3;
+const GEMINI_GROUNDED_RESEARCH_MODE = "gemini_grounded_research";
 
 const TTL_MS = 30 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 2 * 60 * 1000;
@@ -1853,14 +1854,24 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  const productId = typeof packet.productId === "string" ? packet.productId.trim() : "";
-  if (!PRODUCT_GID_REGEX.test(productId)) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "invalid_product_id",
-      message: "packet.productId must match gid://shopify/Product/<digits>.",
-    });
+  let productId = null;
+  if (packetMode === GEMINI_GROUNDED_RESEARCH_MODE && packet.productId === null) {
+    productId = null;
+  } else {
+    const rawProductId =
+      typeof packet.productId === "string" ? packet.productId.trim() : "";
+    if (!PRODUCT_GID_REGEX.test(rawProductId)) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "invalid_product_id",
+        message:
+          packetMode === GEMINI_GROUNDED_RESEARCH_MODE
+            ? "packet.productId must be null or match gid://shopify/Product/<digits>."
+            : "packet.productId must match gid://shopify/Product/<digits>.",
+      });
+    }
+    productId = rawProductId;
   }
 
   if (typeof packet.fullText !== "string" || packet.fullText.trim().length === 0) {
@@ -1978,6 +1989,15 @@ export function storeTelemetryReport(options = {}) {
   }
 
   const mode = typeof modeCheck === "string" && modeCheck.trim() ? modeCheck.trim() : null;
+  if (productId === null && mode !== GEMINI_GROUNDED_RESEARCH_MODE) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_product_id",
+      message: "packet.productId must match gid://shopify/Product/<digits>.",
+    });
+  }
+
   const sectionKey =
     typeof sectionKeyCheck === "string" && sectionKeyCheck.trim()
       ? sectionKeyCheck.trim()
@@ -2043,7 +2063,7 @@ export function storeTelemetryReport(options = {}) {
   const metadataOverheadBytes =
     512 +
     utf8ByteLength(shop) +
-    utf8ByteLength(productId) +
+    (productId === null ? 0 : utf8ByteLength(productId)) +
     utf8ByteLength(mode || "") +
     utf8ByteLength(sectionKey || "") +
     utf8ByteLength(sectionLabel || "") +

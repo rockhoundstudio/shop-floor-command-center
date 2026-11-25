@@ -1,4 +1,4 @@
 {
   "name": "Meta Injector Test Reports",
-  "description": "Search and read captured Meta Injector test reports, field holds, and UI measurements where recorded. Read-only; does not generate reports or change products."
+  "description": "List and read captured temporary Command Center reports when available, including product/Bench snapshots, theme-editor readback, and grounded research reports. Read-only; does not run scans, generate reports, or modify store data."
 }

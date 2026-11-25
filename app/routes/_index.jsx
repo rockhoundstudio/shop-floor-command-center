@@ -14,6 +14,7 @@ export default function Index() {
                 <Text variant="headingMd" as="h2">Tools</Text>
                 <Button onClick={() => navigate("/app/bench-v2")} size="large" aria-label="Open Bench2">Open Bench2</Button>
                 <Button onClick={() => navigate("/app/meta-injector")} size="large" aria-label="Open Meta Injector">Meta Injector</Button>
+                <Button onClick={() => navigate("/app/sidekick-queue")} size="large" aria-label="Open Sidekick Queue">Sidekick Queue</Button>
                 <Button onClick={() => navigate("/app/menu-manager")} size="large" aria-label="Open Menu Manager">Menu Manager</Button>
                 <Button onClick={() => navigate("/app/collection-manager")} size="large" aria-label="Open Collection Manager">Collection Manager</Button>
                 <Button onClick={() => navigate("/app/bulk-edit")} size="large" aria-label="Open Bulk Edit">Bulk Edit</Button>
