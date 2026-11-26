@@ -28,21 +28,6 @@ import {
   useNavigate,
   useRevalidator,
 } from "react-router";
-import {
-  Page,
-  Layout,
-  Card,
-  Text,
-  BlockStack,
-  Badge,
-  IndexTable,
-  Box,
-  InlineStack,
-  EmptySearchResult,
-  Banner,
-  Button,
-  Divider,
-} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import {
   executeGroundedGeminiResearch,
@@ -53,6 +38,14 @@ import {
   storeTelemetryReport,
   readTelemetryReport,
 } from "../utils/meta-injector.sidekick-report-cache.server.js";
+import SidekickQueueCalmView from "../components/SidekickQueueCalmView.jsx";
+import {
+  SAVED_REPORT_FIELD_KEY,
+  buildDurableSavedReportEnvelope,
+  parseSavedReportField,
+  writeAndVerifyDurableResearchReport,
+  buildCalmResearchCardModel,
+} from "../utils/sidekick-research-storage.server.js";
 
 const RESEARCH_METAOBJECT_TYPE = "sidekick_research_request";
 const METAOBJECT_GID_REGEX = /^gid:\/\/shopify\/Metaobject\/\d+$/;
@@ -80,6 +73,7 @@ const RESEARCH_FIELD_DEFINITIONS = [
     type: "multi_line_text_field",
   },
   { name: "Error Detail", key: "errorDetail", type: "multi_line_text_field" },
+  { name: "Saved Report JSON", key: SAVED_REPORT_FIELD_KEY, type: "json" },
 ];
 
 function getInFlightSet() {
@@ -123,6 +117,7 @@ function saveServerRepairEntry({
   metaobjectId,
   requestKey,
   query,
+  constraints = null,
   researchResult,
   reportId = null,
   cacheStored = false,
@@ -165,10 +160,12 @@ function saveServerRepairEntry({
     metaobjectId,
     requestKey: requestKey || null,
     query,
+    constraints: constraints || null,
     storedAtMs: nowMs,
     expiresAtMs: nowMs + REPAIR_VAULT_TTL_MS,
     expiresAtIso: new Date(nowMs + REPAIR_VAULT_TTL_MS).toISOString(),
     executedAt: researchResult.executedAt,
+    reportObject: researchResult.reportObject || null,
     reportFullTextJson: researchResult.reportFullTextJson,
     usableWebSourceCount: researchResult.usableWebSourceCount || 0,
     usableSupportSpanCount: researchResult.usableSupportSpanCount || 0,
@@ -475,7 +472,13 @@ export const loader = async ({ request }) => {
   let researchDefinitionReady = false;
   let researchDefinitionId = null;
   let researchRequests = [];
+  let researchCards = [];
   let researchLoaderError = null;
+
+  const vaultByMetaobjectId = authenticatedShop
+    ? getShopVaultSnapshots(authenticatedShop)
+    : {};
+  const rawVaultMap = getRepairVaultMap();
 
   try {
     const defResponse = await admin.graphql(
@@ -525,7 +528,11 @@ export const loader = async ({ request }) => {
       researchRequests = reqEdges.map((edge) => {
         const f = mapFieldsArrayToObject(edge.node.fields);
         const normalizedStatus = normalizeResearchStatus(f.status);
-        const reportId = f.reportId?.trim() || null;
+        const vaultSnap = vaultByMetaobjectId[edge.node.id] || null;
+        const rawVaultEntry = authenticatedShop
+          ? rawVaultMap.get(buildCompositeKey(authenticatedShop, edge.node.id)) || null
+          : null;
+        const reportId = f.reportId?.trim() || vaultSnap?.reportId || null;
 
         let cacheReadableNow = false;
         if (reportId && authenticatedShop) {
@@ -538,6 +545,16 @@ export const loader = async ({ request }) => {
           });
           cacheReadableNow = Boolean(check && check.ok === true);
         }
+
+        const calmCard = buildCalmResearchCardModel({
+          id: edge.node.id,
+          updatedAt: edge.node.updatedAt || null,
+          rawFields: f,
+          cacheReadableNow,
+          vaultSnapshot: vaultSnap,
+          fullVaultReportJson: rawVaultEntry?.reportFullTextJson || null,
+        });
+        researchCards.push(calmCard);
 
         return {
           id: edge.node.id,
@@ -553,6 +570,7 @@ export const loader = async ({ request }) => {
           groundingSummary: f.groundingSummary?.trim() || "",
           errorDetail: f.errorDetail?.trim() || "",
           cacheReadableNow,
+          durablySaved: calmCard.durablySaved,
         };
       });
     }
@@ -561,10 +579,6 @@ export const loader = async ({ request }) => {
       err instanceof Error ? err.message : "Failed to inspect research requests.";
   }
 
-  const vaultByMetaobjectId = authenticatedShop
-    ? getShopVaultSnapshots(authenticatedShop)
-    : {};
-
   return Response.json({
     jobs,
     success: !queueError,
@@ -572,6 +586,7 @@ export const loader = async ({ request }) => {
     researchDefinitionReady,
     researchDefinitionId,
     researchRequests,
+    researchCards,
     researchLoaderError,
     vaultByMetaobjectId,
   });
@@ -915,6 +930,7 @@ export const action = async ({ request }) => {
         metaobjectId,
         requestKey: inputCheck.requestKey,
         query: inputCheck.query,
+        constraints: inputCheck.constraints,
         researchResult,
         reportId: null,
         cacheStored: false,
@@ -943,43 +959,56 @@ export const action = async ({ request }) => {
       const targetStatus = cacheOk ? "completed" : "completed_cache_failed";
       const targetErrorDetail = cacheOk
         ? ""
-        : `RAM cache publication failed (${cacheResult?.code || "unknown"}): ${cacheResult?.message || "Use Repair Publication without re-running Gemini."}`;
+        : `RAM cache publication failed (${cacheResult?.code || "unknown"}): ${cacheResult?.message || "Use Reload / Save without re-running Gemini."}`;
 
-      const finalWrite = await updateResearchMetaobjectFields(
+      const envelopeResult = buildDurableSavedReportEnvelope({
+        metaobjectId,
+        requestKey: inputCheck.requestKey,
+        query: inputCheck.query,
+        constraints: inputCheck.constraints,
+        executedAt: researchResult.executedAt,
+        reportId,
+        reportObject: researchResult.reportObject,
+        reportFullTextJson: researchResult.reportFullTextJson,
+        searchEntryPointHtml: researchResult.searchEntryPointHtml,
+      });
+
+      const durableOutcome = await writeAndVerifyDurableResearchReport({
         admin,
         metaobjectId,
-        {
+        baseMetadataFields: {
           status: targetStatus,
           reportId: reportId || "",
           executedAt: researchResult.executedAt,
           groundingSummary: summaryLine,
           errorDetail: targetErrorDetail,
+        },
+        envelopeResult,
+        readMetaobjectById: readResearchMetaobjectById,
+        updateMetaobjectFields: updateResearchMetaobjectFields,
+      });
+
+      vaultEntry.writebackSucceeded = Boolean(durableOutcome.durablySaved);
+
+      if (!durableOutcome.durablySaved || !cacheOk) {
+        const notices = [];
+        if (!durableOutcome.durablySaved) {
+          notices.push(durableOutcome.message);
         }
-      );
-
-      vaultEntry.writebackSucceeded = finalWrite.ok;
-
-      if (!finalWrite.ok) {
+        if (!cacheOk) {
+          notices.push(
+            `30-minute Sidekick RAM cache storage failed (${cacheResult?.code || "cache_error"}).`
+          );
+        }
         return Response.json({
           ok: true,
           intent,
           warning: true,
           metaobjectId,
           reportId,
-          status: "completed_writeback_failed",
-          message: `Grounded search succeeded${reportId ? ` and cached as ${reportId}` : ""}, but Shopify metaobject writeback failed (${finalWrite.message}). Use "Repair Publication (Zero API Spend)" below—do NOT re-run Gemini.`,
-        });
-      }
-
-      if (!cacheOk) {
-        return Response.json({
-          ok: true,
-          intent,
-          warning: true,
-          metaobjectId,
-          reportId: null,
-          status: "completed_cache_failed",
-          message: `Grounded search succeeded, but RAM cache storage failed (${cacheResult?.code || "cache_error"}). Use "Repair Publication (Zero API Spend)" if eligible.`,
+          durablySaved: Boolean(durableOutcome.durablySaved),
+          status: durableOutcome.statusWritten || "completed_unsaved",
+          message: notices.join(" "),
         });
       }
 
@@ -988,8 +1017,9 @@ export const action = async ({ request }) => {
         intent,
         metaobjectId,
         reportId,
+        durablySaved: true,
         status: "completed",
-        message: `Grounded research completed and published to RAM cache (${reportId}). Sidekick can now retrieve mode="${GEMINI_GROUNDED_RESEARCH_MODE}" for the next 30 minutes.`,
+        message: `Answer saved to Shopify (verified by exact readback) and active in 30-minute Sidekick cache (${reportId}).`,
       });
     } finally {
       inFlightSet.delete(lockKey);
@@ -1011,27 +1041,61 @@ export const action = async ({ request }) => {
     const vault = getRepairVaultMap();
     purgeExpiredVaultEntries(vault, Date.now());
     const compositeKey = buildCompositeKey(authenticatedShop, metaobjectId);
-    const heldEntry = vault.get(compositeKey);
+    const rawHeldEntry = vault.get(compositeKey);
+    const heldEntry =
+      rawHeldEntry && rawHeldEntry.shop === authenticatedShop
+        ? rawHeldEntry
+        : null;
 
-    if (!heldEntry || heldEntry.shop !== authenticatedShop) {
+    const currentMeta = await readResearchMetaobjectById(admin, metaobjectId);
+    const existingFields = currentMeta.ok ? currentMeta.fields : {};
+    const parsedExistingSaved = currentMeta.ok
+      ? parseSavedReportField(existingFields[SAVED_REPORT_FIELD_KEY])
+      : { present: false, valid: false };
+
+    if (!heldEntry && !parsedExistingSaved.valid) {
       return Response.json(
         {
           ok: false,
           intent,
           error:
-            "No active server-held result exists in this worker process for this request (expired after 30 minutes or process restarted). Gemini was NOT called.",
+            "No saved Shopify report or active 30-minute server memory copy exists for this request. Gemini was NOT called.",
         },
         { status: 404 }
       );
     }
 
+    const sourceReportFullTextJson = parsedExistingSaved.valid
+      ? parsedExistingSaved.reportFullTextJson
+      : heldEntry.reportFullTextJson;
+    const sourceRequestKey =
+      (existingFields.requestKey || "").trim() ||
+      parsedExistingSaved.envelope?.requestKey ||
+      heldEntry?.requestKey ||
+      null;
+    const sourceQuery =
+      (existingFields.query || "").trim() ||
+      parsedExistingSaved.envelope?.query ||
+      heldEntry?.query ||
+      "";
+    const sourceConstraints =
+      (existingFields.constraints || "").trim() ||
+      parsedExistingSaved.envelope?.constraints ||
+      heldEntry?.constraints ||
+      null;
+    const sourceExecutedAt =
+      (existingFields.executedAt || "").trim() ||
+      parsedExistingSaved.envelope?.executedAt ||
+      heldEntry?.executedAt ||
+      new Date().toISOString();
+
     const cacheResult = publishResearchToTelemetryCache({
       shop: authenticatedShop,
       metaobjectId,
-      requestKey: heldEntry.requestKey,
-      query: heldEntry.query,
-      executedAt: heldEntry.executedAt,
-      reportFullTextJson: heldEntry.reportFullTextJson,
+      requestKey: sourceRequestKey,
+      query: sourceQuery,
+      executedAt: sourceExecutedAt,
+      reportFullTextJson: sourceReportFullTextJson,
     });
 
     const cacheOk = Boolean(
@@ -1042,35 +1106,89 @@ export const action = async ({ request }) => {
         {
           ok: false,
           intent,
-          error: `RAM cache republication failed (${cacheResult?.code || "error"}): ${cacheResult?.message || "Unknown cache error"}. Gemini was NOT called.`,
+          error: `Sidekick RAM cache reload failed (${cacheResult?.code || "error"}): ${cacheResult?.message || "Unknown cache error"}. Gemini was NOT called.`,
         },
         { status: 422 }
       );
     }
 
     const reportId = cacheResult.report.reportId;
-    heldEntry.reportId = reportId;
-    heldEntry.cacheStored = true;
+    if (heldEntry) {
+      heldEntry.reportId = reportId;
+      heldEntry.cacheStored = true;
+    }
+
+    if (parsedExistingSaved.valid) {
+      const metaUpdate = await updateResearchMetaobjectFields(
+        admin,
+        metaobjectId,
+        {
+          status: "completed",
+          reportId,
+          executedAt: sourceExecutedAt,
+          errorDetail: "",
+        }
+      );
+
+      if (!metaUpdate.ok) {
+        return Response.json({
+          ok: true,
+          intent,
+          warning: true,
+          reportId,
+          durablySaved: true,
+          message: `Reloaded saved answer into 30-minute Sidekick cache (${reportId}) with zero API spend, though metadata timestamp/ID update returned: ${metaUpdate.message}`,
+        });
+      }
+
+      return Response.json({
+        ok: true,
+        intent,
+        reportId,
+        durablySaved: true,
+        message: `Reloaded saved answer into 30-minute Sidekick cache (${reportId}) with zero Gemini API calls.`,
+      });
+    }
 
     const summaryLine = `Grounded (${heldEntry.usableWebSourceCount} web sources, ${heldEntry.usableSupportSpanCount} linked model-answer spans; queries: ${heldEntry.webSearchQueries.join("; ").slice(0, 260) || "none listed"})`;
 
-    const writeRes = await updateResearchMetaobjectFields(admin, metaobjectId, {
-      status: "completed",
+    const envelopeResult = buildDurableSavedReportEnvelope({
+      metaobjectId,
+      requestKey: sourceRequestKey,
+      query: sourceQuery,
+      constraints: sourceConstraints,
+      executedAt: sourceExecutedAt,
       reportId,
-      executedAt: heldEntry.executedAt,
-      groundingSummary: summaryLine,
-      errorDetail: "",
+      reportObject: heldEntry.reportObject,
+      reportFullTextJson: heldEntry.reportFullTextJson,
+      searchEntryPointHtml: heldEntry.searchEntryPointHtml,
     });
 
-    heldEntry.writebackSucceeded = writeRes.ok;
+    const durableOutcome = await writeAndVerifyDurableResearchReport({
+      admin,
+      metaobjectId,
+      baseMetadataFields: {
+        status: "completed",
+        reportId,
+        executedAt: sourceExecutedAt,
+        groundingSummary: summaryLine,
+        errorDetail: "",
+      },
+      envelopeResult,
+      readMetaobjectById: readResearchMetaobjectById,
+      updateMetaobjectFields: updateResearchMetaobjectFields,
+    });
 
-    if (!writeRes.ok) {
+    heldEntry.writebackSucceeded = Boolean(durableOutcome.durablySaved);
+
+    if (!durableOutcome.durablySaved) {
       return Response.json({
         ok: true,
         intent,
         warning: true,
         reportId,
-        message: `RAM cache republished (${reportId}) with ZERO Gemini spend, but Shopify metaobject update still failed (${writeRes.message}). Sidekick can still read ${reportId} from RAM now.`,
+        durablySaved: false,
+        message: `Reloaded 30-minute Sidekick cache (${reportId}) with zero API spend, but durable Shopify save is still pending: ${durableOutcome.message}`,
       });
     }
 
@@ -1078,7 +1196,8 @@ export const action = async ({ request }) => {
       ok: true,
       intent,
       reportId,
-      message: `Repaired RAM cache publication and Shopify writeback (${reportId}) with ZERO Gemini API calls.`,
+      durablySaved: true,
+      message: `Answer saved to Shopify (verified by exact readback) and reloaded into 30-minute Sidekick cache (${reportId}) with zero Gemini API calls.`,
     });
   }
 
@@ -1089,39 +1208,15 @@ export const action = async ({ request }) => {
 };
 
 // ==========================================
-// 3. CHASSIS: UI DASHBOARD
+// 3. CHASSIS: CALM DYSLEXIA-FRIENDLY UI VIEW
 // ==========================================
-function renderResearchStatusBadge(status, cacheReadableNow) {
-  if (status === "completed") {
-    return (
-      <Badge tone={cacheReadableNow ? "success" : "attention"}>
-        {cacheReadableNow ? "COMPLETED (IN RAM)" : "COMPLETED (RAM EXPIRED)"}
-      </Badge>
-    );
-  }
-  if (status === "queued") {
-    return <Badge tone="warning">QUEUED (AWAITING RUN)</Badge>;
-  }
-  if (status === "running") {
-    return <Badge tone="info">RUNNING</Badge>;
-  }
-  if (
-    status === "completed_writeback_failed" ||
-    status === "completed_cache_failed"
-  ) {
-    return <Badge tone="warning">{status.toUpperCase()}</Badge>;
-  }
-  return <Badge tone="critical">{status.toUpperCase()}</Badge>;
-}
-
 export default function SidekickQueueTab() {
   const {
     jobs = [],
     error,
     researchDefinitionReady = false,
-    researchRequests = [],
+    researchCards = [],
     researchLoaderError = null,
-    vaultByMetaobjectId = {},
   } = useLoaderData();
 
   const navigate = useNavigate();
@@ -1166,419 +1261,21 @@ export default function SidekickQueueTab() {
     );
   };
 
-  const rowMarkup = jobs.map((job, index) => (
-    <IndexTable.Row id={job.id} key={job.id} position={index}>
-      <IndexTable.Cell>
-        <Text variant="bodyMd" fontWeight="bold" as="span">
-          {job.id.split("/").pop()}
-        </Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span">{job.productId.split("/").pop()}</Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span" tone="subdued">
-          {job.targetKey}
-        </Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span">{job.targetValue}</Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Badge
-          tone={
-            job.status === "pending"
-              ? "warning"
-              : job.status === "complete"
-                ? "success"
-                : "critical"
-          }
-        >
-          {job.status.toUpperCase()}
-        </Badge>
-      </IndexTable.Cell>
-    </IndexTable.Row>
-  ));
-
   return (
-    <Page
-      title="Sidekick Command Queue"
-      subtitle="Universal Command Center queue for reviewed Sidekick jobs and bounded Gemini grounded web research."
-      fullWidth
-      backAction={{ content: "Tools Launcher", onAction: () => navigate("/") }}
-    >
-      <BlockStack gap="600">
-        {error && <Banner tone="critical">{error}</Banner>}
-        {researchLoaderError && (
-          <Banner tone="critical">{researchLoaderError}</Banner>
-        )}
-
-        {actionData?.error && (
-          <Banner tone="critical" title="Action blocked or failed">
-            <Text as="p">{actionData.error}</Text>
-          </Banner>
-        )}
-
-        {actionData?.ok && actionData?.message && (
-          <Banner
-            tone={actionData.warning ? "warning" : "success"}
-            title={
-              actionData.warning
-                ? "Completed with publication notice"
-                : "Action completed"
-            }
-          >
-            <Text as="p">{actionData.message}</Text>
-          </Banner>
-        )}
-
-        <Banner
-          tone="info"
-          title="Operating & Volatility Boundaries (Honest Runtime Rules)"
-        >
-          <BlockStack gap="100">
-            <Text as="p" variant="bodySm">
-              1. Three Separate Steps: Sidekick prepares a draft{" "}
-              <strong>sidekick_research_request</strong> entry (never in product
-              fields) → Bob reviews and clicks <strong>Save</strong> in Shopify
-              Admin → Bob clicks <strong>Run Grounded Research</strong> here to
-              authorize 1 bounded Gemini 2.5 Flash Google-Search call.
-            </Text>
-            <Text as="p" variant="bodySm">
-              2. Tab-Open Polling & RAM Cache Limits: Auto-refresh runs every 30
-              seconds ONLY while this browser tab stays open. Published reports
-              live in server process RAM for <strong>30 minutes</strong> and do
-              not persist across Render restarts or separate worker instances.
-              Single-process locks prevent duplicate clicks here, though
-              multi-worker deployments do not have distributed CAS locking. No
-              automatic retries occur after uncertain network/timeout states.
-            </Text>
-          </BlockStack>
-        </Banner>
-
-        {/* SECTION A: GROUNDED PUBLIC-INTERNET RESEARCH BRIDGE */}
-        <Layout>
-          <Layout.Section>
-            <Card padding="400">
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="100">
-                    <Text variant="headingMd" as="h2">
-                      Grounded Public-Internet Research Requests (
-                      {RESEARCH_METAOBJECT_TYPE})
-                    </Text>
-                    <Text tone="subdued" as="span">
-                      Sourced findings publish to{" "}
-                      <code>mode=&quot;gemini_grounded_research&quot;</code> for
-                      direct Sidekick report-reader retrieval without manual
-                      copy-paste.
-                    </Text>
-                  </BlockStack>
-                  <InlineStack gap="200" blockAlign="center">
-                    <Button
-                      onClick={() => revalidate()}
-                      disabled={state !== "idle" || isSubmittingAction}
-                    >
-                      Refresh Now
-                    </Button>
-                    <Button
-                      variant={researchDefinitionReady ? "secondary" : "primary"}
-                      loading={isSubmittingAction}
-                      onClick={handleSetupDefinition}
-                    >
-                      {researchDefinitionReady
-                        ? "Verify Research Definition"
-                        : "Initialize Research Definition"}
-                    </Button>
-                  </InlineStack>
-                </InlineStack>
-
-                <Divider />
-
-                {!researchDefinitionReady && (
-                  <Banner
-                    tone="warning"
-                    title="Research request definition not initialized yet"
-                  >
-                    <Text as="p">
-                      Click <strong>Initialize Research Definition</strong>{" "}
-                      above once to create the{" "}
-                      <code>sidekick_research_request</code> metaobject
-                      definition in Shopify Admin (no GET-loader write side
-                      effects).
-                    </Text>
-                  </Banner>
-                )}
-
-                {researchDefinitionReady && researchRequests.length === 0 && (
-                  <Box padding="600">
-                    <EmptySearchResult
-                      title="No saved research requests yet"
-                      description='Ask Sidekick to prepare a new "sidekick_research_request" metaobject entry with status="queued" and your query, review and Save it in Shopify Admin, then click Run Grounded Research here.'
-                      withIllustration
-                    />
-                  </Box>
-                )}
-
-                {researchRequests.length > 0 && (
-                  <BlockStack gap="400">
-                    {researchRequests.map((reqItem) => {
-                      const vaultSnap = vaultByMetaobjectId[reqItem.id] || null;
-                      const isEligibleToRun =
-                        reqItem.status === "queued" &&
-                        !reqItem.claimId &&
-                        !reqItem.executedAt &&
-                        !reqItem.reportId;
-
-                      const canRepairFromServerVault = Boolean(
-                        vaultSnap &&
-                          (!reqItem.cacheReadableNow ||
-                            reqItem.status === "completed_writeback_failed" ||
-                            reqItem.status === "completed_cache_failed" ||
-                            !reqItem.reportId)
-                      );
-
-                      return (
-                        <Box
-                          key={reqItem.id}
-                          padding="400"
-                          background="bg-surface-secondary"
-                          borderRadius="200"
-                        >
-                          <BlockStack gap="300">
-                            <InlineStack
-                              align="space-between"
-                              blockAlign="center"
-                              wrap
-                            >
-                              <InlineStack gap="200" blockAlign="center">
-                                <Text
-                                  variant="bodyMd"
-                                  fontWeight="bold"
-                                  as="span"
-                                >
-                                  #{reqItem.shortId}
-                                </Text>
-                                {reqItem.requestKey && (
-                                  <Badge tone="info">{reqItem.requestKey}</Badge>
-                                )}
-                                {renderResearchStatusBadge(
-                                  reqItem.status,
-                                  reqItem.cacheReadableNow
-                                )}
-                              </InlineStack>
-
-                              <InlineStack gap="200">
-                                {isEligibleToRun && (
-                                  <Button
-                                    variant="primary"
-                                    tone="success"
-                                    loading={isSubmittingAction}
-                                    onClick={() =>
-                                      handleRunResearch(reqItem.id)
-                                    }
-                                  >
-                                    Run Grounded Research (1 API Call)
-                                  </Button>
-                                )}
-
-                                {canRepairFromServerVault && (
-                                  <Button
-                                    variant="primary"
-                                    loading={isSubmittingAction}
-                                    onClick={() =>
-                                      handleRepairPublication(reqItem.id)
-                                    }
-                                  >
-                                    Repair Publication (Zero API Spend)
-                                  </Button>
-                                )}
-                              </InlineStack>
-                            </InlineStack>
-
-                            <BlockStack gap="100">
-                              <Text variant="bodyMd" fontWeight="semibold" as="p">
-                                Query: {reqItem.query || "(Empty query)"}
-                              </Text>
-                              {reqItem.constraints && (
-                                <Text variant="bodySm" tone="subdued" as="p">
-                                  Constraints: {reqItem.constraints}
-                                </Text>
-                              )}
-                            </BlockStack>
-
-                            {(reqItem.reportId || reqItem.executedAt) && (
-                              <InlineStack gap="400" wrap>
-                                {reqItem.reportId && (
-                                  <Text variant="bodySm" as="span">
-                                    <strong>Report ID:</strong>{" "}
-                                    <code>{reqItem.reportId}</code>
-                                  </Text>
-                                )}
-                                {reqItem.executedAt && (
-                                  <Text variant="bodySm" tone="subdued" as="span">
-                                    Executed: {reqItem.executedAt}
-                                  </Text>
-                                )}
-                              </InlineStack>
-                            )}
-
-                            {reqItem.groundingSummary && (
-                              <Text variant="bodySm" tone="subdued" as="p">
-                                {reqItem.groundingSummary}
-                              </Text>
-                            )}
-
-                            {reqItem.errorDetail && (
-                              <Banner tone="critical">
-                                <Text variant="bodySm" as="p">
-                                  {reqItem.errorDetail}
-                                </Text>
-                              </Banner>
-                            )}
-
-                            {vaultSnap && (
-                              <Box
-                                padding="300"
-                                background="bg-surface"
-                                borderRadius="150"
-                              >
-                                <BlockStack gap="200">
-                                  <Text
-                                    variant="bodySm"
-                                    fontWeight="semibold"
-                                    as="p"
-                                  >
-                                    Active Server-RAM Evidence Preview (Untrusted
-                                    Web Evidence — Model Spans Are NOT Verbatim
-                                    Source Quotes)
-                                  </Text>
-
-                                  {vaultSnap.answerPreview && (
-                                    <Text variant="bodySm" as="p">
-                                      {vaultSnap.answerPreview}
-                                      {vaultSnap.answerPreview.length >= 900
-                                        ? "..."
-                                        : ""}
-                                    </Text>
-                                  )}
-
-                                  {vaultSnap.sources?.length > 0 && (
-                                    <BlockStack gap="100">
-                                      <Text
-                                        variant="bodySm"
-                                        fontWeight="semibold"
-                                        as="p"
-                                      >
-                                        Cited Web Sources:
-                                      </Text>
-                                      {vaultSnap.sources.map((src) => (
-                                        <Text
-                                          key={`${reqItem.id}_src_${src.chunkIndex}`}
-                                          variant="bodySm"
-                                          as="p"
-                                        >
-                                          [{src.chunkIndex}]{" "}
-                                          <a
-                                            href={src.uri}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                          >
-                                            {src.title}
-                                          </a>
-                                        </Text>
-                                      ))}
-                                    </BlockStack>
-                                  )}
-
-                                  {vaultSnap.searchEntryPointHtml && (
-                                    <BlockStack gap="100">
-                                      <Text
-                                        variant="bodySm"
-                                        tone="subdued"
-                                        as="p"
-                                      >
-                                        Google Search Suggestions (sandboxed):
-                                      </Text>
-                                      <iframe
-                                        title={`Google Search Suggestions ${reqItem.shortId}`}
-                                        sandbox="allow-popups allow-popups-to-escape-sandbox"
-                                        referrerPolicy="no-referrer"
-                                        srcDoc={vaultSnap.searchEntryPointHtml}
-                                        style={{
-                                          width: "100%",
-                                          minHeight: "76px",
-                                          border: "1px solid #dfe3e8",
-                                          borderRadius: "8px",
-                                          background: "#ffffff",
-                                        }}
-                                      />
-                                    </BlockStack>
-                                  )}
-                                </BlockStack>
-                              </Box>
-                            )}
-                          </BlockStack>
-                        </Box>
-                      );
-                    })}
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-
-        {/* SECTION B: EXISTING PRODUCT METADATA QUEUE (PRESERVED INTACT) */}
-        <Layout>
-          <Layout.Section>
-            <Card padding="0">
-              <Box padding="400" borderBottom="025" borderColor="border">
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="100">
-                    <Text variant="headingMd" as="h2">
-                      Rockhound Studio - Job Queue
-                    </Text>
-                    <Text tone="subdued" as="span">
-                      Auto-refreshes every 30 seconds while tab is open.
-                    </Text>
-                  </BlockStack>
-                  <Badge tone={state === "loading" ? "info" : "success"}>
-                    {state === "loading" ? "Syncing..." : "Live"}
-                  </Badge>
-                </InlineStack>
-              </Box>
-
-              {jobs.length === 0 && (
-                <Box padding="800">
-                  <EmptySearchResult
-                    title="Waiting for Sidekick..."
-                    description="No jobs in the queue yet. The database is linked and standing by."
-                    withIllustration
-                  />
-                </Box>
-              )}
-
-              {jobs.length > 0 && (
-                <IndexTable
-                  resourceName={{ singular: "job", plural: "jobs" }}
-                  itemCount={jobs.length}
-                  selectable={false}
-                  headings={[
-                    { title: "Job ID" },
-                    { title: "Product ID" },
-                    { title: "Metafield" },
-                    { title: "Value" },
-                    { title: "Status" },
-                  ]}
-                >
-                  {rowMarkup}
-                </IndexTable>
-              )}
-            </Card>
-          </Layout.Section>
-        </Layout>
-      </BlockStack>
-    </Page>
+    <SidekickQueueCalmView
+      researchDefinitionReady={researchDefinitionReady}
+      researchCards={researchCards}
+      jobs={jobs}
+      queueError={error}
+      researchLoaderError={researchLoaderError}
+      actionData={actionData}
+      revalidatorState={state}
+      isSubmittingAction={isSubmittingAction}
+      onNavigateBack={() => navigate("/")}
+      onRefresh={() => revalidate()}
+      onSetupDefinition={handleSetupDefinition}
+      onRunResearch={handleRunResearch}
+      onRepairOrRepublish={handleRepairPublication}
+    />
   );
 }
