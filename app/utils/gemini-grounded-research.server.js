@@ -32,15 +32,16 @@ export const GEMINI_GROUNDED_MODEL_ID = "gemini-2.5-flash";
 const GEMINI_GENERATE_CONTENT_ENDPOINT =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
-export const DEFAULT_RESEARCH_TIMEOUT_MS = 25000;
+export const DEFAULT_RESEARCH_TIMEOUT_MS = 45000;
 export const MIN_RESEARCH_TIMEOUT_MS = 5000;
-export const MAX_RESEARCH_TIMEOUT_MS = 45000;
+export const MAX_RESEARCH_TIMEOUT_MS = 60000;
 
 export const MIN_QUERY_CHARS = 8;
 export const MAX_QUERY_CHARS = 1200;
 export const MAX_CONSTRAINTS_CHARS = 1500;
 export const MAX_REQUEST_KEY_CHARS = 160;
 
+const MAX_SAFE_HTTP_URL_CHARS = 2048;
 const MAX_GEMINI_RESPONSE_UTF8_BYTES = 2 * 1024 * 1024;
 const MAX_REPORT_FULL_TEXT_UTF8_BYTES = 900 * 1024;
 const MAX_SEARCH_ENTRY_POINT_HTML_UTF8_BYTES = 128 * 1024;
@@ -82,6 +83,11 @@ function utf8ByteLength(value) {
   return Buffer.byteLength(String(value ?? ""), "utf8");
 }
 
+export function checkGeminiResearchEnvReady() {
+  const rawApiKey = process.env.GEMINI_API_KEY;
+  return typeof rawApiKey === "string" && rawApiKey.trim().length > 0;
+}
+
 function scrubSensitiveText(rawText, apiKeyToRedact = "") {
   if (typeof rawText !== "string" || rawText.length === 0) {
     return "";
@@ -110,12 +116,38 @@ function stripControlCharsPreserveNewlines(value) {
   return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
 }
 
-function validateSafeHttpUrl(rawUri) {
+function containsSensitiveMaterialInUrl(validatedUrl, apiKeyToRedact = "") {
+  if (typeof validatedUrl !== "string" || validatedUrl.length === 0) {
+    return true;
+  }
+  if (
+    typeof apiKeyToRedact === "string" &&
+    apiKeyToRedact.trim().length >= 6 &&
+    validatedUrl.includes(apiKeyToRedact.trim())
+  ) {
+    return true;
+  }
+  for (let i = 0; i < CREDENTIAL_SCRUB_PATTERNS.length; i += 1) {
+    const pattern = CREDENTIAL_SCRUB_PATTERNS[i];
+    pattern.lastIndex = 0;
+    if (pattern.test(validatedUrl)) {
+      pattern.lastIndex = 0;
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateSafeHttpUrl(rawUri, apiKeyToRedact = "") {
   if (typeof rawUri !== "string") {
     return null;
   }
   const trimmed = rawUri.trim();
-  if (!trimmed || trimmed.length > 2048 || /\s/.test(trimmed)) {
+  if (
+    !trimmed ||
+    trimmed.length > MAX_SAFE_HTTP_URL_CHARS ||
+    /[\s\u0000-\u001F\u007F]/.test(trimmed)
+  ) {
     return null;
   }
   try {
@@ -129,7 +161,16 @@ function validateSafeHttpUrl(rawUri) {
     if (parsed.username || parsed.password) {
       return null;
     }
-    return parsed.toString();
+    const normalized = parsed.toString();
+    if (normalized.length > MAX_SAFE_HTTP_URL_CHARS) {
+      return null;
+    }
+    // Never mutate or truncate a signed source/redirect URL into a broken link;
+    // reject the URI outright if it contains recognizable credential material.
+    if (containsSensitiveMaterialInUrl(normalized, apiKeyToRedact)) {
+      return null;
+    }
+    return normalized;
   } catch {
     return null;
   }
@@ -480,11 +521,7 @@ function validateAndNormalizeGrounding(candidate, answerText, apiKeyToRedact) {
   for (let originalIndex = 0; originalIndex < rawChunks.length; originalIndex += 1) {
     const rawChunk = rawChunks[originalIndex];
     const rawWeb = isPlainObject(rawChunk?.web) ? rawChunk.web : null;
-    const validatedUri = rawWeb ? validateSafeHttpUrl(rawWeb.uri) : null;
-    const cleanedUri = validatedUri
-      ? scrubSensitiveText(validatedUri, apiKeyToRedact)
-      : null;
-    const safeUri = cleanedUri ? validateSafeHttpUrl(cleanedUri) : null;
+    const safeUri = rawWeb ? validateSafeHttpUrl(rawWeb.uri, apiKeyToRedact) : null;
 
     const rawTitle =
       rawWeb && typeof rawWeb.title === "string"
@@ -790,15 +827,15 @@ function extractSanitizedProviderErrorSummary(rawJsonText, apiKeyToRedact) {
 }
 
 /**
- * Executes a single bounded, Google-Search-grounded Gemini 2.5 Flash request.
+- Executes a single bounded, Google-Search-grounded Gemini 2.5 Flash request.
  *
- * Returned `status` values:
- * - "completed_grounded"      : Valid grounded answer + verified web citations + spans
- * - "failed_pre_dispatch"     : Failed input or environment check BEFORE fetch()
- * - "failed_ungrounded"       : Dispatched & received response, but missing/invalid grounding
- * - "failed_provider_http"    : Dispatched & received deterministic 4xx HTTP rejection
- * - "uncertain_after_dispatch": Timeout, network drop, 5xx, or stream failure AFTER dispatch
- *                               (NEVER automatically retry)
+- Returned `status` values:
+- - "completed_grounded"      : Valid grounded answer + verified web citations + spans
+- - "failed_pre_dispatch"     : Failed input or environment check BEFORE fetch()
+- - "failed_ungrounded"       : Dispatched & received response, but missing/invalid grounding
+- - "failed_provider_http"    : Dispatched & received deterministic 4xx HTTP rejection
+- - "uncertain_after_dispatch": Timeout, network drop, 5xx, or stream failure AFTER dispatch
+-                               (NEVER automatically retry)
  */
 export async function executeGroundedGeminiResearch(options = {}) {
   const inputValidation = validateResearchInputs(options);
@@ -813,8 +850,7 @@ export async function executeGroundedGeminiResearch(options = {}) {
     });
   }
 
-  const rawApiKey = process.env.GEMINI_API_KEY;
-  if (typeof rawApiKey !== "string" || rawApiKey.trim().length === 0) {
+  if (!checkGeminiResearchEnvReady()) {
     return buildFailureResult({
       status: "failed_pre_dispatch",
       code: "missing_gemini_api_key",
@@ -825,7 +861,7 @@ export async function executeGroundedGeminiResearch(options = {}) {
       retryPermitted: false,
     });
   }
-  const apiKey = rawApiKey.trim();
+  const apiKey = process.env.GEMINI_API_KEY.trim();
 
   const { query, constraints, requestKey, timeoutMs } = inputValidation;
 

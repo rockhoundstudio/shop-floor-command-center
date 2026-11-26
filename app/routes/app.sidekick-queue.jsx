@@ -31,23 +31,20 @@ import {
 import { authenticate } from "../shopify.server";
 import {
   executeGroundedGeminiResearch,
-  validateResearchInputs,
-  GEMINI_GROUNDED_RESEARCH_MODE,
+  checkGeminiResearchEnvReady,
 } from "../utils/gemini-grounded-research.server.js";
-import {
-  storeTelemetryReport,
-  readTelemetryReport,
-} from "../utils/meta-injector.sidekick-report-cache.server.js";
+import { readTelemetryReport } from "../utils/meta-injector.sidekick-report-cache.server.js";
 import SidekickQueueCalmView from "../components/SidekickQueueCalmView.jsx";
 import {
+  RESEARCH_METAOBJECT_TYPE,
   SAVED_REPORT_FIELD_KEY,
+  evaluateResearchRunEligibility,
+  publishGroundedResearchToTelemetryCache,
   buildDurableSavedReportEnvelope,
   parseSavedReportField,
   writeAndVerifyDurableResearchReport,
   buildCalmResearchCardModel,
 } from "../utils/sidekick-research-storage.server.js";
-
-const RESEARCH_METAOBJECT_TYPE = "sidekick_research_request";
 const METAOBJECT_GID_REGEX = /^gid:\/\/shopify\/Metaobject\/\d+$/;
 
 const IN_FLIGHT_GLOBAL_KEY =
@@ -364,43 +361,6 @@ async function updateResearchMetaobjectFields(admin, metaobjectId, fieldMap) {
   };
 }
 
-function publishResearchToTelemetryCache({
-  shop,
-  metaobjectId,
-  requestKey,
-  query,
-  executedAt,
-  reportFullTextJson,
-}) {
-  const nowIso = new Date().toISOString();
-  const capturedMs = Date.parse(executedAt || "");
-  const effectiveCapturedAt =
-    Number.isFinite(capturedMs) && Date.now() - capturedMs < 25 * 60 * 1000
-      ? executedAt
-      : nowIso;
-
-  const shortTitle =
-    query.length > 120 ? `${query.slice(0, 117)}...` : query;
-
-  return storeTelemetryReport({
-    shop,
-    packet: {
-      productId: null,
-      mode: GEMINI_GROUNDED_RESEARCH_MODE,
-      sectionKey: "public_web_grounded_research",
-      sectionLabel: "GEMINI GROUNDED PUBLIC WEB RESEARCH",
-      productTitle: shortTitle,
-      runIdentity: requestKey
-        ? `${requestKey} (${metaobjectId.split("/").pop()})`
-        : metaobjectId,
-      runTimestamp: executedAt || effectiveCapturedAt,
-      capturedAt: effectiveCapturedAt,
-      fullText: reportFullTextJson,
-    },
-    uiAudit: null,
-  });
-}
-
 function normalizeResearchStatus(rawStatus) {
   const clean = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
   return clean || "queued";
@@ -524,15 +484,35 @@ export const loader = async ({ request }) => {
       );
       const reqData = await reqResponse.json();
       const reqEdges = reqData?.data?.metaobjects?.edges || [];
+      const activeInFlightSet = getInFlightSet();
 
       researchRequests = reqEdges.map((edge) => {
         const f = mapFieldsArrayToObject(edge.node.fields);
-        const normalizedStatus = normalizeResearchStatus(f.status);
+        const storedStatus = normalizeResearchStatus(f.status);
+        const isInFlightInWorker = Boolean(
+          authenticatedShop &&
+            activeInFlightSet.has(buildCompositeKey(authenticatedShop, edge.node.id))
+        );
+        const effectiveRawFields =
+          isInFlightInWorker &&
+          (storedStatus === "queued" || storedStatus === "failed_pre_dispatch")
+            ? { ...f, status: "running" }
+            : f;
+        const effectiveStatus = normalizeResearchStatus(effectiveRawFields.status);
+
         const vaultSnap = vaultByMetaobjectId[edge.node.id] || null;
         const rawVaultEntry = authenticatedShop
           ? rawVaultMap.get(buildCompositeKey(authenticatedShop, edge.node.id)) || null
           : null;
-        const reportId = f.reportId?.trim() || vaultSnap?.reportId || null;
+        const parsedDurableForId = parseSavedReportField(f[SAVED_REPORT_FIELD_KEY]);
+        const durableEnvelopeReportId =
+          parsedDurableForId.valid &&
+          typeof parsedDurableForId.envelope?.reportId === "string" &&
+          parsedDurableForId.envelope.reportId.trim()
+            ? parsedDurableForId.envelope.reportId.trim()
+            : null;
+        const reportId =
+          f.reportId?.trim() || durableEnvelopeReportId || vaultSnap?.reportId || null;
 
         let cacheReadableNow = false;
         if (reportId && authenticatedShop) {
@@ -549,7 +529,7 @@ export const loader = async ({ request }) => {
         const calmCard = buildCalmResearchCardModel({
           id: edge.node.id,
           updatedAt: edge.node.updatedAt || null,
-          rawFields: f,
+          rawFields: effectiveRawFields,
           cacheReadableNow,
           vaultSnapshot: vaultSnap,
           fullVaultReportJson: rawVaultEntry?.reportFullTextJson || null,
@@ -563,7 +543,9 @@ export const loader = async ({ request }) => {
           requestKey: f.requestKey?.trim() || "",
           query: f.query?.trim() || "",
           constraints: f.constraints?.trim() || "",
-          status: normalizedStatus,
+          status: effectiveStatus,
+          storedStatus,
+          inFlightInWorker: isInFlightInWorker,
           claimId: f.claimId?.trim() || "",
           reportId,
           executedAt: f.executedAt?.trim() || "",
@@ -764,6 +746,7 @@ export const action = async ({ request }) => {
         {
           ok: false,
           intent,
+          metaobjectId: metaobjectId || null,
           error:
             "Explicit merchant Run confirmation is required before invoking the Gemini API.",
         },
@@ -776,6 +759,7 @@ export const action = async ({ request }) => {
         {
           ok: false,
           intent,
+          metaobjectId: metaobjectId || null,
           error: "Invalid Shopify Metaobject GID.",
         },
         { status: 400 }
@@ -789,6 +773,8 @@ export const action = async ({ request }) => {
         {
           ok: false,
           intent,
+          metaobjectId,
+          status: "running",
           error:
             "This research request is already running in this server worker process. Duplicate run blocked.",
         },
@@ -798,11 +784,18 @@ export const action = async ({ request }) => {
 
     inFlightSet.add(lockKey);
     try {
-      // 1. Fresh server-side Shopify read (never trust prefilled UI state)
+      // 1. Fresh server-side Shopify read (never trust prefilled UI state, and never
+      // fabricate a stored status when the metaobject read fails or is missing).
       const initialRead = await readResearchMetaobjectById(admin, metaobjectId);
       if (!initialRead.ok) {
         return Response.json(
-          { ok: false, intent, error: initialRead.message },
+          {
+            ok: false,
+            intent,
+            metaobjectId,
+            status: null,
+            error: initialRead.message,
+          },
           { status: 404 }
         );
       }
@@ -810,42 +803,79 @@ export const action = async ({ request }) => {
       const fields = initialRead.fields;
       const currentStatus = normalizeResearchStatus(fields.status);
       const existingClaim = (fields.claimId || "").trim();
-      const existingExecutedAt = (fields.executedAt || "").trim();
-      const existingReportId = (fields.reportId || "").trim();
 
-      if (
-        currentStatus !== "queued" ||
-        existingClaim !== "" ||
-        existingExecutedAt !== "" ||
-        existingReportId !== ""
-      ) {
+      // Shared 6-part eligibility contract:
+      // Requires status in {"queued", "failed_pre_dispatch"}, empty claimId,
+      // empty executedAt, empty reportId, genuinely empty savedReportJson, and
+      // passing validateResearchInputs. Any nonempty/invalid savedReportJson or
+      // prior claim/execution evidence is strictly non-runnable.
+      const eligibility = evaluateResearchRunEligibility(fields);
+      if (!eligibility.eligible) {
+        if (
+          !eligibility.hasExecutionOrSaveEvidence &&
+          (currentStatus === "queued" || currentStatus === "failed_pre_dispatch") &&
+          !eligibility.inputCheck.ok
+        ) {
+          const preDispatchWrite = await updateResearchMetaobjectFields(
+            admin,
+            metaobjectId,
+            {
+              status: "failed_pre_dispatch",
+              errorDetail: `${eligibility.inputCheck.code}: ${eligibility.inputCheck.message}`,
+            }
+          );
+          const confirmedPreStatus = preDispatchWrite.ok
+            ? normalizeResearchStatus(preDispatchWrite.fields?.status)
+            : null;
+          return Response.json(
+            {
+              ok: false,
+              intent,
+              metaobjectId,
+              executionOutcome: "failed_pre_dispatch",
+              status: confirmedPreStatus,
+              statusPersisted: Boolean(preDispatchWrite.ok),
+              error: `Validation failed before API dispatch (${eligibility.inputCheck.code}): ${eligibility.inputCheck.message}`,
+            },
+            { status: 400 }
+          );
+        }
+
         return Response.json(
           {
             ok: false,
             intent,
-            error: `Request is not eligible for new API spend (status="${currentStatus}", claimId="${existingClaim || "none"}"). Only untouched "queued" records can be dispatched.`,
+            metaobjectId,
+            status: currentStatus,
+            statusPersisted: true,
+            eligibilityCode: eligibility.code,
+            error:
+              eligibility.code === "saved_report_field_present"
+                ? "Request already contains savedReportJson data and is locked against duplicate paid runs."
+                : `Request is not eligible for new API spend (status="${currentStatus}", claimId="${existingClaim || "none"}").`,
           },
           { status: 409 }
         );
       }
 
-      const inputCheck = validateResearchInputs({
-        query: fields.query || "",
-        constraints: fields.constraints || null,
-        requestKey: fields.requestKey || null,
-      });
-      if (!inputCheck.ok) {
-        await updateResearchMetaobjectFields(admin, metaobjectId, {
-          status: "failed_pre_dispatch",
-          errorDetail: `${inputCheck.code}: ${inputCheck.message}`,
-        });
+      const inputCheck = eligibility.inputCheck;
+
+      // Verify server API key readiness BEFORE writing claimId or status="running"
+      // so missing environment configuration never bricks an un-dispatched record.
+      if (!checkGeminiResearchEnvReady()) {
         return Response.json(
           {
             ok: false,
             intent,
-            error: `Validation failed before API dispatch (${inputCheck.code}): ${inputCheck.message}`,
+            metaobjectId,
+            executionOutcome: "failed_pre_dispatch",
+            status: currentStatus,
+            statusPersisted: true,
+            code: "missing_gemini_api_key",
+            error:
+              "GEMINI_API_KEY is not configured in server environment variables. Claim was NOT written and no API request was sent.",
           },
-          { status: 400 }
+          { status: 500 }
         );
       }
 
@@ -867,6 +897,9 @@ export const action = async ({ request }) => {
           {
             ok: false,
             intent,
+            metaobjectId,
+            status: currentStatus,
+            statusPersisted: false,
             error: `Aborted before Gemini call: could not write running claim (${claimWrite.message}).`,
           },
           { status: 500 }
@@ -886,6 +919,11 @@ export const action = async ({ request }) => {
           {
             ok: false,
             intent,
+            metaobjectId,
+            status: verifyClaimRead.ok
+              ? normalizeResearchStatus(verifyClaimRead.fields.status)
+              : null,
+            statusPersisted: Boolean(verifyClaimRead.ok),
             error:
               "Aborted before Gemini call: claim verification mismatch detected (concurrent update). No API request was sent.",
           },
@@ -901,23 +939,40 @@ export const action = async ({ request }) => {
       });
 
       if (!researchResult.ok) {
-        const mappedStatus =
+        const executionOutcome =
           researchResult.status === "uncertain_after_dispatch"
             ? "uncertain_no_retry"
             : researchResult.status;
 
-        await updateResearchMetaobjectFields(admin, metaobjectId, {
-          status: mappedStatus,
-          executedAt: researchResult.executedAt || new Date().toISOString(),
-          errorDetail: `[${researchResult.code}] ${researchResult.message}`,
-        });
+        const failWrite = await updateResearchMetaobjectFields(
+          admin,
+          metaobjectId,
+          {
+            status: executionOutcome,
+            executedAt: researchResult.executedAt || new Date().toISOString(),
+            errorDetail: `[${researchResult.code}] ${researchResult.message}`,
+          }
+        );
+
+        const statusPersisted = Boolean(
+          failWrite.ok &&
+            normalizeResearchStatus(failWrite.fields?.status) === executionOutcome
+        );
+        const confirmedStatus = statusPersisted ? executionOutcome : null;
+        const persistenceWarning = statusPersisted
+          ? ""
+          : ` [Shopify status writeback unconfirmed (${failWrite.message || "update failed"}); record already holds claim ${claimId} and must NOT be retried.]`;
 
         return Response.json(
           {
             ok: false,
             intent,
-            status: mappedStatus,
-            error: `[${researchResult.code}] ${researchResult.message}`,
+            metaobjectId,
+            claimId,
+            executionOutcome,
+            status: confirmedStatus,
+            statusPersisted,
+            error: `[${researchResult.code}] ${researchResult.message}${persistenceWarning}`,
           },
           { status: 422 }
         );
@@ -937,19 +992,18 @@ export const action = async ({ request }) => {
         writebackSucceeded: false,
       });
 
-      const cacheResult = publishResearchToTelemetryCache({
+      const cacheResult = publishGroundedResearchToTelemetryCache({
         shop: authenticatedShop,
         metaobjectId,
         requestKey: inputCheck.requestKey,
         query: inputCheck.query,
         executedAt: researchResult.executedAt,
+        reportObject: researchResult.reportObject,
         reportFullTextJson: researchResult.reportFullTextJson,
       });
 
-      const cacheOk = Boolean(
-        cacheResult && cacheResult.ok === true && cacheResult.report?.reportId
-      );
-      const reportId = cacheOk ? cacheResult.report.reportId : null;
+      const cacheOk = Boolean(cacheResult.ok && cacheResult.reportId);
+      const reportId = cacheOk ? cacheResult.reportId : null;
 
       vaultEntry.reportId = reportId;
       vaultEntry.cacheStored = cacheOk;
@@ -990,6 +1044,10 @@ export const action = async ({ request }) => {
 
       vaultEntry.writebackSucceeded = Boolean(durableOutcome.durablySaved);
 
+      const statusPersisted = Boolean(
+        durableOutcome.metadataWriteOk && durableOutcome.statusWritten
+      );
+
       if (!durableOutcome.durablySaved || !cacheOk) {
         const notices = [];
         if (!durableOutcome.durablySaved) {
@@ -997,7 +1055,7 @@ export const action = async ({ request }) => {
         }
         if (!cacheOk) {
           notices.push(
-            `30-minute Sidekick RAM cache storage failed (${cacheResult?.code || "cache_error"}).`
+            `30-minute Sidekick RAM cache storage failed (${cacheResult?.code || "cache_error"}).`,
           );
         }
         return Response.json({
@@ -1007,7 +1065,9 @@ export const action = async ({ request }) => {
           metaobjectId,
           reportId,
           durablySaved: Boolean(durableOutcome.durablySaved),
-          status: durableOutcome.statusWritten || "completed_unsaved",
+          executionOutcome: cacheOk ? "completed_unsaved" : "completed_cache_failed",
+          status: statusPersisted ? durableOutcome.statusWritten : null,
+          statusPersisted,
           message: notices.join(" "),
         });
       }
@@ -1018,7 +1078,9 @@ export const action = async ({ request }) => {
         metaobjectId,
         reportId,
         durablySaved: true,
-        status: "completed",
+        executionOutcome: "completed",
+        status: durableOutcome.statusWritten || "completed",
+        statusPersisted: true,
         message: `Answer saved to Shopify (verified by exact readback) and active in 30-minute Sidekick cache (${reportId}).`,
       });
     } finally {
@@ -1027,13 +1089,19 @@ export const action = async ({ request }) => {
   }
 
   // --- INTENT C: ZERO-SPEND SERVER-HELD PUBLICATION / WRITEBACK REPAIR ---
-  // Uses ONLY authenticated shop-bound server vault entries; NEVER accepts
-  // client-supplied report JSON/HTML and NEVER calls Gemini.
+  // Uses ONLY verified durable Shopify report JSON or authenticated shop-bound
+  // server vault entries; NEVER accepts client-supplied report JSON/HTML, NEVER
+  // overwrites mismatched saved reportIds, and NEVER calls Gemini.
   if (intent === "repairPublication") {
     const metaobjectId = String(formData.get("metaobjectId") || "").trim();
     if (!METAOBJECT_GID_REGEX.test(metaobjectId)) {
       return Response.json(
-        { ok: false, intent, error: "Invalid Shopify Metaobject GID." },
+        {
+          ok: false,
+          intent,
+          metaobjectId: metaobjectId || null,
+          error: "Invalid Shopify Metaobject GID.",
+        },
         { status: 400 }
       );
     }
@@ -1048,84 +1116,212 @@ export const action = async ({ request }) => {
         : null;
 
     const currentMeta = await readResearchMetaobjectById(admin, metaobjectId);
-    const existingFields = currentMeta.ok ? currentMeta.fields : {};
-    const parsedExistingSaved = currentMeta.ok
-      ? parseSavedReportField(existingFields[SAVED_REPORT_FIELD_KEY])
-      : { present: false, valid: false };
-
-    if (!heldEntry && !parsedExistingSaved.valid) {
+    if (!currentMeta.ok) {
       return Response.json(
         {
           ok: false,
           intent,
-          error:
-            "No saved Shopify report or active 30-minute server memory copy exists for this request. Gemini was NOT called.",
+          metaobjectId,
+          status: null,
+          error: currentMeta.message,
         },
         { status: 404 }
       );
     }
 
-    const sourceReportFullTextJson = parsedExistingSaved.valid
+    const existingFields = currentMeta.fields;
+    const currentStatus = normalizeResearchStatus(existingFields.status);
+    const parsedExistingSaved = parseSavedReportField(
+      existingFields[SAVED_REPORT_FIELD_KEY]
+    );
+
+    const existingFieldReportId = (existingFields.reportId || "").trim() || null;
+    const existingEnvelopeMetaId =
+      parsedExistingSaved.valid &&
+      typeof parsedExistingSaved.envelope?.metaobjectId === "string"
+        ? parsedExistingSaved.envelope.metaobjectId.trim()
+        : "";
+    const existingEnvelopeReportId =
+      parsedExistingSaved.valid &&
+      typeof parsedExistingSaved.envelope?.reportId === "string" &&
+      parsedExistingSaved.envelope.reportId.trim()
+        ? parsedExistingSaved.envelope.reportId.trim()
+        : null;
+
+    if (
+      parsedExistingSaved.valid &&
+      existingEnvelopeMetaId &&
+      existingEnvelopeMetaId !== metaobjectId
+    ) {
+      return Response.json(
+        {
+          ok: false,
+          intent,
+          metaobjectId,
+          status: currentStatus,
+          statusPersisted: true,
+          code: "saved_envelope_metaobject_mismatch",
+          error:
+            "Saved report envelope metaobjectId does not match this request record. Refusing automatic reload or overwrite; Gemini was NOT called.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (
+      parsedExistingSaved.valid &&
+      existingFieldReportId &&
+      existingEnvelopeReportId &&
+      existingFieldReportId !== existingEnvelopeReportId
+    ) {
+      return Response.json(
+        {
+          ok: false,
+          intent,
+          metaobjectId,
+          status: currentStatus,
+          statusPersisted: true,
+          code: "saved_report_id_conflict",
+          error: `Saved metadata reportId (${existingFieldReportId}) conflicts with savedReportJson envelope reportId (${existingEnvelopeReportId}). Saved IDs were NOT overwritten and Gemini was NOT called.`,
+        },
+        { status: 409 }
+      );
+    }
+
+    const usableExistingSaved =
+      parsedExistingSaved.present &&
+      parsedExistingSaved.valid &&
+      currentStatus !== "completed_unverified_save";
+
+    // Never overwrite a nonempty corrupt/unverified savedReportJson field unless
+    // an intact server-RAM vault entry from this worker is available; if neither
+    // exists, surface the exact condition honestly.
+    if (parsedExistingSaved.present && !usableExistingSaved && !heldEntry) {
+      return Response.json(
+        {
+          ok: false,
+          intent,
+          metaobjectId,
+          status: currentStatus,
+          statusPersisted: true,
+          code: parsedExistingSaved.code || "unverified_saved_report",
+          error:
+            "Saved report JSON on this record failed integrity verification and no 30-minute server memory copy remains. Record stays locked against paid reruns; Gemini was NOT called.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (!usableExistingSaved && !heldEntry) {
+      return Response.json(
+        {
+          ok: false,
+          intent,
+          metaobjectId,
+          status: currentStatus,
+          statusPersisted: true,
+          error:
+            "No verified saved Shopify report or active 30-minute server memory copy exists for this request. Gemini was NOT called.",
+        },
+        { status: 404 }
+      );
+    }
+
+    const expectedDurableReportId = usableExistingSaved
+      ? existingEnvelopeReportId || existingFieldReportId || null
+      : existingFieldReportId || heldEntry?.reportId || null;
+
+    const sourceReportObject = usableExistingSaved
+      ? parsedExistingSaved.reportObject
+      : heldEntry.reportObject;
+    const sourceReportFullTextJson = usableExistingSaved
       ? parsedExistingSaved.reportFullTextJson
       : heldEntry.reportFullTextJson;
     const sourceRequestKey =
       (existingFields.requestKey || "").trim() ||
-      parsedExistingSaved.envelope?.requestKey ||
+      (usableExistingSaved ? parsedExistingSaved.envelope?.requestKey : null) ||
       heldEntry?.requestKey ||
       null;
     const sourceQuery =
       (existingFields.query || "").trim() ||
-      parsedExistingSaved.envelope?.query ||
+      (usableExistingSaved ? parsedExistingSaved.envelope?.query : null) ||
       heldEntry?.query ||
       "";
     const sourceConstraints =
       (existingFields.constraints || "").trim() ||
-      parsedExistingSaved.envelope?.constraints ||
+      (usableExistingSaved ? parsedExistingSaved.envelope?.constraints : null) ||
       heldEntry?.constraints ||
       null;
     const sourceExecutedAt =
+      (usableExistingSaved ? parsedExistingSaved.envelope?.executedAt : null) ||
       (existingFields.executedAt || "").trim() ||
-      parsedExistingSaved.envelope?.executedAt ||
       heldEntry?.executedAt ||
-      new Date().toISOString();
+      null;
 
-    const cacheResult = publishResearchToTelemetryCache({
+    const cacheResult = publishGroundedResearchToTelemetryCache({
       shop: authenticatedShop,
       metaobjectId,
       requestKey: sourceRequestKey,
       query: sourceQuery,
       executedAt: sourceExecutedAt,
+      reportObject: sourceReportObject,
       reportFullTextJson: sourceReportFullTextJson,
+      expectedReportId: expectedDurableReportId,
     });
 
-    const cacheOk = Boolean(
-      cacheResult && cacheResult.ok === true && cacheResult.report?.reportId
-    );
-    if (!cacheOk) {
+    if (!cacheResult.ok) {
+      const httpCode =
+        cacheResult.code === "republished_report_id_mismatch" ? 409 : 422;
       return Response.json(
         {
           ok: false,
           intent,
-          error: `Sidekick RAM cache reload failed (${cacheResult?.code || "error"}): ${cacheResult?.message || "Unknown cache error"}. Gemini was NOT called.`,
+          metaobjectId,
+          status: currentStatus,
+          statusPersisted: true,
+          code: cacheResult.code || "cache_reload_failed",
+          reportId: cacheResult.reportId || null,
+          expectedReportId: cacheResult.expectedReportId || expectedDurableReportId,
+          error: `${cacheResult.message || "Sidekick RAM cache reload failed."} Gemini was NOT called.`,
         },
-        { status: 422 }
+        { status: httpCode }
       );
     }
 
-    const reportId = cacheResult.report.reportId;
+    const reportId = cacheResult.reportId;
+    const resolvedExecutedAt = cacheResult.executedAt;
     if (heldEntry) {
       heldEntry.reportId = reportId;
       heldEntry.cacheStored = true;
     }
 
-    if (parsedExistingSaved.valid) {
+    if (usableExistingSaved) {
+      if (
+        currentStatus === "completed" &&
+        existingFieldReportId === reportId &&
+        (existingFields.executedAt || "").trim() === resolvedExecutedAt &&
+        !(existingFields.errorDetail || "").trim()
+      ) {
+        return Response.json({
+          ok: true,
+          intent,
+          metaobjectId,
+          reportId,
+          durablySaved: true,
+          executionOutcome: "completed",
+          status: "completed",
+          statusPersisted: true,
+          message: `Reloaded saved answer into 30-minute Sidekick cache (${reportId}) with zero Gemini API calls.`,
+        });
+      }
+
       const metaUpdate = await updateResearchMetaobjectFields(
         admin,
         metaobjectId,
         {
           status: "completed",
           reportId,
-          executedAt: sourceExecutedAt,
+          executedAt: resolvedExecutedAt,
           errorDetail: "",
         }
       );
@@ -1135,17 +1331,25 @@ export const action = async ({ request }) => {
           ok: true,
           intent,
           warning: true,
+          metaobjectId,
           reportId,
           durablySaved: true,
-          message: `Reloaded saved answer into 30-minute Sidekick cache (${reportId}) with zero API spend, though metadata timestamp/ID update returned: ${metaUpdate.message}`,
+          executionOutcome: "completed",
+          status: currentStatus,
+          statusPersisted: false,
+          message: `Reloaded saved answer into 30-minute Sidekick cache (${reportId}) with zero API spend, though metadata update returned: ${metaUpdate.message}`,
         });
       }
 
       return Response.json({
         ok: true,
         intent,
+        metaobjectId,
         reportId,
         durablySaved: true,
+        executionOutcome: "completed",
+        status: "completed",
+        statusPersisted: true,
         message: `Reloaded saved answer into 30-minute Sidekick cache (${reportId}) with zero Gemini API calls.`,
       });
     }
@@ -1157,7 +1361,7 @@ export const action = async ({ request }) => {
       requestKey: sourceRequestKey,
       query: sourceQuery,
       constraints: sourceConstraints,
-      executedAt: sourceExecutedAt,
+      executedAt: resolvedExecutedAt,
       reportId,
       reportObject: heldEntry.reportObject,
       reportFullTextJson: heldEntry.reportFullTextJson,
@@ -1170,7 +1374,7 @@ export const action = async ({ request }) => {
       baseMetadataFields: {
         status: "completed",
         reportId,
-        executedAt: sourceExecutedAt,
+        executedAt: resolvedExecutedAt,
         groundingSummary: summaryLine,
         errorDetail: "",
       },
@@ -1181,13 +1385,21 @@ export const action = async ({ request }) => {
 
     heldEntry.writebackSucceeded = Boolean(durableOutcome.durablySaved);
 
+    const statusPersisted = Boolean(
+      durableOutcome.metadataWriteOk && durableOutcome.statusWritten
+    );
+
     if (!durableOutcome.durablySaved) {
       return Response.json({
         ok: true,
         intent,
         warning: true,
+        metaobjectId,
         reportId,
         durablySaved: false,
+        executionOutcome: "completed_unsaved",
+        status: statusPersisted ? durableOutcome.statusWritten : currentStatus,
+        statusPersisted,
         message: `Reloaded 30-minute Sidekick cache (${reportId}) with zero API spend, but durable Shopify save is still pending: ${durableOutcome.message}`,
       });
     }
@@ -1195,8 +1407,12 @@ export const action = async ({ request }) => {
     return Response.json({
       ok: true,
       intent,
+      metaobjectId,
       reportId,
       durablySaved: true,
+      executionOutcome: "completed",
+      status: durableOutcome.statusWritten || "completed",
+      statusPersisted: true,
       message: `Answer saved to Shopify (verified by exact readback) and reloaded into 30-minute Sidekick cache (${reportId}) with zero Gemini API calls.`,
     });
   }
@@ -1224,6 +1440,14 @@ export default function SidekickQueueTab() {
   const { revalidate, state } = useRevalidator();
 
   const isSubmittingAction = fetcher.state !== "idle";
+  const submittingIntent =
+    isSubmittingAction && fetcher.formData
+      ? String(fetcher.formData.get("intent") || "").trim() || null
+      : null;
+  const submittingMetaobjectId =
+    isSubmittingAction && fetcher.formData
+      ? String(fetcher.formData.get("metaobjectId") || "").trim() || null
+      : null;
   const actionData = fetcher.data;
 
   // Auto-refresh every 30 seconds ONLY while this tab stays open and idle
@@ -1271,6 +1495,8 @@ export default function SidekickQueueTab() {
       actionData={actionData}
       revalidatorState={state}
       isSubmittingAction={isSubmittingAction}
+      submittingIntent={submittingIntent}
+      submittingMetaobjectId={submittingMetaobjectId}
       onNavigateBack={() => navigate("/")}
       onRefresh={() => revalidate()}
       onSetupDefinition={handleSetupDefinition}

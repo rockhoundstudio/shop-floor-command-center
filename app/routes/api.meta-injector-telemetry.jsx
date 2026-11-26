@@ -1,6 +1,7 @@
 // FILE: app/routes/api.meta-injector-telemetry.jsx
 import { Buffer } from "node:buffer";
 import { authenticate } from "../shopify.server";
+import { GEMINI_GROUNDED_RESEARCH_MODE } from "../utils/gemini-grounded-research.server.js";
 import {
   storeTelemetryReport,
   listTelemetryReports,
@@ -8,10 +9,22 @@ import {
   ALLOWED_READ_SECTIONS,
   ALLOWED_READ_VIEWS,
 } from "../utils/meta-injector.sidekick-report-cache.server.js";
+import {
+  hydrateDurableResearchReportsToCache,
+  MIN_HYDRATION_WAIT_BUDGET_MS,
+} from "../utils/sidekick-research-storage.server.js";
 
 const MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
 const LIVE_BENCH_MODE = "live_bench_state";
+
+// Extension caller (extensions/meta-injector-read-only/src/index.js) enforces a
+// 4500ms total HTTP timeout. Deduct elapsed authentication/validation time and
+// reserve headroom for post-hydration cache reads + JSON response serialization
+// without claiming a fixed wait guarantees total network latency.
+const EXTENSION_TOTAL_BUDGET_MS = 4500;
+const POST_HYDRATION_RESPONSE_RESERVE_MS = 900;
+const MAX_LOADER_HYDRATION_WAIT_MS = 2200;
 
 const ALLOWED_QUERY_KEYS_LIST = new Set([
   "op",
@@ -55,6 +68,10 @@ function isResponseInstance(err) {
       typeof err.headers === "object" &&
       typeof err.text === "function")
   );
+}
+
+function utf8ByteLength(value) {
+  return Buffer.byteLength(String(value ?? ""), "utf8");
 }
 
 function buildJsonResponse(payload, status = 200, cors = null, extraHeaders = null) {
@@ -126,10 +143,247 @@ function mapCacheResultToHttpStatus(result, isWrite = false) {
       return 400;
     case "not_found":
       return 404;
+    case "unavailable":
+      return 503;
     case "error":
     default:
       return 500;
   }
+}
+
+function computeRemainingHydrationWaitMs(loaderStartMs) {
+  const elapsedMs = Math.max(0, Date.now() - loaderStartMs);
+  const remainingBeforeExtensionCutoff =
+    EXTENSION_TOTAL_BUDGET_MS - POST_HYDRATION_RESPONSE_RESERVE_MS - elapsedMs;
+  if (remainingBeforeExtensionCutoff < MIN_HYDRATION_WAIT_BUDGET_MS) {
+    return null;
+  }
+  return Math.min(MAX_LOADER_HYDRATION_WAIT_MS, remainingBeforeExtensionCutoff);
+}
+
+function buildCompactHydrationCompleteness(hydrationResult) {
+  return {
+    complete: Boolean(hydrationResult?.complete),
+    outcome:
+      typeof hydrationResult?.outcome === "string"
+        ? hydrationResult.outcome
+        : "error",
+    reason:
+      typeof hydrationResult?.reason === "string"
+        ? hydrationResult.reason
+        : "unknown_hydration_state",
+    hasMoreBeyondScanWindow: Boolean(hydrationResult?.hasMoreBeyondScanWindow),
+    scannedCount:
+      typeof hydrationResult?.scannedCount === "number"
+        ? hydrationResult.scannedCount
+        : 0,
+    hydratedCount:
+      typeof hydrationResult?.hydratedCount === "number"
+        ? hydrationResult.hydratedCount
+        : 0,
+  };
+}
+
+function mapIncompleteHydrationToUnavailableReason(hydrationResult) {
+  const outcome = hydrationResult?.outcome;
+  const reason = hydrationResult?.reason;
+  if (outcome === "timed_out") {
+    return "durable_hydration_timed_out";
+  }
+  if (outcome === "partial") {
+    if (reason === "scan_page_cap_reached") {
+      return "durable_hydration_scan_window_capped";
+    }
+    if (reason === "saved_report_id_mismatch_skipped") {
+      return "durable_hydration_id_mismatch_skipped";
+    }
+    return "durable_hydration_partial_coverage";
+  }
+  return "durable_hydration_failed";
+}
+
+function attachEssentialHydrationCompletenessToListResult({
+  listResult,
+  hydrationResult,
+  requestedLimit,
+}) {
+  if (!hydrationResult || hydrationResult.complete === true) {
+    return listResult;
+  }
+
+  const completenessMeta = buildCompactHydrationCompleteness(hydrationResult);
+  const unavailableReason =
+    mapIncompleteHydrationToUnavailableReason(hydrationResult);
+
+  // Case A: List returned zero matching active RAM items while durable hydration
+  // was incomplete (timed out, errored, or partial). Never imply complete empty
+  // coverage; report explicit unavailable reason + hydrationCompleteness.
+  if (listResult && listResult.ok === true && listResult.status === "unavailable") {
+    const updatedUnavailable = {
+      ...listResult,
+      reason: unavailableReason,
+      message:
+        hydrationResult.message ||
+        "RAM cache had no matching active reports and durable Shopify report hydration did not complete cleanly.",
+      hydrationCompleteness: completenessMeta,
+    };
+
+    if (utf8ByteLength(JSON.stringify(updatedUnavailable)) <= MAX_RESPONSE_UTF8_BYTES) {
+      return updatedUnavailable;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updatedUnavailable, "liveSessions")) {
+      const withoutSessions = { ...updatedUnavailable };
+      delete withoutSessions.liveSessions;
+      if (utf8ByteLength(JSON.stringify(withoutSessions)) <= MAX_RESPONSE_UTF8_BYTES) {
+        return withoutSessions;
+      }
+    }
+
+    return {
+      ok: true,
+      status: "unavailable",
+      reason: unavailableReason,
+      message:
+        "Durable report hydration was incomplete; coverage cannot be treated as complete.",
+      reports: [],
+      pagination: listResult.pagination || {
+        requestedLimit,
+        returnedCount: 0,
+        totalMatching: 0,
+        hasNextPage: false,
+        nextAfterReportId: null,
+      },
+      hydrationCompleteness: completenessMeta,
+    };
+  }
+
+  // Case B: List failed cursor lookup while durable hydration was incomplete.
+  // Never report definitive after_report_id_not_found when older/unhydrated
+  // durable reports may own the cursor.
+  if (
+    listResult &&
+    listResult.ok === false &&
+    listResult.status === "invalid_cursor" &&
+    listResult.code === "after_report_id_not_found"
+  ) {
+    return {
+      ok: true,
+      status: "unavailable",
+      reason: unavailableReason,
+      message:
+        hydrationResult.message ||
+        "Requested pagination cursor was not in active RAM and durable Shopify hydration was incomplete.",
+      reports: [],
+      pagination: {
+        requestedLimit,
+        returnedCount: 0,
+        totalMatching: 0,
+        hasNextPage: false,
+        nextAfterReportId: null,
+      },
+      hydrationCompleteness: completenessMeta,
+    };
+  }
+
+  // Case C: List returned >= 1 report items while durable hydration was partial,
+  // timed out, or errored. Completeness metadata is essential output: NEVER
+  // drop hydrationCompleteness to fit 3500 bytes. Trim optional liveSessions or
+  // reduce returned page slice (setting hasNextPage=true) if needed, or fall
+  // back to a compact compatible unavailable response with hydrationCompleteness.
+  if (
+    listResult &&
+    listResult.ok === true &&
+    listResult.status === "ok" &&
+    Array.isArray(listResult.reports)
+  ) {
+    const candidateWithAll = {
+      ...listResult,
+      hydrationCompleteness: completenessMeta,
+    };
+    if (utf8ByteLength(JSON.stringify(candidateWithAll)) <= MAX_RESPONSE_UTF8_BYTES) {
+      return candidateWithAll;
+    }
+
+    const baseWithoutSessions = { ...listResult };
+    delete baseWithoutSessions.liveSessions;
+
+    const candidateNoSessions = {
+      ...baseWithoutSessions,
+      hydrationCompleteness: completenessMeta,
+    };
+    if (utf8ByteLength(JSON.stringify(candidateNoSessions)) <= MAX_RESPONSE_UTF8_BYTES) {
+      return candidateNoSessions;
+    }
+
+    const originalReports = listResult.reports;
+    const totalMatching =
+      typeof listResult.pagination?.totalMatching === "number"
+        ? listResult.pagination.totalMatching
+        : originalReports.length;
+
+    for (let keepCount = originalReports.length - 1; keepCount >= 1; keepCount -= 1) {
+      const slicedReports = originalReports.slice(0, keepCount);
+      const shrunkEnvelope = {
+        ok: true,
+        status: "ok",
+        reports: slicedReports,
+        pagination: {
+          requestedLimit,
+          returnedCount: slicedReports.length,
+          totalMatching,
+          hasNextPage: true,
+          nextAfterReportId: slicedReports[slicedReports.length - 1].reportId,
+        },
+        hydrationCompleteness: completenessMeta,
+      };
+      if (utf8ByteLength(JSON.stringify(shrunkEnvelope)) <= MAX_RESPONSE_UTF8_BYTES) {
+        return shrunkEnvelope;
+      }
+    }
+
+    return {
+      ok: true,
+      status: "unavailable",
+      reason: "response_ceiling_with_incomplete_hydration",
+      message:
+        "Report metadata plus required hydrationCompleteness exceeded the 3500-byte response ceiling; retry with a narrower mode filter or limit=1.",
+      reports: [],
+      pagination: {
+        requestedLimit,
+        returnedCount: 0,
+        totalMatching,
+        hasNextPage: totalMatching > 0,
+        nextAfterReportId: null,
+      },
+      hydrationCompleteness: completenessMeta,
+    };
+  }
+
+  return listResult;
+}
+
+function buildIncompleteHydrationReadMissPayload({
+  reportId,
+  section,
+  view,
+  hydrationResult,
+}) {
+  const completenessMeta = buildCompactHydrationCompleteness(hydrationResult);
+  const code = mapIncompleteHydrationToUnavailableReason(hydrationResult);
+
+  return {
+    ok: false,
+    status: "unavailable",
+    code,
+    reportId,
+    section,
+    ...(view !== "chunk" ? { view } : {}),
+    hydrationCompleteness: completenessMeta,
+    message:
+      hydrationResult?.message ||
+      "Requested reportId was not in active RAM and durable Shopify report hydration was incomplete; report absence is not established.",
+  };
 }
 
 function parseStrictNonNegativeInt(raw) {
@@ -522,6 +776,8 @@ function validatePostEnvelopeAndLiveIdentity(parsedBody) {
 }
 
 export async function loader({ request }) {
+  const loaderStartMs = Date.now();
+
   let authContext;
   try {
     authContext = await authenticate.admin(request);
@@ -541,6 +797,7 @@ export async function loader({ request }) {
   }
 
   const cors = typeof authContext?.cors === "function" ? authContext.cors : null;
+  const admin = authContext?.admin || null;
   const authenticatedShop =
     typeof authContext?.session?.shop === "string"
       ? authContext.session.shop.trim()
@@ -688,13 +945,91 @@ export async function loader({ request }) {
         limit = parsedLimit;
       }
 
-      const result = listTelemetryReports({
+      let result = listTelemetryReports({
         shop: authenticatedShop,
         productId,
         mode,
         limit,
         afterReportId,
       });
+
+      // Cold-research hydration policy for op=list:
+      // Grounded research reports are product-free (productId === null) and
+      // match ONLY when productId is omitted and mode is either omitted or
+      // "gemini_grounded_research". Preserve fast RAM hits without Shopify I/O
+      // whenever active grounded research records already exist in RAM and any
+      // requested pagination cursor resolved cleanly.
+      const normalizedModeFilter =
+        typeof mode === "string" && mode.trim() ? mode.trim() : null;
+      const isProductFreeList = productId === null || productId === undefined;
+      const listIncludesGroundedResearch =
+        isProductFreeList &&
+        (normalizedModeFilter === null ||
+          normalizedModeFilter === GEMINI_GROUNDED_RESEARCH_MODE);
+
+      if (listIncludesGroundedResearch && result.status !== "invalid_request") {
+        const activeResearchProbe =
+          normalizedModeFilter === GEMINI_GROUNDED_RESEARCH_MODE &&
+          afterReportId === null
+            ? result
+            : listTelemetryReports({
+                shop: authenticatedShop,
+                productId: null,
+                mode: GEMINI_GROUNDED_RESEARCH_MODE,
+                limit: 1,
+                afterReportId: null,
+              });
+
+        const hasActiveResearchInRam =
+          activeResearchProbe.ok === true && activeResearchProbe.status === "ok";
+        const cursorMissedInRam =
+          result.ok === false &&
+          result.status === "invalid_cursor" &&
+          result.code === "after_report_id_not_found";
+
+        if (!hasActiveResearchInRam || cursorMissedInRam) {
+          const waitBudgetMs = computeRemainingHydrationWaitMs(loaderStartMs);
+          const hydrationResult =
+            waitBudgetMs === null
+              ? {
+                  ok: false,
+                  outcome: "timed_out",
+                  complete: false,
+                  hasMoreBeyondScanWindow: false,
+                  scannedCount: 0,
+                  verifiedSavedCount: 0,
+                  hydratedCount: 0,
+                  idMismatchCount: 0,
+                  cachePublishErrorCount: 0,
+                  reason: "insufficient_remaining_request_budget",
+                  message:
+                    "Remaining request budget after authentication was too small to complete durable Shopify report hydration.",
+                }
+              : await hydrateDurableResearchReportsToCache({
+                  admin,
+                  shop: authenticatedShop,
+                  waitBudgetMs,
+                });
+
+          if (hydrationResult.hydratedCount > 0) {
+            result = listTelemetryReports({
+              shop: authenticatedShop,
+              productId,
+              mode,
+              limit,
+              afterReportId,
+            });
+          }
+
+          if (!hydrationResult.complete) {
+            result = attachEssentialHydrationCompletenessToListResult({
+              listResult: result,
+              hydrationResult,
+              requestedLimit: limit,
+            });
+          }
+        }
+      }
 
       const httpStatus = mapCacheResultToHttpStatus(result, false);
       return buildJsonResponse(result, httpStatus, cors);
@@ -904,7 +1239,9 @@ export async function loader({ request }) {
       chunkIndex = parsedChunkIndex;
     }
 
-    const result = readTelemetryReport({
+    // Fast O(1) RAM lookup first (all warm reads and chunk continuations 1..N-1
+    // resolve immediately without Shopify I/O).
+    let result = readTelemetryReport({
       shop: authenticatedShop,
       reportId,
       section,
@@ -913,6 +1250,63 @@ export async function loader({ request }) {
       fieldKey,
       chunkIndex,
     });
+
+    // Durable research reports only support view="chunk" (organized views apply
+    // exclusively to volatile live_bench_state snapshots). On a research-capable
+    // RAM miss, run bounded durable hydration and re-query the exact original
+    // reportId without rewriting IDs.
+    const isResearchCapableRead = view === "chunk";
+    if (result.ok === false && result.status === "not_found" && isResearchCapableRead) {
+      const waitBudgetMs = computeRemainingHydrationWaitMs(loaderStartMs);
+      const hydrationResult =
+        waitBudgetMs === null
+          ? {
+              ok: false,
+              outcome: "timed_out",
+              complete: false,
+              hasMoreBeyondScanWindow: false,
+              scannedCount: 0,
+              verifiedSavedCount: 0,
+              hydratedCount: 0,
+              idMismatchCount: 0,
+              cachePublishErrorCount: 0,
+              reason: "insufficient_remaining_request_budget",
+              message:
+                "Remaining request budget after authentication was too small to complete durable Shopify report hydration.",
+            }
+          : await hydrateDurableResearchReportsToCache({
+              admin,
+              shop: authenticatedShop,
+              waitBudgetMs,
+            });
+
+      if (hydrationResult.hydratedCount > 0) {
+        result = readTelemetryReport({
+          shop: authenticatedShop,
+          reportId,
+          section,
+          view,
+          drawer,
+          fieldKey,
+          chunkIndex,
+        });
+      }
+
+      // Never return a definitive not_found when durable hydration timed out,
+      // errored, skipped an ID/cache cap, or stopped at the 20-record scan cap.
+      if (
+        result.ok === false &&
+        result.status === "not_found" &&
+        !hydrationResult.complete
+      ) {
+        result = buildIncompleteHydrationReadMissPayload({
+          reportId,
+          section,
+          view,
+          hydrationResult,
+        });
+      }
+    }
 
     const httpStatus = mapCacheResultToHttpStatus(result, false);
     return buildJsonResponse(result, httpStatus, cors);

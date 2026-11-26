@@ -1793,7 +1793,6 @@ function storeLiveBenchStateInternal({
     status: "stored",
     deduplicated: false,
     report: formatRecordMetadata(newRecord),
-    liveSession: formatLiveSessionSlotSummary(updatedSession),
   });
 }
 
@@ -1922,25 +1921,6 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  const ageMs = nowMs - parsedCapturedAt.ms;
-  if (ageMs > TTL_MS) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "capture_expired",
-      message: "packet.capturedAt is older than the 30-minute TTL.",
-    });
-  }
-
-  if (parsedCapturedAt.ms - nowMs > MAX_FUTURE_SKEW_MS) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "capture_in_future",
-      message: "packet.capturedAt cannot be more than 2 minutes in the future.",
-    });
-  }
-
   const modeCheck = sanitizeOptionalShortString(packet.mode, 120);
   const sectionKeyCheck = sanitizeOptionalShortString(packet.sectionKey, 120);
   const sectionLabelCheck = sanitizeOptionalShortString(packet.sectionLabel, 200);
@@ -1968,6 +1948,37 @@ export function storeTelemetryReport(options = {}) {
     }
   }
 
+  const mode = typeof modeCheck === "string" && modeCheck.trim() ? modeCheck.trim() : null;
+  if (productId === null && mode !== GEMINI_GROUNDED_RESEARCH_MODE) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "invalid_product_id",
+      message: "packet.productId must match gid://shopify/Product/<digits>.",
+    });
+  }
+
+  const isGroundedResearchMode = mode === GEMINI_GROUNDED_RESEARCH_MODE;
+
+  const ageMs = nowMs - parsedCapturedAt.ms;
+  if (!isGroundedResearchMode && ageMs > TTL_MS) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "capture_expired",
+      message: "packet.capturedAt is older than the 30-minute TTL.",
+    });
+  }
+
+  if (parsedCapturedAt.ms - nowMs > MAX_FUTURE_SKEW_MS) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "capture_in_future",
+      message: "packet.capturedAt cannot be more than 2 minutes in the future.",
+    });
+  }
+
   const partsCheck = sanitizePartsMetadata(packet.parts, packet.activePartIndex);
   if (!partsCheck.ok) {
     return finalizeResponse({
@@ -1985,16 +1996,6 @@ export function storeTelemetryReport(options = {}) {
       status: "invalid_request",
       code: auditResult.code,
       message: auditResult.message,
-    });
-  }
-
-  const mode = typeof modeCheck === "string" && modeCheck.trim() ? modeCheck.trim() : null;
-  if (productId === null && mode !== GEMINI_GROUNDED_RESEARCH_MODE) {
-    return finalizeResponse({
-      ok: false,
-      status: "invalid_request",
-      code: "invalid_product_id",
-      message: "packet.productId must match gid://shopify/Product/<digits>.",
     });
   }
 
@@ -2042,6 +2043,26 @@ export function storeTelemetryReport(options = {}) {
     existingRecord.shop === shop &&
     !isRecordSuperseded(state, existingRecord)
   ) {
+    if (isGroundedResearchMode) {
+      const refreshedStoredAtIso = new Date(nowMs).toISOString();
+      const refreshedExpiresAtMs = nowMs + TTL_MS;
+      const refreshedExpiresAtIso = new Date(refreshedExpiresAtMs).toISOString();
+      const refreshedRecord = Object.freeze({
+        ...existingRecord,
+        storedAt: refreshedStoredAtIso,
+        storedAtMs: nowMs,
+        expiresAt: refreshedExpiresAtIso,
+        expiresAtMs: refreshedExpiresAtMs,
+      });
+      state.recordsById.set(reportId, refreshedRecord);
+      return finalizeResponse({
+        ok: true,
+        status: "stored",
+        deduplicated: true,
+        report: formatRecordMetadata(refreshedRecord),
+      });
+    }
+
     return finalizeResponse({
       ok: true,
       status: "stored",
@@ -2094,7 +2115,9 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  const expiresAtMs = parsedCapturedAt.ms + TTL_MS;
+  const expiresAtMs = isGroundedResearchMode
+    ? nowMs + TTL_MS
+    : parsedCapturedAt.ms + TTL_MS;
   const expiresAt = new Date(expiresAtMs).toISOString();
 
   const newRecord = Object.freeze({

@@ -1,11 +1,13 @@
 // ============================================================================
 // FILE: app/utils/sidekick-research-storage.server.js
-// ROCKHOUND STUDIO — PURE SERVER RESEARCH STORAGE, READBACK & CALM-VIEW MAPPER
+// ROCKHOUND STUDIO — PURE SERVER RESEARCH STORAGE, HYDRATION & CALM-VIEW MAPPER
 //
-// Zero Admin GraphQL code, zero mutations, zero external network calls, and
-// zero new npm dependencies. Works strictly through injected existing queue
-// callbacks (readResearchMetaobjectById / updateResearchMetaobjectFields) and
-// the existing RAM telemetry cache contracts.
+// Zero Admin GraphQL mutations, zero external non-Shopify network calls, and
+// zero new npm dependencies. Durable writes work strictly through injected
+// existing queue callbacks (readResearchMetaobjectById /
+// updateResearchMetaobjectFields), while read-only durable hydration uses a
+// single bounded Shopify metaobject list query under authenticated shop
+// isolation.
 //
 // Core Guarantees:
 // - Enforces a strict 120,000 UTF-8 byte ceiling on "savedReportJson".
@@ -13,25 +15,48 @@
 //   webSearchQueries, sourcesByOriginalChunkIndex, modelAnswerSpanAttributions,
 //   and searchEntryPointHtml). NEVER strips citation spans or searchEntryPoint,
 //   and NEVER silently truncates answers or sources.
-// - If complete serialized payload exceeds 120,000 UTF-8 bytes, skips durable
-//   Shopify field write, keeps the intact result in server RAM, and marks the
-//   state explicitly as completed-but-not-durably-saved.
+// - Owns the single canonical publishGroundedResearchToTelemetryCache() and
+//   hydrateDurableResearchReportsToCache() helpers shared by the queue route
+//   and the telemetry reader route (no route-to-route imports).
+// - Preserves deterministic report identity (reportId) across initial run,
+//   manual reload, and cold-process hydration by retaining the immutable
+//   executedAt timestamp as capturedAt/runTimestamp while verified against any
+//   expected durable reportId without rewriting or aliasing mismatches.
 // - Requires a fresh readback via injected readMetaobjectById and byte-exact /
 //   deep canonical verification of answer text, source identities, citation
 //   spans, search queries, and searchEntryPoint HTML before reporting
 //   durablySaved = true ("Answer Saved").
-// - Never claims the "savedReportJson" metaobject field definition exists in
-//   Shopify Admin until actual write + readback evidence proves it.
+// - Treats ANY nonempty, malformed, unverified, or non-string savedReportJson
+//   value as strictly non-runnable pending review; never uses verification
+//   failure to permit another paid Gemini run.
 // - Never reruns paid Gemini research automatically.
 // ============================================================================
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { GEMINI_GROUNDED_RESEARCH_MODE } from "./gemini-grounded-research.server.js";
+import {
+  GEMINI_GROUNDED_RESEARCH_MODE,
+  MIN_QUERY_CHARS,
+  MAX_QUERY_CHARS,
+  MAX_CONSTRAINTS_CHARS,
+  MAX_REQUEST_KEY_CHARS,
+  validateResearchInputs,
+} from "./gemini-grounded-research.server.js";
+import { storeTelemetryReport } from "./meta-injector.sidekick-report-cache.server.js";
 
+export const RESEARCH_METAOBJECT_TYPE = "sidekick_research_request";
 export const SAVED_REPORT_FIELD_KEY = "savedReportJson";
 export const SAVED_REPORT_SCHEMA_VERSION = 1;
 export const MAX_SAVED_REPORT_UTF8_BYTES = 120000;
+
+export const DEFAULT_HYDRATION_WAIT_BUDGET_MS = 2500;
+export const MIN_HYDRATION_WAIT_BUDGET_MS = 250;
+export const MAX_HYDRATION_WAIT_BUDGET_MS = 4000;
+export const HYDRATION_SCAN_PAGE_LIMIT = 20;
+
+const HYDRATION_STATE_GLOBAL_KEY =
+  "__ROCKHOUND_SIDEKICK_RESEARCH_HYDRATION_STATE_V1__";
+const HYDRATION_CLEAN_EMPTY_COOLDOWN_MS = 5000;
 
 export const CALM_CARD_STATES = Object.freeze({
   READY_TO_RUN: "ready_to_run",
@@ -91,9 +116,176 @@ function parseReportObjectFromRawJson(reportFullTextJson) {
   }
 }
 
+function parseStrictIsoTimestampString(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const isoPattern =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+  if (!isoPattern.test(trimmed)) {
+    return null;
+  }
+  const ms = Date.parse(trimmed);
+  if (!Number.isFinite(ms)) {
+    return null;
+  }
+  return trimmed;
+}
+
 /**
- * Validates that a reportObject contains the complete, unstripped grounded
- * structure produced by app/utils/gemini-grounded-research.server.js.
+- True ONLY when a raw savedReportJson field value is genuinely absent or
+- whitespace-empty. Any nonempty string or unexpected non-string value returns
+- false so the request is treated as non-runnable pending review.
+ */
+export function isSavedReportFieldGenuinelyEmpty(rawFieldValue) {
+  if (rawFieldValue === undefined || rawFieldValue === null) {
+    return true;
+  }
+  if (typeof rawFieldValue === "string") {
+    return rawFieldValue.trim().length === 0;
+  }
+  return false;
+}
+
+/**
+- Shared six-part run-eligibility contract for both server dispatch and calm UI
+- card state:
+- 1. status is "queued" or "failed_pre_dispatch" (empty defaults to "queued")
+- 2. claimId is empty
+- 3. executedAt is empty
+- 4. reportId is empty
+- 5. savedReportJson is genuinely empty (never nonempty, malformed, or non-string)
+- 6. validateResearchInputs({ query, constraints, requestKey }) passes
+ */
+export function evaluateResearchRunEligibility(rawFields = {}) {
+  const f = isPlainObject(rawFields) ? rawFields : {};
+  const rawStatus =
+    typeof f.status === "string" && f.status.trim()
+      ? f.status.trim().toLowerCase()
+      : "queued";
+  const claimId = typeof f.claimId === "string" ? f.claimId.trim() : String(f.claimId ?? "").trim();
+  const executedAt =
+    typeof f.executedAt === "string"
+      ? f.executedAt.trim()
+      : String(f.executedAt ?? "").trim();
+  const reportId =
+    typeof f.reportId === "string"
+      ? f.reportId.trim()
+      : String(f.reportId ?? "").trim();
+
+  const rawSavedValue = f[SAVED_REPORT_FIELD_KEY];
+  const savedReportEmpty = isSavedReportFieldGenuinelyEmpty(rawSavedValue);
+
+  const queryStr = typeof f.query === "string" ? f.query : "";
+  const constraintsVal =
+    typeof f.constraints === "string"
+      ? f.constraints
+      : f.constraints === undefined || f.constraints === null
+        ? null
+        : String(f.constraints);
+  const requestKeyVal =
+    typeof f.requestKey === "string"
+      ? f.requestKey
+      : f.requestKey === undefined || f.requestKey === null
+        ? null
+        : String(f.requestKey);
+
+  const inputCheck = validateResearchInputs({
+    query: queryStr,
+    constraints: constraintsVal,
+    requestKey: requestKeyVal,
+  });
+
+  const isPreDispatchStatus =
+    rawStatus === "queued" || rawStatus === "failed_pre_dispatch";
+  const hasExecutionOrSaveEvidence =
+    claimId !== "" ||
+    executedAt !== "" ||
+    reportId !== "" ||
+    !savedReportEmpty;
+
+  if (!savedReportEmpty) {
+    return {
+      eligible: false,
+      code: "saved_report_field_present",
+      rawStatus,
+      hasExecutionOrSaveEvidence: true,
+      inputCheck,
+      message:
+        "Request already contains savedReportJson data and cannot be dispatched again.",
+    };
+  }
+
+  if (claimId !== "" || executedAt !== "" || reportId !== "") {
+    return {
+      eligible: false,
+      code: "execution_evidence_present",
+      rawStatus,
+      hasExecutionOrSaveEvidence: true,
+      inputCheck,
+      message: `Request already has execution or claim evidence (status="${rawStatus}", claimId="${claimId || "none"}").`,
+    };
+  }
+
+  if (!isPreDispatchStatus) {
+    return {
+      eligible: false,
+      code: "non_runnable_status",
+      rawStatus,
+      hasExecutionOrSaveEvidence: false,
+      inputCheck,
+      message: `Request status "${rawStatus}" is not eligible for research dispatch.`,
+    };
+  }
+
+  if (!inputCheck.ok) {
+    return {
+      eligible: false,
+      code: inputCheck.code,
+      rawStatus,
+      hasExecutionOrSaveEvidence: false,
+      inputCheck,
+      message: inputCheck.message,
+    };
+  }
+
+  return {
+    eligible: true,
+    code: "eligible_to_run",
+    rawStatus,
+    hasExecutionOrSaveEvidence: false,
+    inputCheck,
+    message: "Request is eligible for merchant-confirmed research execution.",
+  };
+}
+
+function buildPreDispatchInputHelperMessage(inputCheck) {
+  if (!inputCheck || inputCheck.ok) {
+    return "";
+  }
+  switch (inputCheck.code) {
+    case "missing_query":
+      return `Question is empty. Enter ${MIN_QUERY_CHARS}–${MAX_QUERY_CHARS} characters in Shopify Admin and Save.`;
+    case "query_too_short":
+      return `Question is too short (minimum ${MIN_QUERY_CHARS} characters). Edit in Shopify Admin and Save.`;
+    case "query_too_long":
+      return `Question exceeds the ${MAX_QUERY_CHARS}-character limit. Shorten it in Shopify Admin and Save.`;
+    case "constraints_too_long":
+      return `Constraints exceed the ${MAX_CONSTRAINTS_CHARS}-character limit. Shorten Constraints in Shopify Admin and Save—this card will unlock automatically.`;
+    case "request_key_too_long":
+      return `Request Key exceeds the ${MAX_REQUEST_KEY_CHARS}-character limit. Shorten it in Shopify Admin and Save.`;
+    default:
+      return `${inputCheck.message} Edit in Shopify Admin and Save.`;
+  }
+}
+
+/**
+- Validates that a reportObject contains the complete, unstripped grounded
+- structure produced by app/utils/gemini-grounded-research.server.js.
  */
 export function validateCompleteGroundedReportObject(reportObj) {
   if (!isPlainObject(reportObj)) {
@@ -157,9 +349,617 @@ export function validateCompleteGroundedReportObject(reportObj) {
 }
 
 /**
- * Builds the lossless durable envelope without dropping searchEntryPointHtml,
- * citation-span metadata, or source entries, and checks the 120,000 UTF-8 byte
- * ceiling.
+- Canonical server-owned publisher for mode="gemini_grounded_research".
+- Preserves the immutable execution timestamp as both packet.capturedAt and
+- packet.runTimestamp, uses canonical JSON.stringify(reportObject, null, 2)
+- formatting, and verifies any expectedReportId against the deterministic
+- cache reportId without rewriting saved IDs or aliasing mismatches.
+ */
+export function publishGroundedResearchToTelemetryCache({
+  shop,
+  metaobjectId,
+  requestKey = null,
+  query = "",
+  executedAt = null,
+  reportObject = null,
+  reportFullTextJson = null,
+  expectedReportId = null,
+}) {
+  const normalizedMetaobjectId =
+    typeof metaobjectId === "string" ? metaobjectId.trim() : "";
+  if (!normalizedMetaobjectId) {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: "missing_metaobject_id",
+      message: "A nonempty metaobjectId is required to publish grounded research to RAM cache.",
+      reportId: null,
+      expectedReportId:
+        typeof expectedReportId === "string" && expectedReportId.trim()
+          ? expectedReportId.trim()
+          : null,
+      storeResult: null,
+    };
+  }
+
+  const resolvedReportObject = isPlainObject(reportObject)
+    ? reportObject
+    : parseReportObjectFromRawJson(reportFullTextJson);
+
+  const reportCheck = validateCompleteGroundedReportObject(resolvedReportObject);
+  if (!reportCheck.ok) {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: reportCheck.code,
+      message: reportCheck.message,
+      reportId: null,
+      expectedReportId:
+        typeof expectedReportId === "string" && expectedReportId.trim()
+          ? expectedReportId.trim()
+          : null,
+      storeResult: null,
+    };
+  }
+
+  // Canonicalize hash-input fields from the immutable reportObject.request /
+  // reportObject.execution values first so later edits to metaobject display
+  // fields cannot silently drift deterministic reportId computation.
+  const canonicalRequestKey =
+    typeof resolvedReportObject?.request?.requestKey === "string" &&
+    resolvedReportObject.request.requestKey.trim()
+      ? resolvedReportObject.request.requestKey.trim()
+      : typeof requestKey === "string" && requestKey.trim()
+        ? requestKey.trim()
+        : null;
+
+  const canonicalQuery =
+    typeof resolvedReportObject?.request?.query === "string" &&
+    resolvedReportObject.request.query.trim()
+      ? resolvedReportObject.request.query.trim()
+      : typeof query === "string"
+        ? query.trim()
+        : "";
+
+  if (!canonicalQuery) {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: "missing_canonical_query",
+      message: "Cannot publish grounded research report with an empty query.",
+      reportId: null,
+      expectedReportId:
+        typeof expectedReportId === "string" && expectedReportId.trim()
+          ? expectedReportId.trim()
+          : null,
+      storeResult: null,
+    };
+  }
+
+  const immutableExecutedAt =
+    parseStrictIsoTimestampString(resolvedReportObject?.execution?.executedAt) ||
+    parseStrictIsoTimestampString(executedAt);
+
+  if (!immutableExecutedAt) {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: "missing_immutable_executed_at",
+      message:
+        "Grounded research report requires a valid immutable ISO-8601 executedAt timestamp for deterministic cache identity.",
+      reportId: null,
+      expectedReportId:
+        typeof expectedReportId === "string" && expectedReportId.trim()
+          ? expectedReportId.trim()
+          : null,
+      storeResult: null,
+    };
+  }
+
+  let canonicalFullTextJson = "";
+  try {
+    canonicalFullTextJson = JSON.stringify(resolvedReportObject, null, 2);
+  } catch {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: "report_serialization_failed",
+      message: "Failed to serialize grounded research reportObject for RAM cache.",
+      reportId: null,
+      expectedReportId:
+        typeof expectedReportId === "string" && expectedReportId.trim()
+          ? expectedReportId.trim()
+          : null,
+      storeResult: null,
+    };
+  }
+
+  const shortTitle =
+    canonicalQuery.length > 120
+      ? `${canonicalQuery.slice(0, 117)}...`
+      : canonicalQuery;
+
+  const runIdentity = canonicalRequestKey
+    ? `${canonicalRequestKey} (${normalizedMetaobjectId.split("/").pop()})`
+    : normalizedMetaobjectId;
+
+  const storeResult = storeTelemetryReport({
+    shop,
+    packet: {
+      productId: null,
+      mode: GEMINI_GROUNDED_RESEARCH_MODE,
+      sectionKey: "public_web_grounded_research",
+      sectionLabel: "GEMINI GROUNDED PUBLIC WEB RESEARCH",
+      productTitle: shortTitle,
+      runIdentity,
+      runTimestamp: immutableExecutedAt,
+      capturedAt: immutableExecutedAt,
+      fullText: canonicalFullTextJson,
+    },
+    uiAudit: null,
+  });
+
+  if (!storeResult || storeResult.ok !== true || !storeResult.report?.reportId) {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: storeResult?.code || "cache_store_failed",
+      message:
+        storeResult?.message ||
+        "Failed to store grounded research report in 30-minute RAM cache.",
+      reportId: null,
+      expectedReportId:
+        typeof expectedReportId === "string" && expectedReportId.trim()
+          ? expectedReportId.trim()
+          : null,
+      storeResult: storeResult || null,
+    };
+  }
+
+  const actualReportId = storeResult.report.reportId;
+  const trimmedExpectedId =
+    typeof expectedReportId === "string" && expectedReportId.trim()
+      ? expectedReportId.trim()
+      : null;
+
+  if (trimmedExpectedId && actualReportId !== trimmedExpectedId) {
+    return {
+      ok: false,
+      idMatchesExpected: false,
+      code: "republished_report_id_mismatch",
+      message: `Republished cache ID (${actualReportId}) did not match expected durable reportId (${trimmedExpectedId}). Saved reportId was NOT overwritten.`,
+      reportId: actualReportId,
+      expectedReportId: trimmedExpectedId,
+      report: storeResult.report,
+      storeResult,
+    };
+  }
+
+  return {
+    ok: true,
+    idMatchesExpected: true,
+    code: storeResult.deduplicated ? "republished_deduplicated" : "published_ok",
+    message: `Published grounded research report (${actualReportId}) to 30-minute RAM cache.`,
+    reportId: actualReportId,
+    expectedReportId: trimmedExpectedId,
+    executedAt: immutableExecutedAt,
+    reportFullTextJson: canonicalFullTextJson,
+    report: storeResult.report,
+    storeResult,
+  };
+}
+
+function getHydrationCoordinatorState() {
+  const existing = globalThis[HYDRATION_STATE_GLOBAL_KEY];
+  if (
+    existing &&
+    typeof existing === "object" &&
+    existing.inFlightByShop instanceof Map &&
+    existing.lastCleanEmptyAtMsByShop instanceof Map
+  ) {
+    return existing;
+  }
+
+  const initialized = {
+    inFlightByShop: new Map(),
+    lastCleanEmptyAtMsByShop: new Map(),
+  };
+
+  Object.defineProperty(globalThis, HYDRATION_STATE_GLOBAL_KEY, {
+    value: initialized,
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+
+  return initialized;
+}
+
+function mapNodeFieldsToObject(fieldsArray) {
+  if (!Array.isArray(fieldsArray)) {
+    return {};
+  }
+  const out = {};
+  for (let i = 0; i < fieldsArray.length; i += 1) {
+    const item = fieldsArray[i];
+    if (item && typeof item.key === "string") {
+      out[item.key] = item.value ?? "";
+    }
+  }
+  return out;
+}
+
+async function runSingleShopDurableHydrationPass(admin, normalizedShop) {
+  const gqlResponse = await admin.graphql(
+    `#graphql
+      query HydrateSavedResearchReports($type: String!, $first: Int!) {
+        metaobjects(type: $type, first: $first, reverse: true) {
+          pageInfo {
+            hasNextPage
+          }
+          edges {
+            node {
+              id
+              type
+              updatedAt
+              fields {
+                key
+                value
+              }
+            }
+          }
+        }
+      }
+    `,
+    {
+      variables: {
+        type: RESEARCH_METAOBJECT_TYPE,
+        first: HYDRATION_SCAN_PAGE_LIMIT,
+      },
+    }
+  );
+
+  const payload = await gqlResponse.json();
+  if (Array.isArray(payload?.errors) && payload.errors.length > 0) {
+    return {
+      ok: false,
+      outcome: "error",
+      complete: false,
+      hasMoreBeyondScanWindow: false,
+      scannedCount: 0,
+      verifiedSavedCount: 0,
+      hydratedCount: 0,
+      idMismatchCount: 0,
+      cachePublishErrorCount: 0,
+      reason: "graphql_query_error",
+      message:
+        payload.errors[0]?.message ||
+        "GraphQL query failed while reading durable research reports.",
+    };
+  }
+
+  const connection = payload?.data?.metaobjects;
+  if (!connection || !Array.isArray(connection.edges)) {
+    return {
+      ok: false,
+      outcome: "error",
+      complete: false,
+      hasMoreBeyondScanWindow: false,
+      scannedCount: 0,
+      verifiedSavedCount: 0,
+      hydratedCount: 0,
+      idMismatchCount: 0,
+      cachePublishErrorCount: 0,
+      reason: "invalid_metaobjects_response",
+      message:
+        "Shopify GraphQL did not return a valid metaobjects connection during durable report hydration.",
+    };
+  }
+
+  const edges = connection.edges;
+  const hasMoreBeyondScanWindow = Boolean(connection.pageInfo?.hasNextPage);
+
+  let scannedCount = 0;
+  let verifiedSavedCount = 0;
+  let hydratedCount = 0;
+  let idMismatchCount = 0;
+  let cachePublishErrorCount = 0;
+
+  // Iterate oldest-to-newest among the fetched slice so newest entries stay
+  // retained if manual shop cache capacity limits are ever approached.
+  for (let i = edges.length - 1; i >= 0; i -= 1) {
+    const node = edges[i]?.node;
+    if (!node || typeof node.id !== "string" || node.type !== RESEARCH_METAOBJECT_TYPE) {
+      continue;
+    }
+    scannedCount += 1;
+
+    const f = mapNodeFieldsToObject(node.fields);
+    const rawSavedField = f[SAVED_REPORT_FIELD_KEY];
+    if (isSavedReportFieldGenuinelyEmpty(rawSavedField)) {
+      continue;
+    }
+
+    const parsedSaved = parseSavedReportField(rawSavedField);
+    if (!parsedSaved.present || !parsedSaved.valid) {
+      // Unverified or malformed savedReportJson is never hydrated into Sidekick cache.
+      continue;
+    }
+
+    const envelopeMetaId =
+      typeof parsedSaved.envelope?.metaobjectId === "string"
+        ? parsedSaved.envelope.metaobjectId.trim()
+        : "";
+    if (envelopeMetaId && envelopeMetaId !== node.id) {
+      // Guard against cross-record copy/paste mismatches.
+      idMismatchCount += 1;
+      continue;
+    }
+
+    verifiedSavedCount += 1;
+
+    const metaFieldReportId =
+      typeof f.reportId === "string" && f.reportId.trim()
+        ? f.reportId.trim()
+        : null;
+    const envelopeReportId =
+      typeof parsedSaved.envelope?.reportId === "string" &&
+      parsedSaved.envelope.reportId.trim()
+        ? parsedSaved.envelope.reportId.trim()
+        : null;
+
+    if (
+      metaFieldReportId &&
+      envelopeReportId &&
+      metaFieldReportId !== envelopeReportId
+    ) {
+      idMismatchCount += 1;
+      continue;
+    }
+
+    const expectedDurableReportId = envelopeReportId || metaFieldReportId || null;
+
+    const pubResult = publishGroundedResearchToTelemetryCache({
+      shop: normalizedShop,
+      metaobjectId: node.id,
+      requestKey:
+        (typeof f.requestKey === "string" && f.requestKey.trim()) ||
+        parsedSaved.envelope?.requestKey ||
+        null,
+      query:
+        (typeof f.query === "string" && f.query.trim()) ||
+        parsedSaved.envelope?.query ||
+        "",
+      executedAt:
+        (typeof f.executedAt === "string" && f.executedAt.trim()) ||
+        parsedSaved.envelope?.executedAt ||
+        parsedSaved.reportObject?.execution?.executedAt ||
+        null,
+      reportObject: parsedSaved.reportObject,
+      reportFullTextJson: parsedSaved.reportFullTextJson,
+      expectedReportId: expectedDurableReportId,
+    });
+
+    if (pubResult.ok) {
+      hydratedCount += 1;
+    } else if (pubResult.code === "republished_report_id_mismatch") {
+      idMismatchCount += 1;
+    } else {
+      cachePublishErrorCount += 1;
+    }
+  }
+
+  const fullyHydratedScannedSet =
+    idMismatchCount === 0 && cachePublishErrorCount === 0;
+  const isCleanComplete = !hasMoreBeyondScanWindow && fullyHydratedScannedSet;
+
+  let outcome = "clean_complete";
+  let reason = "hydrated_all_available_records";
+  let message = `Scanned ${scannedCount} research request(s); hydrated ${hydratedCount} verified saved report(s) into 30-minute RAM.`;
+
+  if (!fullyHydratedScannedSet) {
+    outcome = "partial";
+    reason =
+      idMismatchCount > 0
+        ? "saved_report_id_mismatch_skipped"
+        : "cache_publish_partial_failure";
+    message = `Scanned ${scannedCount} research request(s); hydrated ${hydratedCount} of ${verifiedSavedCount} verified saved report(s) (${idMismatchCount} ID mismatch skipped, ${cachePublishErrorCount} cache publish error).`;
+  } else if (hasMoreBeyondScanWindow) {
+    outcome = "partial";
+    reason = "scan_page_cap_reached";
+    message = `Scanned newest ${scannedCount} research request(s) (hydrated ${hydratedCount}); older requests exist beyond the ${HYDRATION_SCAN_PAGE_LIMIT}-item hydration window.`;
+  }
+
+  return {
+    ok: true,
+    outcome,
+    complete: isCleanComplete,
+    hasMoreBeyondScanWindow,
+    scannedCount,
+    verifiedSavedCount,
+    hydratedCount,
+    idMismatchCount,
+    cachePublishErrorCount,
+    reason,
+    message,
+  };
+}
+
+/**
+- Hydrates verified durable savedReportJson answers from Shopify into the
+- 30-minute process RAM cache under strict shop isolation.
+- Uses per-shop single-flight coalescing and a bounded caller wait timer while
+- safely handling late background completion or errors without unhandled
+- rejections.
+ *
+- Returned `outcome` values:
+- - "clean_complete" : All research records for this shop were scanned and all
+-                      verified durable answers were published cleanly.
+- - "partial"        : Hydration succeeded for scanned items, but older records
+-                      exist beyond HYDRATION_SCAN_PAGE_LIMIT or an item had an
+-                      ID mismatch / cache cap skip. Never infer global absence.
+- - "timed_out"      : Caller wait budget elapsed while background GraphQL read
+-                      is still running. Never return false not_found.
+- - "error"          : Admin client missing or Shopify GraphQL read failed.
+ */
+export async function hydrateDurableResearchReportsToCache({
+  admin,
+  shop,
+  waitBudgetMs = DEFAULT_HYDRATION_WAIT_BUDGET_MS,
+} = {}) {
+  const normalizedShop =
+    typeof shop === "string" ? shop.trim().toLowerCase() : "";
+  if (!normalizedShop) {
+    return {
+      ok: false,
+      outcome: "error",
+      complete: false,
+      hasMoreBeyondScanWindow: false,
+      scannedCount: 0,
+      verifiedSavedCount: 0,
+      hydratedCount: 0,
+      idMismatchCount: 0,
+      cachePublishErrorCount: 0,
+      reason: "invalid_shop",
+      message: "Authenticated shop identity is required for durable report hydration.",
+    };
+  }
+
+  if (!admin || typeof admin.graphql !== "function") {
+    return {
+      ok: false,
+      outcome: "error",
+      complete: false,
+      hasMoreBeyondScanWindow: false,
+      scannedCount: 0,
+      verifiedSavedCount: 0,
+      hydratedCount: 0,
+      idMismatchCount: 0,
+      cachePublishErrorCount: 0,
+      reason: "missing_admin_graphql_client",
+      message:
+        "Shopify Admin GraphQL client was unavailable during cold report hydration.",
+    };
+  }
+
+  const boundedWaitMs =
+    typeof waitBudgetMs === "number" && Number.isFinite(waitBudgetMs)
+      ? Math.min(
+          Math.max(Math.trunc(waitBudgetMs), MIN_HYDRATION_WAIT_BUDGET_MS),
+          MAX_HYDRATION_WAIT_BUDGET_MS
+        )
+      : DEFAULT_HYDRATION_WAIT_BUDGET_MS;
+
+  const coord = getHydrationCoordinatorState();
+  const nowMs = Date.now();
+  const lastCleanEmptyMs = coord.lastCleanEmptyAtMsByShop.get(normalizedShop);
+
+  if (
+    !coord.inFlightByShop.has(normalizedShop) &&
+    typeof lastCleanEmptyMs === "number" &&
+    nowMs - lastCleanEmptyMs < HYDRATION_CLEAN_EMPTY_COOLDOWN_MS
+  ) {
+    return {
+      ok: true,
+      outcome: "clean_complete",
+      complete: true,
+      hasMoreBeyondScanWindow: false,
+      scannedCount: 0,
+      verifiedSavedCount: 0,
+      hydratedCount: 0,
+      idMismatchCount: 0,
+      cachePublishErrorCount: 0,
+      reason: "recent_clean_empty_cooldown",
+      message: "Shop durable research list was verified empty within the last 5 seconds.",
+    };
+  }
+
+  let sharedPromise = coord.inFlightByShop.get(normalizedShop);
+  if (!sharedPromise) {
+    sharedPromise = (async () => {
+      try {
+        const passResult = await runSingleShopDurableHydrationPass(
+          admin,
+          normalizedShop
+        );
+        if (
+          passResult.ok &&
+          passResult.outcome === "clean_complete" &&
+          passResult.verifiedSavedCount === 0
+        ) {
+          coord.lastCleanEmptyAtMsByShop.set(normalizedShop, Date.now());
+        } else {
+          coord.lastCleanEmptyAtMsByShop.delete(normalizedShop);
+        }
+        return passResult;
+      } catch (err) {
+        coord.lastCleanEmptyAtMsByShop.delete(normalizedShop);
+        const safeMsg =
+          err instanceof Error && err.message
+            ? err.message.slice(0, 240)
+            : "Unexpected error during durable report hydration.";
+        return {
+          ok: false,
+          outcome: "error",
+          complete: false,
+          hasMoreBeyondScanWindow: false,
+          scannedCount: 0,
+          verifiedSavedCount: 0,
+          hydratedCount: 0,
+          idMismatchCount: 0,
+          cachePublishErrorCount: 0,
+          reason: "hydration_exception",
+          message: safeMsg,
+        };
+      } finally {
+        if (coord.inFlightByShop.get(normalizedShop) === sharedPromise) {
+          coord.inFlightByShop.delete(normalizedShop);
+        }
+      }
+    })();
+
+    coord.inFlightByShop.set(normalizedShop, sharedPromise);
+  }
+
+  let timerId = null;
+  const timeoutSentinel = Symbol("hydration_wait_timeout");
+
+  try {
+    const raced = await Promise.race([
+      sharedPromise,
+      new Promise((resolve) => {
+        timerId = setTimeout(() => resolve(timeoutSentinel), boundedWaitMs);
+      }),
+    ]);
+
+    if (raced === timeoutSentinel) {
+      return {
+        ok: false,
+        outcome: "timed_out",
+        complete: false,
+        hasMoreBeyondScanWindow: false,
+        scannedCount: 0,
+        verifiedSavedCount: 0,
+        hydratedCount: 0,
+        idMismatchCount: 0,
+        cachePublishErrorCount: 0,
+        reason: "hydration_wait_budget_exceeded",
+        message: `Durable Shopify report hydration exceeded the ${boundedWaitMs}ms caller wait budget; background warm-up continues safely for this shop.`,
+      };
+    }
+
+    return raced;
+  } finally {
+    if (timerId !== null) {
+      clearTimeout(timerId);
+    }
+  }
+}
+
+/**
+- Builds the lossless durable envelope without dropping searchEntryPointHtml,
+- citation-span metadata, or source entries, and checks the 120,000 UTF-8 byte
+- ceiling.
  */
 export function buildDurableSavedReportEnvelope({
   metaobjectId,
@@ -203,21 +1003,30 @@ export function buildDurableSavedReportEnvelope({
     reportId:
       typeof reportId === "string" && reportId.trim() ? reportId.trim() : null,
     requestKey:
-      typeof requestKey === "string" && requestKey.trim()
-        ? requestKey.trim()
-        : resolvedReportObject?.request?.requestKey ?? null,
+      typeof resolvedReportObject?.request?.requestKey === "string" &&
+      resolvedReportObject.request.requestKey.trim()
+        ? resolvedReportObject.request.requestKey.trim()
+        : typeof requestKey === "string" && requestKey.trim()
+          ? requestKey.trim()
+          : null,
     query:
-      typeof query === "string" && query.trim()
-        ? query.trim()
-        : resolvedReportObject?.request?.query ?? "",
+      typeof resolvedReportObject?.request?.query === "string" &&
+      resolvedReportObject.request.query.trim()
+        ? resolvedReportObject.request.query.trim()
+        : typeof query === "string" && query.trim()
+          ? query.trim()
+          : "",
     constraints:
-      typeof constraints === "string" && constraints.trim()
-        ? constraints.trim()
-        : resolvedReportObject?.request?.constraints ?? null,
+      typeof resolvedReportObject?.request?.constraints === "string" &&
+      resolvedReportObject.request.constraints.trim()
+        ? resolvedReportObject.request.constraints.trim()
+        : typeof constraints === "string" && constraints.trim()
+          ? constraints.trim()
+          : null,
     executedAt:
-      typeof executedAt === "string" && executedAt.trim()
-        ? executedAt.trim()
-        : resolvedReportObject?.execution?.executedAt ?? null,
+      parseStrictIsoTimestampString(resolvedReportObject?.execution?.executedAt) ||
+      parseStrictIsoTimestampString(executedAt) ||
+      null,
     searchEntryPointHtml: normalizedSearchHtml,
     reportObject: resolvedReportObject,
   };
@@ -316,11 +1125,35 @@ function normalizeSpanProjection(spansArray) {
 }
 
 /**
- * Parses a raw savedReportJson string from a Shopify metaobject field and
- * validates that its grounded report content is structurally complete.
+- Parses a raw savedReportJson value from a Shopify metaobject field and
+- validates that its grounded report content is structurally complete.
+- Explicitly flags unexpected non-string nonempty values as present=true,
+- valid=false so they are never treated as empty/runnable.
  */
 export function parseSavedReportField(rawFieldValue) {
-  if (typeof rawFieldValue !== "string" || rawFieldValue.trim().length === 0) {
+  if (rawFieldValue === undefined || rawFieldValue === null) {
+    return {
+      present: false,
+      valid: false,
+      code: "empty_saved_report_field",
+      envelope: null,
+      reportObject: null,
+      reportFullTextJson: null,
+    };
+  }
+
+  if (typeof rawFieldValue !== "string") {
+    return {
+      present: true,
+      valid: false,
+      code: "unexpected_non_string_saved_report",
+      envelope: null,
+      reportObject: null,
+      reportFullTextJson: null,
+    };
+  }
+
+  if (rawFieldValue.trim().length === 0) {
     return {
       present: false,
       valid: false,
@@ -374,6 +1207,23 @@ export function parseSavedReportField(rawFieldValue) {
     };
   }
 
+  const resolvedExecutedAt =
+    parseStrictIsoTimestampString(candidateReportObj?.execution?.executedAt) ||
+    (isPlainObject(parsed.reportObject)
+      ? parseStrictIsoTimestampString(parsed.executedAt)
+      : null);
+
+  if (!resolvedExecutedAt) {
+    return {
+      present: true,
+      valid: false,
+      code: "missing_valid_executed_at",
+      envelope: null,
+      reportObject: null,
+      reportFullTextJson: null,
+    };
+  }
+
   let prettyReportFullTextJson = null;
   try {
     prettyReportFullTextJson = JSON.stringify(candidateReportObj, null, 2);
@@ -389,7 +1239,10 @@ export function parseSavedReportField(rawFieldValue) {
   }
 
   const normalizedEnvelope = isPlainObject(parsed.reportObject)
-    ? parsed
+    ? {
+        ...parsed,
+        executedAt: resolvedExecutedAt,
+      }
     : {
         durableSchemaVersion: SAVED_REPORT_SCHEMA_VERSION,
         mode: GEMINI_GROUNDED_RESEARCH_MODE,
@@ -398,7 +1251,7 @@ export function parseSavedReportField(rawFieldValue) {
         requestKey: candidateReportObj?.request?.requestKey ?? null,
         query: candidateReportObj?.request?.query ?? "",
         constraints: candidateReportObj?.request?.constraints ?? null,
-        executedAt: candidateReportObj?.execution?.executedAt ?? null,
+        executedAt: resolvedExecutedAt,
         searchEntryPointHtml: null,
         reportObject: candidateReportObj,
       };
@@ -414,9 +1267,10 @@ export function parseSavedReportField(rawFieldValue) {
 }
 
 /**
- * Verifies read-back savedReportJson content against the exact submitted
- * envelope across synthesis answer, every source URI/title/index, every
- * citation span mapping, webSearchQueries, and searchEntryPointHtml.
+- Verifies read-back savedReportJson content against the exact submitted
+- envelope across synthesis answer, every source URI/title/index, every
+- citation span mapping, webSearchQueries, searchEntryPointHtml, and expected
+- reportId/metaobjectId.
  */
 export function verifySavedReportReadback(expectedEnvelope, rawReadbackString) {
   if (!isPlainObject(expectedEnvelope) || !isPlainObject(expectedEnvelope.reportObject)) {
@@ -448,6 +1302,38 @@ export function verifySavedReportReadback(expectedEnvelope, rawReadbackString) {
   const expectedReport = expectedEnvelope.reportObject;
   const actualEnvelope = parsedReadback.envelope;
   const actualReport = parsedReadback.reportObject;
+
+  const expectedMetaId =
+    typeof expectedEnvelope.metaobjectId === "string"
+      ? expectedEnvelope.metaobjectId.trim()
+      : "";
+  const actualMetaId =
+    typeof actualEnvelope.metaobjectId === "string"
+      ? actualEnvelope.metaobjectId.trim()
+      : "";
+  if (expectedMetaId && actualMetaId !== expectedMetaId) {
+    return {
+      verified: false,
+      code: "metaobject_id_mismatch_on_readback",
+      message: "Readback envelope metaobjectId did not match submitted metaobjectId.",
+    };
+  }
+
+  const expectedReportId =
+    typeof expectedEnvelope.reportId === "string" && expectedEnvelope.reportId.trim()
+      ? expectedEnvelope.reportId.trim()
+      : null;
+  const actualReportId =
+    typeof actualEnvelope.reportId === "string" && actualEnvelope.reportId.trim()
+      ? actualEnvelope.reportId.trim()
+      : null;
+  if (expectedReportId !== actualReportId) {
+    return {
+      verified: false,
+      code: "report_id_mismatch_on_readback",
+      message: "Readback envelope reportId did not match submitted reportId.",
+    };
+  }
 
   if (expectedReport.modelSynthesisAnswer !== actualReport.modelSynthesisAnswer) {
     return {
@@ -545,13 +1431,13 @@ function isMissingSavedReportFieldDefinitionError(rawErrorMessage) {
 }
 
 /**
- * Persists metadata + complete intact savedReportJson (when <= 120,000 bytes)
- * using the caller's existing updateMetaobjectFields and readMetaobjectById
- * callbacks, without authoring or altering any Admin GraphQL mutations.
+- Persists metadata + complete intact savedReportJson (when <= 120,000 bytes)
+- using the caller's existing updateMetaobjectFields and readMetaobjectById
+- callbacks, without authoring or altering any Admin GraphQL mutations.
  *
- * If "savedReportJson" is not yet added to the Shopify metaobject definition,
- * safely falls back to updating the existing metadata fields so the run result
- * metadata is still recorded while flagging durablySaved = false.
+- If "savedReportJson" is not yet added to the Shopify metaobject definition,
+- safely falls back to updating the existing metadata fields so the run result
+- metadata is still recorded while flagging durablySaved = false.
  */
 export async function writeAndVerifyDurableResearchReport({
   admin,
@@ -703,9 +1589,9 @@ export async function writeAndVerifyDurableResearchReport({
 }
 
 /**
- * Formats a clean, plain-text answer + numbered source list for Bob's
- * one-click "Copy Answer" button (works from either durable Shopify JSON or
- * 30-minute server RAM vault).
+- Formats a clean, plain-text answer + numbered source list for Bob's
+- one-click "Copy Answer" button (works from either durable Shopify JSON or
+- 30-minute server RAM vault).
  */
 export function buildPlainTextCopyBlock({
   query = "",
@@ -764,10 +1650,10 @@ function extractUsableSourcesFromReportObject(reportObj) {
 }
 
 /**
- * Maps raw Shopify metaobject fields + optional 30-minute server repair-vault
- * snapshot + live RAM cache readability into a calm, dyslexia-friendly view
- * model for SidekickQueueCalmView.jsx, while keeping completed-but-unsaved
- * states strictly distinct from research failures.
+- Maps raw Shopify metaobject fields + optional 30-minute server repair-vault
+- snapshot + live RAM cache readability into a calm, dyslexia-friendly view
+- model for SidekickQueueCalmView.jsx, while keeping completed-but-unsaved
+- states and invalid/unverified saved data strictly non-runnable.
  */
 export function buildCalmResearchCardModel({
   id,
@@ -784,18 +1670,49 @@ export function buildCalmResearchCardModel({
   const constraints = String(f.constraints || "").trim();
   const rawStatus = String(f.status || "").trim().toLowerCase() || "queued";
   const claimId = String(f.claimId || "").trim();
+
+  // Inspect durable savedReportJson field FIRST so any nonempty value (valid or
+  // invalid) immediately blocks paid re-execution.
+  const parsedDurable = parseSavedReportField(f[SAVED_REPORT_FIELD_KEY]);
+  const hasAnySavedReportData = parsedDurable.present;
+  const hasCorruptOrUnverifiedSavedField =
+    parsedDurable.present && !parsedDurable.valid;
+
+  const envelopeMetaId =
+    parsedDurable.valid && typeof parsedDurable.envelope?.metaobjectId === "string"
+      ? parsedDurable.envelope.metaobjectId.trim()
+      : "";
+  const fieldReportId = String(f.reportId || "").trim() || null;
+  const envelopeReportId =
+    parsedDurable.valid &&
+    typeof parsedDurable.envelope?.reportId === "string" &&
+    parsedDurable.envelope.reportId.trim()
+      ? parsedDurable.envelope.reportId.trim()
+      : null;
+
+  const hasEnvelopeIdentityMismatch = Boolean(
+    parsedDurable.valid &&
+      ((envelopeMetaId && id && envelopeMetaId !== id) ||
+        (fieldReportId && envelopeReportId && fieldReportId !== envelopeReportId))
+  );
+
+  const hasVerifiedDurableReport =
+    parsedDurable.present &&
+    parsedDurable.valid &&
+    !hasEnvelopeIdentityMismatch &&
+    rawStatus !== "completed_unverified_save";
+
   const reportId =
-    String(f.reportId || "").trim() || vaultSnapshot?.reportId || null;
+    fieldReportId || envelopeReportId || vaultSnapshot?.reportId || null;
   const executedAt =
-    String(f.executedAt || "").trim() || vaultSnapshot?.executedAt || "";
+    String(f.executedAt || "").trim() ||
+    parsedDurable.envelope?.executedAt ||
+    vaultSnapshot?.executedAt ||
+    "";
   const groundingSummary = String(f.groundingSummary || "").trim();
   const errorDetail = String(f.errorDetail || "").trim();
 
-  // Inspect durable savedReportJson field if present on the Shopify record
-  const parsedDurable = parseSavedReportField(f[SAVED_REPORT_FIELD_KEY]);
-  const hasVerifiedDurableReport = parsedDurable.present && parsedDurable.valid;
-
-  // Inspect server RAM vault fallback if durable save is absent
+  // Inspect server RAM vault fallback if verified durable save is absent
   const parsedVaultObj = !hasVerifiedDurableReport
     ? parseReportObjectFromRawJson(fullVaultReportJson)
     : null;
@@ -845,13 +1762,27 @@ export function buildCalmResearchCardModel({
       })
     : "";
 
+  const runEligibility = evaluateResearchRunEligibility(f);
   const isEligibleToRun =
-    rawStatus === "queued" && !claimId && !executedAt && !reportId;
+    runEligibility.eligible &&
+    !hasAnySavedReportData &&
+    !vaultSnapshot &&
+    !hasFullVaultReport;
 
-  const isCompletedStatus =
-    rawStatus.startsWith("completed") ||
-    hasVerifiedDurableReport ||
-    Boolean(vaultSnapshot);
+  const isPreDispatchDraftWithInputIssue =
+    !hasAnySavedReportData &&
+    !vaultSnapshot &&
+    !hasFullVaultReport &&
+    !runEligibility.hasExecutionOrSaveEvidence &&
+    (rawStatus === "queued" || rawStatus === "failed_pre_dispatch") &&
+    !runEligibility.inputCheck.ok;
+
+  const isCompletedWithoutVerifiedSave =
+    !hasVerifiedDurableReport &&
+    !hasCorruptOrUnverifiedSavedField &&
+    !hasEnvelopeIdentityMismatch &&
+    rawStatus !== "completed_unverified_save" &&
+    (rawStatus.startsWith("completed") || Boolean(vaultSnapshot) || hasFullVaultReport);
 
   // Determine calm state & single clear primary action
   let calmState = CALM_CARD_STATES.NEEDS_ATTENTION;
@@ -861,16 +1792,7 @@ export function buildCalmResearchCardModel({
   let primaryAction = null;
   let secondaryAction = null;
 
-  if (isEligibleToRun) {
-    calmState = CALM_CARD_STATES.READY_TO_RUN;
-    badgeLabel = "Ready to Run";
-    badgeTone = "warning";
-    statusHelperText = "Reviewed in Shopify Admin. Click Run Research when ready.";
-    primaryAction = {
-      kind: "run",
-      label: "Run Research",
-    };
-  } else if (rawStatus === "running") {
+  if (rawStatus === "running") {
     calmState = CALM_CARD_STATES.RUNNING;
     badgeLabel = "Running...";
     badgeTone = "info";
@@ -888,13 +1810,41 @@ export function buildCalmResearchCardModel({
       kind: "copy",
       label: "Copy Answer",
     };
-    if (!cacheReadableNow || rawStatus !== "completed" || !f.reportId) {
+    if (!cacheReadableNow || rawStatus !== "completed" || !fieldReportId) {
       secondaryAction = {
         kind: "republish",
         label: "Reload for Sidekick (Free)",
       };
     }
-  } else if (isCompletedStatus) {
+  } else if (
+    hasCorruptOrUnverifiedSavedField ||
+    hasEnvelopeIdentityMismatch ||
+    rawStatus === "completed_unverified_save"
+  ) {
+    calmState = CALM_CARD_STATES.NEEDS_ATTENTION;
+    badgeLabel = "Saved Report Needs Check — Do Not Re-Run";
+    badgeTone = "warning";
+    statusHelperText = hasEnvelopeIdentityMismatch
+      ? "Saved report ID or record ID did not match this request. Locked against duplicate paid runs; inspect Technical Details."
+      : "Saved report JSON could not be verified intact. Locked against duplicate paid runs; copy available text or retry free save if still in 30-minute memory.";
+    if (copyPlainText) {
+      primaryAction = {
+        kind: "copy",
+        label: "Copy Answer",
+      };
+      if (hasFullVaultReport) {
+        secondaryAction = {
+          kind: "republish",
+          label: "Retry Save from Memory (Free)",
+        };
+      }
+    } else if (hasFullVaultReport) {
+      primaryAction = {
+        kind: "republish",
+        label: "Retry Save from Memory (Free)",
+      };
+    }
+  } else if (isCompletedWithoutVerifiedSave) {
     calmState = CALM_CARD_STATES.COMPLETED_NOT_SAVED;
     const hasRamCopyNow = Boolean(hasFullVaultReport || vaultSnapshot);
 
@@ -911,7 +1861,7 @@ export function buildCalmResearchCardModel({
       badgeTone = "attention";
       statusHelperText =
         rawStatus === "completed_missing_save_field"
-          ? 'Answer is in 30-minute memory. Add JSON field "savedReportJson" to Sidekick Research Request in Shopify Admin, then click Save Answer.'
+          ? 'Answer is in 30-minute memory. Click "Verify Research Definition" below (or add JSON field "savedReportJson" in Shopify Admin), then click Save Answer.'
           : "Answer is ready in 30-minute memory, but not permanently saved to Shopify yet.";
     } else {
       badgeLabel = "Completed Earlier (30-Min Memory Expired)";
@@ -942,6 +1892,25 @@ export function buildCalmResearchCardModel({
         label: "Save Answer & Reload Cache (Free)",
       };
     }
+  } else if (isEligibleToRun) {
+    calmState = CALM_CARD_STATES.READY_TO_RUN;
+    badgeLabel = "Ready to Run";
+    badgeTone = "warning";
+    statusHelperText =
+      rawStatus === "failed_pre_dispatch"
+        ? "Inputs now pass length checks (no API call was sent earlier). Click Run Research when ready."
+        : "Reviewed in Shopify Admin. Click Run Research when ready.";
+    primaryAction = {
+      kind: "run",
+      label: "Run Research",
+    };
+  } else if (isPreDispatchDraftWithInputIssue) {
+    calmState = CALM_CARD_STATES.NEEDS_ATTENTION;
+    badgeLabel = "Edit Length in Admin First";
+    badgeTone = "warning";
+    statusHelperText = buildPreDispatchInputHelperMessage(
+      runEligibility.inputCheck
+    );
   } else {
     calmState = CALM_CARD_STATES.NEEDS_ATTENTION;
     badgeLabel =
@@ -951,9 +1920,15 @@ export function buildCalmResearchCardModel({
     badgeTone = "critical";
     statusHelperText =
       rawStatus === "uncertain_no_retry"
-        ? "Connection dropped after sending. To prevent double charges, it was not retried automatically."
+        ? "Connection dropped or timed out after sending. To prevent double charges, this record stays locked—create a new request if needed."
         : errorDetail || "This request could not run. Open Technical Details for exact code.";
   }
+
+  const durableDiagnosticCode = hasEnvelopeIdentityMismatch
+    ? "envelope_identity_mismatch"
+    : rawStatus === "completed_unverified_save" && parsedDurable.code === "ok"
+      ? "marked_unverified_on_save"
+      : parsedDurable.code;
 
   return {
     id,
@@ -992,7 +1967,8 @@ export function buildCalmResearchCardModel({
       reportId,
       executedAt: executedAt || null,
       durablySaved: hasVerifiedDurableReport,
-      durableParseCode: parsedDurable.code,
+      durableParseCode: durableDiagnosticCode,
+      runEligibilityCode: runEligibility.code,
       cacheReadableNow: Boolean(cacheReadableNow),
       groundingSummary: groundingSummary || null,
       errorDetail: errorDetail || null,
