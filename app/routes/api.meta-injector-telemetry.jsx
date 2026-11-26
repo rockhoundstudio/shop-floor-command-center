@@ -59,6 +59,24 @@ const ALLOWED_LIVE_STATE_KEYS = new Set([
   "baselineLoadedAt",
 ]);
 
+const STRICT_ISO_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function parseStrictIsoTimestamp(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || !STRICT_ISO_TIMESTAMP_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const parsedMs = Date.parse(trimmed);
+  if (!Number.isFinite(parsedMs)) {
+    return null;
+  }
+  return { raw: trimmed, ms: parsedMs };
+}
+
 function isResponseInstance(err) {
   return (
     err instanceof Response ||
@@ -665,6 +683,19 @@ function validatePostEnvelopeAndLiveIdentity(parsedBody) {
         message: `liveState.mode must be "${LIVE_BENCH_MODE}" when provided.`,
       };
     }
+
+    if (
+      rawLiveState.clientStateChangedAt !== undefined &&
+      rawLiveState.clientStateChangedAt !== null &&
+      !parseStrictIsoTimestamp(rawLiveState.clientStateChangedAt)
+    ) {
+      return {
+        ok: false,
+        code: "invalid_client_state_changed_at",
+        message:
+          "liveState.clientStateChangedAt must be a valid ISO-8601 timestamp string.",
+      };
+    }
   }
 
   if (!isPlainObject(rawPacket) && !isPlainObject(rawLiveState)) {
@@ -674,6 +705,50 @@ function validatePostEnvelopeAndLiveIdentity(parsedBody) {
       message:
         'Request body must include a "packet" object or a "liveState" object for live bench deselection.',
     };
+  }
+
+  // Validate live_bench_state timestamp declarations on packet even when top-level liveState is omitted
+  const isLiveBenchPacket =
+    (isPlainObject(rawPacket) &&
+      typeof rawPacket.mode === "string" &&
+      rawPacket.mode.trim() === LIVE_BENCH_MODE) ||
+    isPlainObject(rawLiveState);
+
+  if (isLiveBenchPacket && isPlainObject(rawPacket)) {
+    let parsedPktChanged = null;
+    if (
+      rawPacket.clientStateChangedAt !== undefined &&
+      rawPacket.clientStateChangedAt !== null
+    ) {
+      parsedPktChanged = parseStrictIsoTimestamp(rawPacket.clientStateChangedAt);
+      if (!parsedPktChanged) {
+        return {
+          ok: false,
+          code: "invalid_client_state_changed_at",
+          message:
+            "packet.clientStateChangedAt must be a valid ISO-8601 timestamp string when provided.",
+        };
+      }
+    }
+
+    if (rawPacket.capturedAt !== undefined && rawPacket.capturedAt !== null) {
+      const parsedPktCaptured = parseStrictIsoTimestamp(rawPacket.capturedAt);
+      if (!parsedPktCaptured) {
+        return {
+          ok: false,
+          code: "invalid_captured_at",
+          message: "packet.capturedAt must be a valid ISO-8601 timestamp string.",
+        };
+      }
+      if (parsedPktChanged && parsedPktChanged.ms > parsedPktCaptured.ms) {
+        return {
+          ok: false,
+          code: "client_state_after_capture",
+          message:
+            "clientStateChangedAt cannot be later than packet.capturedAt.",
+        };
+      }
+    }
   }
 
   // Cross-check packet vs. liveState identity fields when both are supplied
@@ -740,17 +815,46 @@ function validatePostEnvelopeAndLiveIdentity(parsedBody) {
       };
     }
 
-    if (
+    const parsedLiveChanged =
       rawLiveState.clientStateChangedAt !== undefined &&
-      rawLiveState.clientStateChangedAt !== null &&
+      rawLiveState.clientStateChangedAt !== null
+        ? parseStrictIsoTimestamp(rawLiveState.clientStateChangedAt)
+        : null;
+    const parsedPacketChanged =
+      rawPacket.clientStateChangedAt !== undefined &&
+      rawPacket.clientStateChangedAt !== null
+        ? parseStrictIsoTimestamp(rawPacket.clientStateChangedAt)
+        : null;
+    const parsedPacketCaptured =
       rawPacket.capturedAt !== undefined &&
-      rawPacket.capturedAt !== null &&
-      String(rawLiveState.clientStateChangedAt).trim() !== String(rawPacket.capturedAt).trim()
+      rawPacket.capturedAt !== null
+        ? parseStrictIsoTimestamp(rawPacket.capturedAt)
+        : null;
+
+    if (
+      parsedLiveChanged &&
+      parsedPacketChanged &&
+      parsedLiveChanged.raw !== parsedPacketChanged.raw
     ) {
       return {
         ok: false,
-        code: "inconsistent_captured_at",
-        message: "liveState.clientStateChangedAt and packet.capturedAt must match.",
+        code: "inconsistent_client_state_changed_at",
+        message:
+          "packet.clientStateChangedAt and liveState.clientStateChangedAt must match.",
+      };
+    }
+
+    const effectiveChanged = parsedLiveChanged || parsedPacketChanged;
+    if (
+      effectiveChanged &&
+      parsedPacketCaptured &&
+      effectiveChanged.ms > parsedPacketCaptured.ms
+    ) {
+      return {
+        ok: false,
+        code: "client_state_after_capture",
+        message:
+          "clientStateChangedAt cannot be later than packet.capturedAt.",
       };
     }
   }

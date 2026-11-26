@@ -12,7 +12,8 @@ import {
   isPlainObject,
   finalizeResponse,
   canonicalizeJsonValue,
-  splitUtf8CodePoints,
+  buildEnvelopeBoundedTextChunks,
+  getMutableLivePinEnvelopeBounds,
   parseVerifiedLiveBenchSnapshot,
   buildIndexViewData,
   buildHeaderViewData,
@@ -25,7 +26,9 @@ import {
 export { ALLOWED_READ_SECTIONS, ALLOWED_READ_VIEWS };
 
 const CACHE_GLOBAL_KEY = "__ROCKHOUND_META_INJECTOR_SIDEKICK_REPORT_CACHE_V1__";
-const CACHE_SCHEMA_VERSION = 3;
+// Incremented to 4 so in-process module reloads (HMR) discard any pre-existing
+// raw-byte-sliced chunk arrays in globalThis RAM rather than mixing chunking rules.
+const CACHE_SCHEMA_VERSION = 4;
 const GEMINI_GROUNDED_RESEARCH_MODE = "gemini_grounded_research";
 
 const TTL_MS = 30 * 60 * 1000;
@@ -71,6 +74,11 @@ const CREDENTIAL_PATTERNS = [
 
 const FORBIDDEN_AUDIT_KEY_REGEX =
   /^(?:authorization|cookie|set-cookie|session|session_id|sessionid|access_token|accesstoken|refresh_token|refreshtoken|client_secret|clientsecret|private_key|privatekey|api_key|apikey|secret|password|token)$/i;
+
+// Defensible upper bound for storedAt / expiresAt ISO strings produced via
+// `new Date(ms).toISOString()` on deduplicated grounded research TTL refreshes
+// (standard 24-char "YYYY-MM-DDTHH:mm:ss.sssZ" or 27-char extended-year ISO).
+const MAX_DATE_TO_ISO_STRING_BOUND = "+999999-12-31T23:59:59.999Z";
 
 function getCacheState() {
   const existing = globalThis[CACHE_GLOBAL_KEY];
@@ -391,6 +399,10 @@ function inspectAuditValue(value, depth = 0) {
   return { ok: false, reason: "uiAudit must contain only strict JSON types." };
 }
 
+/**
+ * Validates and canonicalizes `uiAudit` without splitting chunks prematurely
+ * before the record's actual read-envelope metadata is known.
+ */
 function normalizeUiAudit(uiAudit) {
   if (uiAudit === null || uiAudit === undefined) {
     return {
@@ -398,7 +410,6 @@ function normalizeUiAudit(uiAudit) {
       state: "not_measured",
       canonicalJson: null,
       utf8Bytes: 0,
-      chunks: Object.freeze([]),
     };
   }
 
@@ -490,21 +501,311 @@ function normalizeUiAudit(uiAudit) {
     };
   }
 
-  const chunks = splitUtf8CodePoints(canonicalJson, MAX_CHUNK_UTF8_BYTES);
-  if (chunks.join("") !== canonicalJson) {
-    return {
-      ok: false,
-      code: "audit_chunk_integrity_failure",
-      message: "Failed lossless UTF-8 code-point chunk verification for uiAudit.",
-    };
-  }
-
   return {
     ok: true,
     state: "measured",
     canonicalJson,
     utf8Bytes,
-    chunks,
+  };
+}
+
+/**
+ * Computes precomputed `reportChunks` and `uiAuditChunks` (plus `not_measured`
+ * `ui_audit` envelope fit and `op=list` single-record metadata fit) against the
+ * COMPLETE actual JSON read/list response envelopes for this exact record,
+ * incorporating defensible upper bounds on mutable read-pin/supersession fields
+ * (for `live_bench_state`) and TTL refresh timestamps (for `gemini_grounded_research`).
+ */
+function planVerifiedRecordChunksAndEnvelopes({
+  reportId,
+  productId,
+  productTitle,
+  mode,
+  sectionKey,
+  sectionLabel,
+  runIdentity,
+  runTimestamp,
+  capturedAt,
+  storedAt,
+  expiresAt,
+  limitUsed,
+  clipboardPartCount,
+  activePartIndex,
+  fullText,
+  reportUtf8Bytes,
+  uiAuditState,
+  uiAuditCanonicalJson,
+  uiAuditUtf8Bytes,
+  isLiveBenchState,
+  benchSessionId = null,
+  benchRevision = null,
+  selectionState = null,
+  clientStateChangedAt = null,
+  baselineLoadedAt = null,
+  baselineSource = null,
+  workingState = null,
+}) {
+  const isGroundedResearch = mode === GEMINI_GROUNDED_RESEARCH_MODE;
+  const mutablePinBounds = isLiveBenchState
+    ? getMutableLivePinEnvelopeBounds()
+    : null;
+
+  // On deduplicated `gemini_grounded_research` republication, `storedAt` and
+  // `expiresAt` are refreshed via `new Date(nowMs).toISOString()` while keeping
+  // `reportChunks` immutable. Bound their ISO widths to MAX_DATE_TO_ISO_STRING_BOUND
+  // (27 chars >= standard 24-char ISO) so refreshed timestamps can never push
+  // a previously stored research chunk past 3500 bytes.
+  const storedAtBound = isGroundedResearch
+    ? storedAt && storedAt.length > MAX_DATE_TO_ISO_STRING_BOUND.length
+      ? storedAt
+      : MAX_DATE_TO_ISO_STRING_BOUND
+    : storedAt;
+  const expiresAtBound = isGroundedResearch
+    ? expiresAt && expiresAt.length > MAX_DATE_TO_ISO_STRING_BOUND.length
+      ? expiresAt
+      : MAX_DATE_TO_ISO_STRING_BOUND
+    : expiresAt;
+
+  const liveReadBoundsSpread = isLiveBenchState
+    ? {
+        benchSessionId,
+        benchRevision,
+        selectionState,
+        clientStateChangedAt: clientStateChangedAt ?? capturedAt,
+        baselineLoadedAt,
+        serverReceivedAt: storedAt,
+        baselineSource,
+        workingState,
+        isHistoricalSuperseded: mutablePinBounds.isHistoricalSuperseded,
+        supersededByRevision: mutablePinBounds.supersededByRevision,
+        pinExpiresAt: mutablePinBounds.pinExpiresAt,
+      }
+    : {};
+
+  // 1. Plan `section="report", view="chunk"` chunks against complete read envelope
+  const reportChunkPlan = buildEnvelopeBoundedTextChunks({
+    text: fullText,
+    maxResponseUtf8Bytes: MAX_RESPONSE_UTF8_BYTES,
+    maxRawChunkUtf8Bytes: MAX_CHUNK_UTF8_BYTES,
+    preserveEmptyStringChunk: false,
+    buildProbeEnvelope: (counters) => ({
+      ok: true,
+      status: "ok",
+      reportId,
+      productId,
+      productTitle,
+      mode,
+      sectionKey,
+      sectionLabel,
+      section: "report",
+      uiAuditState,
+      capturedAt,
+      storedAt: storedAtBound,
+      expiresAt: expiresAtBound,
+      runIdentity,
+      runTimestamp,
+      ...liveReadBoundsSpread,
+      limitUsed,
+      clipboardPartCount,
+      activePartIndex,
+      chunkIndex: counters.chunkIndex,
+      chunkCount: counters.chunkCount,
+      chunkUtf8Bytes: counters.chunkUtf8Bytes,
+      totalUtf8Bytes: counters.totalUtf8Bytes,
+      hasMoreChunks: counters.hasMoreChunks,
+      nextChunkIndex: counters.nextChunkIndex,
+      text: "",
+    }),
+  });
+
+  if (!reportChunkPlan.ok) {
+    return {
+      ok: false,
+      status:
+        reportChunkPlan.code === "chunk_integrity_failure" ||
+        reportChunkPlan.code === "serialization_failure"
+          ? "error"
+          : "invalid_request",
+      code: reportChunkPlan.code || "metadata_exceeds_response_ceiling",
+      message:
+        reportChunkPlan.message ||
+        "Report metadata leaves insufficient room within the 3500 UTF-8 byte response ceiling.",
+    };
+  }
+
+  const reportChunks = reportChunkPlan.chunks;
+  if (reportChunks.join("") !== fullText) {
+    return {
+      ok: false,
+      status: "error",
+      code: "chunk_integrity_failure",
+      message: "Failed lossless UTF-8 code-point chunk verification.",
+    };
+  }
+
+  // 2. Plan `section="ui_audit"` chunks (or verify `not_measured` response envelope <= 3500 bytes)
+  let uiAuditChunks = Object.freeze([]);
+  if (uiAuditState === "measured" && typeof uiAuditCanonicalJson === "string") {
+    const auditChunkPlan = buildEnvelopeBoundedTextChunks({
+      text: uiAuditCanonicalJson,
+      maxResponseUtf8Bytes: MAX_RESPONSE_UTF8_BYTES,
+      maxRawChunkUtf8Bytes: MAX_CHUNK_UTF8_BYTES,
+      preserveEmptyStringChunk: false,
+      buildProbeEnvelope: (counters) => ({
+        ok: true,
+        status: "ok",
+        reportId,
+        productId,
+        productTitle,
+        mode,
+        section: "ui_audit",
+        uiAuditState: "measured",
+        capturedAt,
+        storedAt: storedAtBound,
+        expiresAt: expiresAtBound,
+        runIdentity,
+        runTimestamp,
+        ...liveReadBoundsSpread,
+        chunkIndex: counters.chunkIndex,
+        chunkCount: counters.chunkCount,
+        chunkUtf8Bytes: counters.chunkUtf8Bytes,
+        totalUtf8Bytes: counters.totalUtf8Bytes,
+        hasMoreChunks: counters.hasMoreChunks,
+        nextChunkIndex: counters.nextChunkIndex,
+        text: "",
+      }),
+    });
+
+    if (!auditChunkPlan.ok) {
+      return {
+        ok: false,
+        status:
+          auditChunkPlan.code === "chunk_integrity_failure" ||
+          auditChunkPlan.code === "serialization_failure"
+            ? "error"
+            : "invalid_request",
+        code:
+          auditChunkPlan.code === "chunk_integrity_failure"
+            ? "audit_chunk_integrity_failure"
+            : auditChunkPlan.code || "metadata_exceeds_response_ceiling",
+        message:
+          auditChunkPlan.message ||
+          "UI audit metadata leaves insufficient room within the 3500 UTF-8 byte response ceiling.",
+      };
+    }
+
+    uiAuditChunks = auditChunkPlan.chunks;
+    if (uiAuditChunks.join("") !== uiAuditCanonicalJson) {
+      return {
+        ok: false,
+        status: "error",
+        code: "audit_chunk_integrity_failure",
+        message: "Failed lossless UTF-8 code-point chunk verification for uiAudit.",
+      };
+    }
+  } else {
+    const notMeasuredEnvelope = {
+      ok: true,
+      status: "not_measured",
+      reportId,
+      productId,
+      mode,
+      section: "ui_audit",
+      uiAuditState: "not_measured",
+      capturedAt,
+      storedAt: storedAtBound,
+      expiresAt: expiresAtBound,
+      runIdentity,
+      runTimestamp,
+      ...liveReadBoundsSpread,
+      chunkIndex: 0,
+      chunkCount: 0,
+      hasMoreChunks: false,
+      nextChunkIndex: null,
+      text: null,
+      message: "UI state was not_measured for this captured report.",
+    };
+    if (utf8ByteLength(JSON.stringify(notMeasuredEnvelope)) > MAX_RESPONSE_UTF8_BYTES) {
+      return {
+        ok: false,
+        status: "invalid_request",
+        code: "metadata_exceeds_response_ceiling",
+        message:
+          "Packet metadata exceeds the 3500 UTF-8 byte response ceiling on ui_audit reads.",
+      };
+    }
+  }
+
+  // 3. Verify that both the POST `stored` acknowledgment response and a single-item
+  // `op=list` page (with worst-case pagination bounds) fit within 3500 UTF-8 bytes
+  // BEFORE mutating cache state, so no unlistable or unacknowledgeable record is stored.
+  const candidateRecordForMeta = {
+    reportId,
+    productId,
+    productTitle,
+    mode,
+    sectionKey,
+    sectionLabel,
+    runIdentity,
+    runTimestamp,
+    capturedAt,
+    clientStateChangedAt,
+    storedAt: storedAtBound,
+    expiresAt: expiresAtBound,
+    limitUsed,
+    clipboardPartCount,
+    activePartIndex,
+    reportUtf8Bytes,
+    reportChunks,
+    uiAuditState,
+    uiAuditUtf8Bytes,
+    uiAuditChunks,
+    isLiveBenchState,
+    benchSessionId,
+    benchRevision,
+    selectionState,
+    baselineLoadedAt,
+    baselineSource,
+    workingState,
+  };
+
+  const formattedMeta = formatRecordMetadata(candidateRecordForMeta);
+  const storeAckProbe = {
+    ok: true,
+    status: "stored",
+    deduplicated: false,
+    report: formattedMeta,
+  };
+  const singleItemListProbe = {
+    ok: true,
+    status: "ok",
+    reports: [formattedMeta],
+    pagination: {
+      requestedLimit: MAX_LIST_LIMIT,
+      returnedCount: 1,
+      totalMatching: MAX_REPORTS_GLOBAL + MAX_LIVE_SESSIONS_GLOBAL,
+      hasNextPage: false,
+      nextAfterReportId: reportId,
+    },
+  };
+
+  if (
+    utf8ByteLength(JSON.stringify(storeAckProbe)) > MAX_RESPONSE_UTF8_BYTES ||
+    utf8ByteLength(JSON.stringify(singleItemListProbe)) > MAX_RESPONSE_UTF8_BYTES
+  ) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      code: "metadata_exceeds_response_ceiling",
+      message:
+        "Single report metadata entry exceeds the 3500 UTF-8 byte response limit.",
+    };
+  }
+
+  return {
+    ok: true,
+    reportChunks,
+    uiAuditChunks,
   };
 }
 
@@ -981,7 +1282,7 @@ function formatRecordMetadata(record) {
     base.benchSessionId = record.benchSessionId;
     base.benchRevision = record.benchRevision;
     base.selectionState = record.selectionState;
-    base.clientStateChangedAt = record.capturedAt;
+    base.clientStateChangedAt = record.clientStateChangedAt ?? record.capturedAt;
     base.baselineLoadedAt = record.baselineLoadedAt;
     base.serverReceivedAt = record.storedAt;
     base.baselineSource = record.baselineSource;
@@ -1148,16 +1449,132 @@ function validateAndExtractLiveBenchMetadata(packet, rawLiveState) {
     baselineLoadedAt = parsedBaseline.raw;
   }
 
-  const rawClientStateChangedAt =
-    pickField("clientStateChangedAt") ??
-    (isPlainObject(packet) ? packet.capturedAt : undefined);
-  const parsedClientTime = parseStrictIsoTimestamp(rawClientStateChangedAt);
-  if (!parsedClientTime) {
+  // Parse and cross-validate truthful edit time (clientStateChangedAt) separately
+  // from snapshot capture time (packet.capturedAt), preserving explicit backward
+  // compatibility for selectionState="none" messages (which omit packet) and
+  // callers supplying only one of the two timestamps.
+  const hasExplicitCandidateChangedAt =
+    candidateMeta !== null &&
+    candidateMeta.clientStateChangedAt !== undefined &&
+    candidateMeta.clientStateChangedAt !== null;
+  const hasExplicitPacketChangedAt =
+    isPlainObject(packet) &&
+    packet.clientStateChangedAt !== undefined &&
+    packet.clientStateChangedAt !== null;
+  const hasExplicitFullTextChangedAt =
+    parsedFullTextObj !== null &&
+    parsedFullTextObj.clientStateChangedAt !== undefined &&
+    parsedFullTextObj.clientStateChangedAt !== null;
+  const hasExplicitPacketCapturedAt =
+    isPlainObject(packet) &&
+    packet.capturedAt !== undefined &&
+    packet.capturedAt !== null;
+
+  let parsedClientTime = null;
+  if (hasExplicitCandidateChangedAt) {
+    parsedClientTime = parseStrictIsoTimestamp(candidateMeta.clientStateChangedAt);
+    if (!parsedClientTime) {
+      return {
+        ok: false,
+        code: "invalid_client_state_changed_at",
+        message:
+          "liveState.clientStateChangedAt must be a valid ISO-8601 timestamp string.",
+      };
+    }
+  }
+
+  if (hasExplicitPacketChangedAt) {
+    const parsedPktChanged = parseStrictIsoTimestamp(packet.clientStateChangedAt);
+    if (!parsedPktChanged) {
+      return {
+        ok: false,
+        code: "invalid_client_state_changed_at",
+        message:
+          "packet.clientStateChangedAt must be a valid ISO-8601 timestamp string when provided.",
+      };
+    }
+    if (parsedClientTime && parsedPktChanged.raw !== parsedClientTime.raw) {
+      return {
+        ok: false,
+        code: "inconsistent_client_state_changed_at",
+        message:
+          "packet.clientStateChangedAt and liveState.clientStateChangedAt must match.",
+      };
+    }
+    parsedClientTime = parsedPktChanged;
+  }
+
+  if (hasExplicitFullTextChangedAt) {
+    const parsedFullChanged = parseStrictIsoTimestamp(
+      parsedFullTextObj.clientStateChangedAt
+    );
+    if (!parsedFullChanged) {
+      return {
+        ok: false,
+        code: "invalid_client_state_changed_at",
+        message:
+          "clientStateChangedAt inside serialized fullText JSON must be a valid ISO-8601 timestamp string.",
+      };
+    }
+    if (parsedClientTime && parsedFullChanged.raw !== parsedClientTime.raw) {
+      return {
+        ok: false,
+        code: "inconsistent_client_state_changed_at",
+        message:
+          "clientStateChangedAt in packet/liveState does not match serialized fullText JSON.",
+      };
+    }
+    parsedClientTime = parsedFullChanged;
+  }
+
+  let parsedCapturedTime = null;
+  if (hasExplicitPacketCapturedAt) {
+    parsedCapturedTime = parseStrictIsoTimestamp(packet.capturedAt);
+    if (!parsedCapturedTime) {
+      return {
+        ok: false,
+        code: "invalid_captured_at",
+        message: "packet.capturedAt must be a valid ISO-8601 timestamp string.",
+      };
+    }
+  } else if (selectionState !== "none") {
+    if (
+      isPlainObject(packet) &&
+      Object.prototype.hasOwnProperty.call(packet, "capturedAt") &&
+      packet.capturedAt !== undefined &&
+      packet.capturedAt !== null
+    ) {
+      return {
+        ok: false,
+        code: "invalid_captured_at",
+        message: "packet.capturedAt must be a valid ISO-8601 timestamp string.",
+      };
+    }
+  }
+
+  if (!parsedClientTime && parsedCapturedTime) {
+    parsedClientTime = parsedCapturedTime;
+  }
+  if (!parsedCapturedTime && parsedClientTime) {
+    parsedCapturedTime = parsedClientTime;
+  }
+
+  if (!parsedClientTime || !parsedCapturedTime) {
     return {
       ok: false,
       code: "invalid_captured_at",
       message:
-        "live_bench_state requires a valid ISO-8601 clientStateChangedAt / packet.capturedAt timestamp.",
+        "live_bench_state requires a valid ISO-8601 clientStateChangedAt or packet.capturedAt timestamp.",
+    };
+  }
+
+  // Chronological consistency: actual edit time cannot be later than snapshot capture time
+  if (parsedClientTime.ms > parsedCapturedTime.ms) {
+    return {
+      ok: false,
+      code: "client_state_after_capture",
+      message:
+        "clientStateChangedAt cannot be later than packet.capturedAt.",
     };
   }
 
@@ -1168,6 +1585,7 @@ function validateAndExtractLiveBenchMetadata(packet, rawLiveState) {
     selectionState,
     baselineLoadedAt,
     clientTime: parsedClientTime,
+    capturedTime: parsedCapturedTime,
     parsedFullTextObj,
   };
 }
@@ -1196,16 +1614,29 @@ function storeLiveBenchStateInternal({
     selectionState,
     baselineLoadedAt,
     clientTime,
+    capturedTime,
     parsedFullTextObj,
   } = liveMeta;
 
-  const ageMs = nowMs - clientTime.ms;
-  if (ageMs > TTL_MS) {
+  // Snapshot capture freshness & future-skew checks apply to capturedTime
+  // (when the snapshot or selection-clear was captured/sent), while clientTime
+  // preserves the truthful historical edit timestamp without artificial TTL rejection.
+  const captureAgeMs = nowMs - capturedTime.ms;
+  if (captureAgeMs > TTL_MS) {
     return finalizeResponse({
       ok: false,
       status: "invalid_request",
       code: "capture_expired",
-      message: "clientStateChangedAt / capturedAt is older than the 30-minute TTL.",
+      message: "packet.capturedAt is older than the 30-minute TTL.",
+    });
+  }
+
+  if (capturedTime.ms - nowMs > MAX_FUTURE_SKEW_MS) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "capture_in_future",
+      message: "packet.capturedAt cannot be more than 2 minutes in the future.",
     });
   }
 
@@ -1213,15 +1644,17 @@ function storeLiveBenchStateInternal({
     return finalizeResponse({
       ok: false,
       status: "invalid_request",
-      code: "capture_in_future",
-      message: "clientStateChangedAt / capturedAt cannot be more than 2 minutes in the future.",
+      code: "client_state_in_future",
+      message: "clientStateChangedAt cannot be more than 2 minutes in the future.",
     });
   }
 
   const compositeKey = buildLiveSessionCompositeKey(shop, benchSessionId);
   const existingSession = state.liveSessionsByKey.get(compositeKey);
 
-  // Monotonic high-water revision guard across product switches, previews, and deselections
+  // Monotonic high-water revision guard across product switches, previews, and deselections.
+  // Idempotent deduplication returns the actual existing record/session expiry without
+  // claiming a renewed TTL window.
   if (existingSession && benchRevision <= existingSession.highestRevision) {
     if (
       benchRevision === existingSession.highestRevision &&
@@ -1249,7 +1682,8 @@ function storeLiveBenchStateInternal({
         existingRec &&
         !isRecordSuperseded(state, existingRec) &&
         existingRec.productId === incomingProdId &&
-        existingRec.selectionState === selectionState
+        existingRec.selectionState === selectionState &&
+        (existingRec.clientStateChangedAt ?? existingRec.capturedAt) === clientTime.raw
       ) {
         return finalizeResponse({
           ok: true,
@@ -1289,25 +1723,11 @@ function storeLiveBenchStateInternal({
       });
     }
 
-    const previousActiveProductId = existingSession?.activeProductId || null;
-    if (existingSession && existingSession.activeReportId) {
-      const oldRec = state.recordsById.get(existingSession.activeReportId);
-      if (oldRec) {
-        detachOrRemoveLiveRecord(state, oldRec, "cleared_live", nowMs, null);
-      }
-    }
-
     const slotOverheadBytes = 384 + utf8ByteLength(shop) + utf8ByteLength(benchSessionId);
-    enforceLiveSessionCapacityLimits(state, shop, benchSessionId, slotOverheadBytes, nowMs);
+    const existingSlotOverhead = existingSession ? existingSession.slotOverheadBytes || 0 : 0;
+    const netSlotDeltaBytes = Math.max(0, slotOverheadBytes - existingSlotOverhead);
 
-    if (existingSession) {
-      state.totalBytes = Math.max(
-        0,
-        state.totalBytes - (existingSession.slotOverheadBytes || 0)
-      );
-    }
-
-    if (state.totalBytes + slotOverheadBytes > MAX_TOTAL_BYTES) {
+    if (slotOverheadBytes > MAX_TOTAL_BYTES) {
       return finalizeResponse({
         ok: false,
         status: "invalid_request",
@@ -1317,10 +1737,11 @@ function storeLiveBenchStateInternal({
     }
 
     const storedAtIso = new Date(nowMs).toISOString();
-    const expiresAtMs = clientTime.ms + TTL_MS;
+    const expiresAtMs = capturedTime.ms + TTL_MS;
     const expiresAtIso = new Date(expiresAtMs).toISOString();
+    const previousActiveProductId = existingSession?.activeProductId || null;
 
-    const updatedSession = Object.freeze({
+    const candidateClearSession = Object.freeze({
       shop,
       benchSessionId,
       highestRevision: benchRevision,
@@ -1340,7 +1761,45 @@ function storeLiveBenchStateInternal({
       slotOverheadBytes,
     });
 
-    state.liveSessionsByKey.set(compositeKey, updatedSession);
+    const clearAckProbe = {
+      ok: true,
+      status: "stored",
+      deduplicated: false,
+      selectionState: "none",
+      liveSession: formatLiveSessionSlotSummary(candidateClearSession),
+    };
+    if (utf8ByteLength(JSON.stringify(clearAckProbe)) > MAX_RESPONSE_UTF8_BYTES) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "metadata_exceeds_response_ceiling",
+        message: "Session metadata exceeds the 3500 UTF-8 byte response limit.",
+      });
+    }
+
+    enforceLiveSessionCapacityLimits(state, shop, benchSessionId, netSlotDeltaBytes, nowMs);
+
+    if (state.totalBytes - existingSlotOverhead + slotOverheadBytes > MAX_TOTAL_BYTES) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "report_exceeds_cache_budget",
+        message: "Live bench session state exceeds total cache memory budget.",
+      });
+    }
+
+    if (existingSession && existingSession.activeReportId) {
+      const oldRec = state.recordsById.get(existingSession.activeReportId);
+      if (oldRec) {
+        detachOrRemoveLiveRecord(state, oldRec, "cleared_live", nowMs, null);
+      }
+    }
+
+    if (existingSession) {
+      state.totalBytes = Math.max(0, state.totalBytes - existingSlotOverhead);
+    }
+
+    state.liveSessionsByKey.set(compositeKey, candidateClearSession);
     state.totalBytes += slotOverheadBytes;
 
     let shopSessionSet = state.shopLiveSessions.get(shop);
@@ -1353,13 +1812,7 @@ function storeLiveBenchStateInternal({
     const shopStats = getShopStats(state, shop);
     shopStats.liveClearedCount += 1;
 
-    return finalizeResponse({
-      ok: true,
-      status: "stored",
-      deduplicated: false,
-      selectionState: "none",
-      liveSession: formatLiveSessionSlotSummary(updatedSession),
-    });
+    return finalizeResponse(clearAckProbe);
   }
 
   // selectionState === "selected" or selectionState === "unselected_preview"
@@ -1598,16 +2051,6 @@ function storeLiveBenchStateInternal({
       : null;
   const limitUsed = sanitizeOptionalNumber(packet.limitUsed);
 
-  const reportChunks = splitUtf8CodePoints(fullText, MAX_CHUNK_UTF8_BYTES);
-  if (reportChunks.join("") !== fullText) {
-    return finalizeResponse({
-      ok: false,
-      status: "error",
-      code: "chunk_integrity_failure",
-      message: "Failed lossless UTF-8 code-point chunk verification.",
-    });
-  }
-
   const reportId = computeReportId({
     shop,
     productId,
@@ -1617,7 +2060,7 @@ function storeLiveBenchStateInternal({
     productTitle,
     runIdentity,
     runTimestamp,
-    capturedAt: clientTime.raw,
+    capturedAt: capturedTime.raw,
     limitUsed,
     fullText,
     uiAuditState: auditResult.state,
@@ -1627,6 +2070,62 @@ function storeLiveBenchStateInternal({
     selectionState,
     baselineLoadedAt,
   });
+
+  const storedAtIso = new Date(nowMs).toISOString();
+  const expiresAtMs = capturedTime.ms + TTL_MS;
+  const expiresAtIso = new Date(expiresAtMs).toISOString();
+
+  const effectiveBaselineSource = isUnselectedPreview
+    ? "unselected_blank_preview"
+    : parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
+      ? "manifest_not_loaded"
+      : "last_loaded_manifest";
+  const effectiveWorkingState = isUnselectedPreview
+    ? "read_only_template_preview"
+    : parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
+      ? "unavailable_not_loaded"
+      : "unsaved_browser_bench";
+
+  // Plan and verify escaped-UTF-8-bounded chunks & complete envelope sizes BEFORE
+  // detaching, removing, or evicting any existing cache state!
+  const chunkPlan = planVerifiedRecordChunksAndEnvelopes({
+    reportId,
+    productId,
+    productTitle,
+    mode: LIVE_BENCH_MODE,
+    sectionKey,
+    sectionLabel,
+    runIdentity,
+    runTimestamp,
+    capturedAt: capturedTime.raw,
+    storedAt: storedAtIso,
+    expiresAt: expiresAtIso,
+    limitUsed,
+    clipboardPartCount: partsCheck.partCount,
+    activePartIndex: partsCheck.activePartIndex,
+    fullText,
+    reportUtf8Bytes,
+    uiAuditState: auditResult.state,
+    uiAuditCanonicalJson: auditResult.canonicalJson,
+    uiAuditUtf8Bytes: auditResult.utf8Bytes,
+    isLiveBenchState: true,
+    benchSessionId,
+    benchRevision,
+    selectionState,
+    clientStateChangedAt: clientTime.raw,
+    baselineLoadedAt,
+    baselineSource: effectiveBaselineSource,
+    workingState: effectiveWorkingState,
+  });
+
+  if (!chunkPlan.ok) {
+    return finalizeResponse({
+      ok: false,
+      status: chunkPlan.status,
+      code: chunkPlan.code,
+      message: chunkPlan.message,
+    });
+  }
 
   const metadataOverheadBytes =
     640 +
@@ -1638,6 +2137,7 @@ function storeLiveBenchStateInternal({
     utf8ByteLength(productTitle || "") +
     utf8ByteLength(runIdentity || "") +
     utf8ByteLength(runTimestamp || "") +
+    utf8ByteLength(clientTime.raw) +
     utf8ByteLength(baselineLoadedAt || "");
 
   const estimatedBytes =
@@ -1654,7 +2154,7 @@ function storeLiveBenchStateInternal({
   }
 
   // Replace or detach previous active live record for this exact (shop, benchSessionId) slot
-  // so repeated field edits never accumulate unpinned reports or evict manual captures.
+  // so repeated field edits or syncs never accumulate unpinned reports or evict manual captures.
   const previousActiveProductId = existingSession?.activeProductId || null;
   if (existingSession && existingSession.activeReportId) {
     const oldRec = state.recordsById.get(existingSession.activeReportId);
@@ -1688,21 +2188,6 @@ function storeLiveBenchStateInternal({
     });
   }
 
-  const storedAtIso = new Date(nowMs).toISOString();
-  const expiresAtMs = clientTime.ms + TTL_MS;
-  const expiresAtIso = new Date(expiresAtMs).toISOString();
-
-  const effectiveBaselineSource = isUnselectedPreview
-    ? "unselected_blank_preview"
-    : parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
-      ? "manifest_not_loaded"
-      : "last_loaded_manifest";
-  const effectiveWorkingState = isUnselectedPreview
-    ? "read_only_template_preview"
-    : parsedFullTextObj && parsedFullTextObj.manifestLoaded === false
-      ? "unavailable_not_loaded"
-      : "unsaved_browser_bench";
-
   const newRecord = Object.freeze({
     reportId,
     shop,
@@ -1713,8 +2198,10 @@ function storeLiveBenchStateInternal({
     sectionLabel,
     runIdentity,
     runTimestamp,
-    capturedAt: clientTime.raw,
-    capturedAtMs: clientTime.ms,
+    capturedAt: capturedTime.raw,
+    capturedAtMs: capturedTime.ms,
+    clientStateChangedAt: clientTime.raw,
+    clientStateChangedAtMs: clientTime.ms,
     storedAt: storedAtIso,
     storedAtMs: nowMs,
     expiresAt: expiresAtIso,
@@ -1725,11 +2212,11 @@ function storeLiveBenchStateInternal({
     partsMeta: partsCheck.partsMeta,
     fullText,
     reportUtf8Bytes,
-    reportChunks,
+    reportChunks: chunkPlan.reportChunks,
     uiAuditState: auditResult.state,
     uiAuditCanonicalJson: auditResult.canonicalJson,
     uiAuditUtf8Bytes: auditResult.utf8Bytes,
-    uiAuditChunks: auditResult.chunks,
+    uiAuditChunks: chunkPlan.uiAuditChunks,
     estimatedBytes,
     isLiveBenchState: true,
     benchSessionId,
@@ -1786,7 +2273,7 @@ function storeLiveBenchStateInternal({
   const shopStats = getShopStats(state, shop);
   shopStats.storedCount += 1;
   shopStats.liveSyncCount += 1;
-  shopStats.lastCapturedAtMs = clientTime.ms;
+  shopStats.lastCapturedAtMs = capturedTime.ms;
 
   return finalizeResponse({
     ok: true,
@@ -2071,13 +2558,43 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  const reportChunks = splitUtf8CodePoints(fullText, MAX_CHUNK_UTF8_BYTES);
-  if (reportChunks.join("") !== fullText) {
+  const storedAtIso = new Date(nowMs).toISOString();
+  const expiresAtMs = isGroundedResearchMode
+    ? nowMs + TTL_MS
+    : parsedCapturedAt.ms + TTL_MS;
+  const expiresAt = new Date(expiresAtMs).toISOString();
+
+  // Plan and verify escaped-UTF-8-bounded chunks & complete envelope sizes BEFORE
+  // evicting or mutating existing cache entries!
+  const chunkPlan = planVerifiedRecordChunksAndEnvelopes({
+    reportId,
+    productId,
+    productTitle,
+    mode,
+    sectionKey,
+    sectionLabel,
+    runIdentity,
+    runTimestamp,
+    capturedAt: parsedCapturedAt.raw,
+    storedAt: storedAtIso,
+    expiresAt,
+    limitUsed,
+    clipboardPartCount: partsCheck.partCount,
+    activePartIndex: partsCheck.activePartIndex,
+    fullText,
+    reportUtf8Bytes,
+    uiAuditState: auditResult.state,
+    uiAuditCanonicalJson: auditResult.canonicalJson,
+    uiAuditUtf8Bytes: auditResult.utf8Bytes,
+    isLiveBenchState: false,
+  });
+
+  if (!chunkPlan.ok) {
     return finalizeResponse({
       ok: false,
-      status: "error",
-      code: "chunk_integrity_failure",
-      message: "Failed lossless UTF-8 code-point chunk verification.",
+      status: chunkPlan.status,
+      code: chunkPlan.code,
+      message: chunkPlan.message,
     });
   }
 
@@ -2115,11 +2632,6 @@ export function storeTelemetryReport(options = {}) {
     });
   }
 
-  const expiresAtMs = isGroundedResearchMode
-    ? nowMs + TTL_MS
-    : parsedCapturedAt.ms + TTL_MS;
-  const expiresAt = new Date(expiresAtMs).toISOString();
-
   const newRecord = Object.freeze({
     reportId,
     shop,
@@ -2132,7 +2644,9 @@ export function storeTelemetryReport(options = {}) {
     runTimestamp,
     capturedAt: parsedCapturedAt.raw,
     capturedAtMs: parsedCapturedAt.ms,
-    storedAt: new Date(nowMs).toISOString(),
+    clientStateChangedAt: null,
+    clientStateChangedAtMs: null,
+    storedAt: storedAtIso,
     storedAtMs: nowMs,
     expiresAt,
     expiresAtMs,
@@ -2142,11 +2656,11 @@ export function storeTelemetryReport(options = {}) {
     partsMeta: partsCheck.partsMeta,
     fullText,
     reportUtf8Bytes,
-    reportChunks,
+    reportChunks: chunkPlan.reportChunks,
     uiAuditState: auditResult.state,
     uiAuditCanonicalJson: auditResult.canonicalJson,
     uiAuditUtf8Bytes: auditResult.utf8Bytes,
-    uiAuditChunks: auditResult.chunks,
+    uiAuditChunks: chunkPlan.uiAuditChunks,
     estimatedBytes,
     isLiveBenchState: false,
     benchSessionId: null,
@@ -2704,7 +3218,7 @@ export function readTelemetryReport(options = {}) {
       benchSessionId: record.benchSessionId,
       benchRevision: record.benchRevision,
       selectionState: record.selectionState,
-      clientStateChangedAt: record.capturedAt,
+      clientStateChangedAt: record.clientStateChangedAt ?? record.capturedAt,
       baselineLoadedAt: record.baselineLoadedAt,
       serverReceivedAt: record.storedAt,
       baselineSource: record.baselineSource,

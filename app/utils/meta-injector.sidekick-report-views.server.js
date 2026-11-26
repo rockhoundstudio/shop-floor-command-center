@@ -32,6 +32,16 @@ export const ALLOWED_READ_VIEWS = Object.freeze([
 export const ALLOWED_READ_SECTIONS_SET = new Set(ALLOWED_READ_SECTIONS);
 export const ALLOWED_READ_VIEWS_SET = new Set(ALLOWED_READ_VIEWS);
 
+// Defensible upper bounds for mutable read-time metadata fields derived directly
+// from cache enforcement in meta-injector.sidekick-report-cache.server.js:
+// - supersededByRevision: validated by Number.isSafeInteger (>= 1, <= 9007199254740991) -> 16 ASCII digits max.
+// - pinExpiresAt: generated strictly via new Date(effectivePinExpMs).toISOString()
+//   for finite pin timestamps within 10 minutes of Date.now() -> standard 24-char
+//   ISO-8601 format ("YYYY-MM-DDTHH:mm:ss.sssZ") or 27-char extended-year ISO
+//   format ("+YYYYYY-MM-DDTHH:mm:ss.sssZ"), both <= 27 ASCII bytes + 2 JSON quotes.
+const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
+const MAX_DATE_TO_ISO_STRING_BOUND = "+999999-12-31T23:59:59.999Z";
+
 export function utf8ByteLength(str) {
   return Buffer.byteLength(String(str), "utf8");
 }
@@ -138,6 +148,430 @@ export function splitUtf8CodePoints(text, maxBytesPerChunk = MAX_CHUNK_UTF8_BYTE
   }
 
   return Object.freeze(chunks);
+}
+
+/**
+ * Computes the exact UTF-16 code-unit step (1 or 2) and exact UTF-8 byte cost
+ * inside a JSON-serialized string value (excluding the 2 outer `"` delimiters)
+ * for the next Unicode scalar value or isolated surrogate at `str[index]`,
+ * matching V8/ECMA-262 `JSON.stringify` RFC 8259 escaping rules:
+ * - Short escapes (`"`, `\`, `\b`, `\f`, `\n`, `\r`, `\t`): 2 content bytes.
+ * - Remaining ASCII control chars (`0x00..0x1F`): 6 content bytes (`\u00XX`).
+ * - Isolated (unpaired) UTF-16 surrogates (`0xD800..0xDFFF`): 6 content bytes (`\udxxx`).
+ * - Paired astral code points (`U+10000..U+10FFFF`): 2 code units, 4 UTF-8 bytes.
+ * - Other BMP code points: 1 byte (`<= 0x7F`), 2 bytes (`<= 0x7FF`), or 3 bytes (`<= 0xFFFF`).
+ */
+export function measureJsonEscapedNextSymbol(str, index) {
+  const firstUnit = str.charCodeAt(index);
+
+  if (firstUnit >= 0xd800 && firstUnit <= 0xdbff) {
+    if (index + 1 < str.length) {
+      const secondUnit = str.charCodeAt(index + 1);
+      if (secondUnit >= 0xdc00 && secondUnit <= 0xdfff) {
+        return { codeUnits: 2, escapedUtf8Bytes: 4, rawUtf8Bytes: 4 };
+      }
+    }
+    // Unpaired high surrogate: JSON.stringify emits \ud8xx..\udbxx (6 ASCII bytes);
+    // Buffer.byteLength(slice, "utf8") emits U+FFFD replacement (3 UTF-8 bytes).
+    return { codeUnits: 1, escapedUtf8Bytes: 6, rawUtf8Bytes: 3 };
+  }
+
+  if (firstUnit >= 0xdc00 && firstUnit <= 0xdfff) {
+    // Unpaired low surrogate: JSON.stringify emits \udcxx..\udfff (6 ASCII bytes).
+    return { codeUnits: 1, escapedUtf8Bytes: 6, rawUtf8Bytes: 3 };
+  }
+
+  if (
+    firstUnit === 0x22 ||
+    firstUnit === 0x5c ||
+    firstUnit === 0x08 ||
+    firstUnit === 0x09 ||
+    firstUnit === 0x0a ||
+    firstUnit === 0x0c ||
+    firstUnit === 0x0d
+  ) {
+    return { codeUnits: 1, escapedUtf8Bytes: 2, rawUtf8Bytes: 1 };
+  }
+
+  if (firstUnit < 0x20) {
+    return { codeUnits: 1, escapedUtf8Bytes: 6, rawUtf8Bytes: 1 };
+  }
+
+  if (firstUnit <= 0x7f) {
+    return { codeUnits: 1, escapedUtf8Bytes: 1, rawUtf8Bytes: 1 };
+  }
+
+  if (firstUnit <= 0x7ff) {
+    return { codeUnits: 1, escapedUtf8Bytes: 2, rawUtf8Bytes: 2 };
+  }
+
+  return { codeUnits: 1, escapedUtf8Bytes: 3, rawUtf8Bytes: 3 };
+}
+
+/**
+ * Returns the exact UTF-8 byte length of `str` as serialized inside a JSON
+ * string value (excluding the two surrounding `"` quotes), i.e.,
+ * `utf8ByteLength(JSON.stringify(str)) - 2`.
+ */
+export function jsonEscapedContentUtf8Bytes(str) {
+  if (typeof str !== "string" || str.length === 0) {
+    return 0;
+  }
+  let total = 0;
+  for (let i = 0; i < str.length; ) {
+    const step = measureJsonEscapedNextSymbol(str, i);
+    total += step.escapedUtf8Bytes;
+    i += step.codeUnits;
+  }
+  return total;
+}
+
+/**
+ * Splits `text` on Unicode scalar / isolated-surrogate boundaries so that EVERY
+ * chunk's JSON-escaped content UTF-8 byte length is `<= maxEscapedContentBytes`
+ * (and optionally its raw UTF-8 byte length is `<= maxRawUtf8Bytes` when finite).
+ *
+ * - Never guesses character minimum widths: checks the actual next symbol's
+ *   `escapedUtf8Bytes` (1, 2, 3, 4, or 6 bytes) against `maxEscapedContentBytes`.
+ * - Handles `text === ""` honestly via `preserveEmptyStringChunk`: when `false`
+ *   (default for cache storage where empty text produces `[]`), returns `[]` if
+ *   `maxEscapedContentBytes >= 0`; when `true` (if an envelope carries `text: ""`),
+ *   returns `[""]` iff `maxEscapedContentBytes >= 0`.
+ * - Rejects with `{ ok: false, code: "metadata_exceeds_response_ceiling" }` ONLY
+ *   when `maxEscapedContentBytes < 0` or an actual symbol in `text` cannot fit.
+ */
+export function splitJsonEscapedUtf8Chunks(
+  text,
+  maxEscapedContentBytes,
+  options = {}
+) {
+  if (typeof text !== "string") {
+    return {
+      ok: false,
+      code: "invalid_chunk_source_text",
+      message: "Chunk source text must be a string.",
+      chunks: Object.freeze([]),
+    };
+  }
+
+  if (
+    typeof maxEscapedContentBytes !== "number" ||
+    !Number.isFinite(maxEscapedContentBytes) ||
+    maxEscapedContentBytes < 0
+  ) {
+    return {
+      ok: false,
+      code: "metadata_exceeds_response_ceiling",
+      message:
+        "Response metadata alone exceeds the 3500 UTF-8 byte ceiling; zero bytes remain for chunk text.",
+      chunks: Object.freeze([]),
+    };
+  }
+
+  const maxRawBytes =
+    typeof options?.maxRawUtf8Bytes === "number" &&
+    Number.isFinite(options.maxRawUtf8Bytes) &&
+    options.maxRawUtf8Bytes > 0
+      ? Math.trunc(options.maxRawUtf8Bytes)
+      : Infinity;
+  const preserveEmptyStringChunk = Boolean(options?.preserveEmptyStringChunk);
+
+  const budget = Math.trunc(maxEscapedContentBytes);
+
+  if (text.length === 0) {
+    return {
+      ok: true,
+      chunks: preserveEmptyStringChunk ? Object.freeze([""]) : Object.freeze([]),
+    };
+  }
+
+  const chunks = [];
+  let chunkStart = 0;
+  let currentEscapedBytes = 0;
+  let currentRawBytes = 0;
+
+  for (let i = 0; i < text.length; ) {
+    const step = measureJsonEscapedNextSymbol(strOrText(text), i);
+
+    if (step.escapedUtf8Bytes > budget || step.rawUtf8Bytes > maxRawBytes) {
+      return {
+        ok: false,
+        code: "metadata_exceeds_response_ceiling",
+        message:
+          "Response metadata leaves insufficient UTF-8 byte budget to fit the next character without truncation.",
+        chunks: Object.freeze([]),
+      };
+    }
+
+    if (
+      (currentEscapedBytes + step.escapedUtf8Bytes > budget ||
+        currentRawBytes + step.rawUtf8Bytes > maxRawBytes) &&
+      i > chunkStart
+    ) {
+      chunks.push(text.slice(chunkStart, i));
+      chunkStart = i;
+      currentEscapedBytes = 0;
+      currentRawBytes = 0;
+    }
+
+    currentEscapedBytes += step.escapedUtf8Bytes;
+    currentRawBytes += step.rawUtf8Bytes;
+    i += step.codeUnits;
+  }
+
+  if (chunkStart < text.length) {
+    chunks.push(text.slice(chunkStart));
+  }
+
+  if (chunks.join("") !== text) {
+    return {
+      ok: false,
+      code: "chunk_integrity_failure",
+      message: "Failed lossless UTF-8 code-point chunk reassembly check.",
+      chunks: Object.freeze([]),
+    };
+  }
+
+  return {
+    ok: true,
+    chunks: Object.freeze(chunks),
+  };
+}
+
+function strOrText(val) {
+  return val;
+}
+
+function maxDecimalMagnitudeForDigits(value) {
+  const n = Math.max(0, Math.trunc(Number(value) || 0));
+  const digits = String(n).length;
+  // Return 9, 99, 999, ... with the exact same digit count as `n` (never exceeding MAX_SAFE_INTEGER)
+  if (digits >= 16) {
+    return MAX_SAFE_INTEGER_BOUND;
+  }
+  return Math.pow(10, digits) - 1;
+}
+
+/**
+ * Terminating fixed-point envelope-aware chunk planner shared by organized views
+ * and precomputed cache chunk builders (`reportChunks` and `uiAuditChunks`).
+ *
+ * Given:
+ * - `text`: full string to split losslessly into 1..N chunks (or "" -> [] / [""]).
+ * - `buildProbeEnvelope(counterBounds)`: callback returning the COMPLETE actual
+ *   JSON response envelope for this exact record/view with `text: ""`, populated
+ *   with exact immutable record strings, defensible mutable live-pin bounds
+ *   (`isHistoricalSuperseded: false`, `supersededByRevision: Number.MAX_SAFE_INTEGER`,
+ *   `pinExpiresAt: "+999999-12-31T23:59:59.999Z"` when `isLiveBenchState`), and
+ *   the current upper-bound integers for `chunkIndex`, `chunkCount`,
+ *   `chunkUtf8Bytes`, `totalUtf8Bytes`, `hasMoreChunks: false`, and `nextChunkIndex`.
+ *
+ * Guarantees termination in `<= 4` iterations because tightening or relaxing
+ * digit widths of `chunkCount` (`1..text.length + 1`) is monotonic over at most
+ * `1..7` decimal digits (`text.length <= 1,048,576`), and verifies every resulting
+ * chunk against `MAX_RESPONSE_UTF8_BYTES` (`3500`) using exact `JSON.stringify`.
+ */
+export function buildEnvelopeBoundedTextChunks({
+  text,
+  buildProbeEnvelope,
+  maxResponseUtf8Bytes = MAX_RESPONSE_UTF8_BYTES,
+  maxRawChunkUtf8Bytes = Infinity,
+  preserveEmptyStringChunk = false,
+}) {
+  if (typeof text !== "string") {
+    return {
+      ok: false,
+      code: "invalid_chunk_source_text",
+      message: "Chunk source text must be a string.",
+    };
+  }
+  if (typeof buildProbeEnvelope !== "function") {
+    return {
+      ok: false,
+      code: "invalid_envelope_builder",
+      message: "A valid probe envelope builder function is required.",
+    };
+  }
+
+  const totalUtf8Bytes = utf8ByteLength(text);
+
+  if (text.length === 0) {
+    const emptyProbe = buildProbeEnvelope({
+      chunkIndex: 0,
+      chunkCount: preserveEmptyStringChunk ? 1 : 0,
+      chunkUtf8Bytes: 0,
+      totalUtf8Bytes: 0,
+      hasMoreChunks: false,
+      nextChunkIndex: null,
+    });
+    let emptySerializedBytes = Infinity;
+    try {
+      emptySerializedBytes = utf8ByteLength(JSON.stringify(emptyProbe));
+    } catch {
+      return {
+        ok: false,
+        code: "serialization_failure",
+        message: "Failed to serialize response metadata envelope.",
+      };
+    }
+    if (emptySerializedBytes > maxResponseUtf8Bytes) {
+      return {
+        ok: false,
+        code: "metadata_exceeds_response_ceiling",
+        message:
+          "Response metadata exceeded the 3500 UTF-8 byte ceiling; report text was not truncated.",
+      };
+    }
+    return {
+      ok: true,
+      chunks: preserveEmptyStringChunk ? Object.freeze([""]) : Object.freeze([]),
+      totalUtf8Bytes: 0,
+      maxEscapedContentBytes: maxResponseUtf8Bytes - emptySerializedBytes,
+    };
+  }
+
+  // Initial lower-bound estimate on chunkCount is 1; fixed-point loop widens
+  // counter digit widths strictly from actual split results until stable.
+  let assumedMaxCount = 1;
+  let assumedMaxRawChunkBytes = Math.min(
+    totalUtf8Bytes,
+    Number.isFinite(maxRawChunkUtf8Bytes) ? Math.trunc(maxRawChunkUtf8Bytes) : totalUtf8Bytes
+  );
+
+  for (let pass = 0; pass < 8; pass += 1) {
+    const countMagnitudeBound = maxDecimalMagnitudeForDigits(assumedMaxCount);
+    const indexMagnitudeBound = maxDecimalMagnitudeForDigits(
+      Math.max(0, assumedMaxCount - 1)
+    );
+    // For nextChunkIndex: when chunkCount === 1, nextChunkIndex is always `null` (4 bytes);
+    // when chunkCount > 1, non-final chunks have integer `1..chunkCount-1` and final chunk
+    // has `null` (4 bytes), so max byte width is max(4, digits(chunkCount - 1)).
+    const nextIndexRepresentative =
+      assumedMaxCount <= 1
+        ? null
+        : String(indexMagnitudeBound).length >= 4
+          ? indexMagnitudeBound
+          : null;
+    const rawBytesMagnitudeBound = maxDecimalMagnitudeForDigits(
+      assumedMaxRawChunkBytes
+    );
+
+    const probeEnvelope = buildProbeEnvelope({
+      chunkIndex: indexMagnitudeBound,
+      chunkCount: countMagnitudeBound,
+      chunkUtf8Bytes: rawBytesMagnitudeBound,
+      totalUtf8Bytes,
+      // "false" is 5 ASCII bytes vs "true" (4 bytes), so `false` strictly upper-bounds both!
+      hasMoreChunks: false,
+      nextChunkIndex: nextIndexRepresentative,
+    });
+
+    let emptyTextEnvelopeBytes = Infinity;
+    try {
+      emptyTextEnvelopeBytes = utf8ByteLength(JSON.stringify(probeEnvelope));
+    } catch {
+      return {
+        ok: false,
+        code: "serialization_failure",
+        message: "Failed to serialize response metadata envelope.",
+      };
+    }
+
+    const maxEscapedContentBytes = maxResponseUtf8Bytes - emptyTextEnvelopeBytes;
+    if (maxEscapedContentBytes <= 0) {
+      return {
+        ok: false,
+        code: "metadata_exceeds_response_ceiling",
+        message:
+          "Response metadata exceeded the 3500 UTF-8 byte ceiling; report text was not truncated.",
+      };
+    }
+
+    const splitRes = splitJsonEscapedUtf8Chunks(text, maxEscapedContentBytes, {
+      maxRawUtf8Bytes: maxRawChunkUtf8Bytes,
+      preserveEmptyStringChunk,
+    });
+
+    if (!splitRes.ok) {
+      return splitRes;
+    }
+
+    const actualCount = splitRes.chunks.length;
+    let actualMaxChunkRawBytes = 0;
+    for (let c = 0; c < actualCount; c += 1) {
+      const cRaw = utf8ByteLength(splitRes.chunks[c]);
+      if (cRaw > actualMaxChunkRawBytes) {
+        actualMaxChunkRawBytes = cRaw;
+      }
+    }
+
+    const countDigitsgrew =
+      String(actualCount).length > String(assumedMaxCount).length ||
+      (assumedMaxCount === 1 && actualCount > 1);
+    const rawDigitsGrew =
+      String(actualMaxChunkRawBytes).length >
+      String(assumedMaxRawChunkBytes).length;
+
+    if (!countDigitsgrew && !rawDigitsGrew) {
+      // Final exact verification across every produced chunk with its real counters
+      // and worst-case mutable pin/superseded fields embedded in buildProbeEnvelope.
+      let anyOverflow = false;
+      for (let idx = 0; idx < actualCount; idx += 1) {
+        const chunkStr = splitRes.chunks[idx];
+        const hasMore = idx + 1 < actualCount;
+        const verifyEnv = buildProbeEnvelope({
+          chunkIndex: idx,
+          chunkCount: actualCount,
+          chunkUtf8Bytes: utf8ByteLength(chunkStr),
+          totalUtf8Bytes,
+          hasMoreChunks: hasMore,
+          nextChunkIndex: hasMore ? idx + 1 : null,
+        });
+        verifyEnv.text = chunkStr;
+        if (utf8ByteLength(JSON.stringify(verifyEnv)) > maxResponseUtf8Bytes) {
+          anyOverflow = true;
+          break;
+        }
+      }
+
+      if (!anyOverflow) {
+        return {
+          ok: true,
+          chunks: splitRes.chunks,
+          totalUtf8Bytes,
+          maxEscapedContentBytes,
+        };
+      }
+    }
+
+    assumedMaxCount = Math.max(assumedMaxCount + 1, actualCount);
+    assumedMaxRawChunkBytes = Math.max(
+      assumedMaxRawChunkBytes,
+      actualMaxChunkRawBytes
+    );
+  }
+
+  return {
+    ok: false,
+    code: "metadata_exceeds_response_ceiling",
+    message:
+      "Unable to fit complete metadata envelope and non-empty text chunk within the 3500 UTF-8 byte ceiling.",
+  };
+}
+
+/**
+ * Returns defensible upper-bound values for mutable live-bench read-pin and
+ * supersession fields so chunk boundaries computed at write time or initial
+ * organized-view read time NEVER overflow `3500` bytes if the record is later
+ * pinned (`pinExpiresAt` ISO string) and superseded (`supersededByRevision`
+ * positive safe integer).
+ */
+export function getMutableLivePinEnvelopeBounds() {
+  return {
+    isHistoricalSuperseded: false,
+    supersededByRevision: MAX_SAFE_INTEGER_BOUND,
+    pinExpiresAt: MAX_DATE_TO_ISO_STRING_BOUND,
+  };
 }
 
 export function parseVerifiedLiveBenchSnapshot(record) {
@@ -1104,16 +1538,86 @@ export function buildBoundedOrganizedViewEnvelope({
   viewPayloadObj,
   onVerifiedChunkRead,
 }) {
-  const canonicalText = JSON.stringify(viewPayloadObj);
-  const totalUtf8Bytes = utf8ByteLength(canonicalText);
-
-  let chunks = splitUtf8CodePoints(
-    canonicalText,
-    MAX_ORGANIZED_VIEW_CHUNK_UTF8_BYTES
-  );
-  if (chunks.length === 0) {
-    chunks = Object.freeze([canonicalText]);
+  let canonicalText = "";
+  try {
+    canonicalText = JSON.stringify(viewPayloadObj);
+  } catch {
+    return finalizeResponse({
+      ok: false,
+      status: "error",
+      code: "serialization_failure",
+      message: "Failed to serialize organized view payload.",
+    });
   }
+
+  const resolvedClientStateChangedAt =
+    record.clientStateChangedAt ?? record.capturedAt;
+  const mutablePinBounds = getMutableLivePinEnvelopeBounds();
+
+  // Compute chunk boundaries against the COMPLETE actual organized-view envelope
+  // using immutable record strings + defensible upper bounds on mutable pin/superseded
+  // fields so chunk boundaries remain 100% deterministic across active, pinned, and
+  // superseded reads while guaranteeing `utf8ByteLength(JSON.stringify(response)) <= 3500`.
+  const chunkPlan = buildEnvelopeBoundedTextChunks({
+    text: canonicalText,
+    maxResponseUtf8Bytes: MAX_RESPONSE_UTF8_BYTES,
+    maxRawChunkUtf8Bytes: MAX_ORGANIZED_VIEW_CHUNK_UTF8_BYTES,
+    preserveEmptyStringChunk: true,
+    buildProbeEnvelope: (counters) => ({
+      ok: true,
+      status: "ok",
+      reportId: record.reportId,
+      productId: record.productId,
+      productTitle: record.productTitle,
+      mode: record.mode,
+      section: "report",
+      view,
+      ...(drawer !== null ? { drawer } : {}),
+      ...(fieldKey !== null ? { fieldKey } : {}),
+      benchSessionId: record.benchSessionId,
+      benchRevision: record.benchRevision,
+      selectionState: record.selectionState,
+      manifestLoaded: Boolean(snapshot.manifestLoaded),
+      baselineState: snapshot.baselineState || null,
+      clientStateChangedAt: resolvedClientStateChangedAt,
+      baselineLoadedAt: record.baselineLoadedAt,
+      serverReceivedAt: record.storedAt,
+      expiresAt: record.expiresAt,
+      baselineSource: record.baselineSource,
+      workingState: record.workingState,
+      isHistoricalSuperseded: mutablePinBounds.isHistoricalSuperseded,
+      supersededByRevision: mutablePinBounds.supersededByRevision,
+      pinExpiresAt: mutablePinBounds.pinExpiresAt,
+      uiAuditState: record.uiAuditState,
+      chunkIndex: counters.chunkIndex,
+      chunkCount: counters.chunkCount,
+      chunkUtf8Bytes: counters.chunkUtf8Bytes,
+      totalUtf8Bytes: counters.totalUtf8Bytes,
+      hasMoreChunks: counters.hasMoreChunks,
+      nextChunkIndex: counters.nextChunkIndex,
+      text: "",
+    }),
+  });
+
+  if (!chunkPlan.ok) {
+    return finalizeResponse(
+      {
+        ok: false,
+        status: "error",
+        code: chunkPlan.code || "metadata_exceeds_response_ceiling",
+        reportId: record.reportId,
+        section: "report",
+        view,
+        message:
+          chunkPlan.message ||
+          "Organized view metadata exceeded the 3500 UTF-8 byte ceiling; report text was not truncated.",
+      },
+      chunkPlan.code || "metadata_exceeds_response_ceiling"
+    );
+  }
+
+  const chunks = chunkPlan.chunks;
+  const totalUtf8Bytes = chunkPlan.totalUtf8Bytes;
 
   if (chunks.join("") !== canonicalText) {
     return finalizeResponse({
@@ -1169,7 +1673,7 @@ export function buildBoundedOrganizedViewEnvelope({
     selectionState: record.selectionState,
     manifestLoaded: Boolean(snapshot.manifestLoaded),
     baselineState: snapshot.baselineState || null,
-    clientStateChangedAt: record.capturedAt,
+    clientStateChangedAt: resolvedClientStateChangedAt,
     baselineLoadedAt: record.baselineLoadedAt,
     serverReceivedAt: record.storedAt,
     expiresAt: record.expiresAt,
