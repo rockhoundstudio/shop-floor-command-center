@@ -6,8 +6,8 @@
 // Contains catalog metadata & telemetry constants, UTF-8 byte measurement,
 // session ID generation, actual event ordering, field registry/applicability
 // metadata resolution, and the client-safe useBenchV2LiveTelemetryPublisher
-// hook for building and single-flight publishing the read-only Sidekick live
-// bench snapshot.
+// hook for passive dirty/timestamp tracking, explicit manual Sidekick
+// snapshot publishing, and race-safe slot invalidation.
 // ==========================================================================
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -40,6 +40,7 @@ const TELEMETRY_LIVE_BENCH_MODE = "live_bench_state";
 const TELEMETRY_MAX_FULL_TEXT_CODE_UNITS = 1024 * 1024;
 const TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES = 1024 * 1024;
 const TELEMETRY_MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
+const TELEMETRY_SYNC_TIMEOUT_MS = 8000;
 
 export function measureUtf8BytesClient(str) {
   if (typeof str !== "string" || str.length === 0) return 0;
@@ -190,6 +191,15 @@ export function resolveFieldRegistryAndApplicabilityMeta(contract) {
   };
 }
 
+function buildClickCaptureIso(earliestAllowedIso) {
+  const nowMs = Date.now();
+  const earliestMs =
+    typeof earliestAllowedIso === "string" ? Date.parse(earliestAllowedIso) : NaN;
+  const effectiveMs =
+    Number.isFinite(earliestMs) && earliestMs > nowMs ? earliestMs : nowMs;
+  return new Date(effectiveMs).toISOString();
+}
+
 export function useBenchV2LiveTelemetryPublisher({
   benchSessionId,
   isSwitchingSelectedProduct,
@@ -230,119 +240,163 @@ export function useBenchV2LiveTelemetryPublisher({
   const benchSessionIdRef = useRef(benchSessionId);
   benchSessionIdRef.current = benchSessionId;
 
-  const benchRevisionRef = useRef(0);
-  const lastEnqueuedFingerprintRef = useRef(null);
-  const latestQueuedSnapshotSpecRef = useRef(null);
-  const isTelemetrySendInFlightRef = useRef(false);
-  const [telemetrySyncStatus, setTelemetrySyncStatus] = useState(() => ({
-    state: "idle",
-    benchSessionId: benchSessionIdRef.current,
-    benchRevision: 0,
-    reportId: null,
-    productId: null,
-    clientStateChangedAt: null,
-    serverReceivedAt: null,
-    errorCode: null,
-    message: "Waiting for initial bench state sync."
-  }));
+  const activeProductIdRef = useRef(activeProductId);
+  activeProductIdRef.current = activeProductId;
 
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      latestQueuedSnapshotSpecRef.current = null;
-    };
+  const isSwitchingSelectedProductRef = useRef(Boolean(isSwitchingSelectedProduct));
+  isSwitchingSelectedProductRef.current = Boolean(isSwitchingSelectedProduct);
+
+  // Monotonic client revision counter (0 before any sync/clear POST is dispatched)
+  const benchRevisionRef = useRef(0);
+
+  // Generation / request token incremented on every manual sync click, product
+  // switch, or explicit clear so late responses from superseded requests or
+  // prior generations never mutate state or clear newer edits.
+  const generationTokenRef = useRef(0);
+  const activeSyncRequestTokenRef = useRef(null);
+  const activeClearRequestTokenRef = useRef(null);
+  const activeSyncAbortControllerRef = useRef(null);
+  const activeClearAbortControllerRef = useRef(null);
+  const isSyncInFlightRef = useRef(false);
+
+  // Slot exposure tracking:
+  // "never_dispatched" -> no field snapshot POST dispatched in this session/slot
+  // "exposed_unconfirmed" -> field snapshot POST was dispatched (or clear failed/uncertain),
+  //                          so server slot may exist even if abort/network error occurred
+  // "acknowledged" -> server confirmed HTTP 200/201 for `exposedProductIdRef.current`
+  // "cleared_confirmed" -> server confirmed HTTP 200/201 `selectionState: "none"`
+  const slotExposureStateRef = useRef("never_dispatched");
+  const exposedProductIdRef = useRef(null);
+
+  // Per-product passive candidate & acknowledgment tracking
+  const latestSpecByProductRef = useRef(new Map());
+  const lastObservedFingerprintByProductRef = useRef(new Map());
+  const lastClientStateChangedAtByProductRef = useRef(new Map());
+  const lastAckFingerprintByProductRef = useRef(new Map());
+  const lastAckMetaByProductRef = useRef(new Map());
+  const lastErrorByProductRef = useRef(new Map());
+
+  const [syncVersion, setSyncVersion] = useState(0);
+  const bumpSyncVersion = useCallback(() => {
+    if (isMountedRef.current) {
+      setSyncVersion((v) => v + 1);
+    }
   }, []);
 
-  // ==========================================================================
-  // SIDEKICK LIVE BENCH SNAPSHOT BUILDER & SINGLE-FLIGHT PUBLISHER
-  // ==========================================================================
-  const drainTelemetryPublishQueue = useCallback(async () => {
-    if (isTelemetrySendInFlightRef.current) return;
-    isTelemetrySendInFlightRef.current = true;
+  const abortInFlightSyncRequest = useCallback(() => {
+    activeSyncRequestTokenRef.current = null;
+    isSyncInFlightRef.current = false;
+    if (activeSyncAbortControllerRef.current) {
+      try {
+        activeSyncAbortControllerRef.current.abort();
+      } catch {
+        // Browser abort does not cancel an already-dispatched server POST
+      }
+      activeSyncAbortControllerRef.current = null;
+    }
+  }, []);
 
-    try {
-      while (latestQueuedSnapshotSpecRef.current && isMountedRef.current) {
-        const spec = latestQueuedSnapshotSpecRef.current;
-        latestQueuedSnapshotSpecRef.current = null;
+  const dispatchSelectionClearRequest = useCallback(
+    ({ reason = "product_switch", useKeepalive = false } = {}) => {
+      const targetSessionId = benchSessionIdRef.current;
+      if (typeof targetSessionId !== "string" || !targetSessionId.trim()) {
+        return;
+      }
 
-        let nextRevision = Math.max(1, benchRevisionRef.current + 1);
-        benchRevisionRef.current = nextRevision;
+      // Only send a `selectionState: "none"` invalidation if a field snapshot
+      // was dispatched/acknowledged or a prior clear remained uncertain.
+      if (slotExposureStateRef.current === "never_dispatched") {
+        return;
+      }
 
-        const attemptPublishWithRevision = async (revisionToUse) => {
-          const fullSnapshotObj = {
-            ...spec.snapshotBodyWithoutRevision,
-            benchSessionId: spec.benchSessionId,
-            benchRevision: revisionToUse,
-            selectionState: spec.selectionState,
-            productId: spec.productId,
-            baselineLoadedAt: spec.baselineLoadedAt,
-            clientStateChangedAt: spec.clientStateChangedAt
-          };
+      if (!useKeepalive) {
+        abortInFlightSyncRequest();
+      }
 
-          const fullText = JSON.stringify(fullSnapshotObj);
-          const fullTextCodeUnits = fullText.length;
-          const fullTextUtf8Bytes = measureUtf8BytesClient(fullText);
+      if (activeClearAbortControllerRef.current && !useKeepalive) {
+        try {
+          activeClearAbortControllerRef.current.abort();
+        } catch {
+          // Ignore abort error
+        }
+        activeClearAbortControllerRef.current = null;
+      }
 
+      generationTokenRef.current += 1;
+      const clearToken = generationTokenRef.current;
+      activeClearRequestTokenRef.current = clearToken;
+
+      benchRevisionRef.current = Math.max(1, benchRevisionRef.current + 1);
+      const nextRevision = benchRevisionRef.current;
+      const nowIso = new Date().toISOString();
+
+      // Clear prior product acknowledgment digest because the slot is being cleared;
+      // keep slot exposure as "exposed_unconfirmed" until the server confirms clear.
+      lastAckFingerprintByProductRef.current.clear();
+      slotExposureStateRef.current = "exposed_unconfirmed";
+
+      const currentProdForUi = activeProductIdRef.current || null;
+      if (!useKeepalive && currentProdForUi) {
+        lastErrorByProductRef.current.set(currentProdForUi, {
+          code: "clearing_previous_slot",
+          message:
+            reason === "clear_bench"
+              ? `Clearing Sidekick live slot (rev ${nextRevision})...`
+              : `Clearing previous Sidekick live slot (rev ${nextRevision})...`
+        });
+        bumpSyncVersion();
+      }
+
+      const clearPayload = {
+        liveState: {
+          mode: TELEMETRY_LIVE_BENCH_MODE,
+          benchSessionId: targetSessionId,
+          benchRevision: nextRevision,
+          selectionState: "none",
+          productId: null,
+          clientStateChangedAt: nowIso
+        }
+      };
+
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      if (!useKeepalive && controller) {
+        activeClearAbortControllerRef.current = controller;
+      }
+
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        if (controller) {
+          try {
+            controller.abort();
+          } catch {
+            // Ignore timeout abort
+          }
+        }
+      }, TELEMETRY_SYNC_TIMEOUT_MS);
+
+      fetch(TELEMETRY_ENDPOINT_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify(clearPayload),
+        ...(useKeepalive ? { keepalive: true } : {}),
+        ...(controller ? { signal: controller.signal } : {})
+      })
+        .then(async (response) => {
+          if (useKeepalive || !isMountedRef.current) return;
           if (
-            fullTextCodeUnits > TELEMETRY_MAX_FULL_TEXT_CODE_UNITS ||
-            fullTextUtf8Bytes > TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES
+            benchSessionIdRef.current !== targetSessionId ||
+            activeClearRequestTokenRef.current !== clearToken
           ) {
-            return {
-              localOversize: true,
-              message: `Snapshot payload (${fullTextUtf8Bytes} UTF-8 bytes / ${fullTextCodeUnits} chars) exceeds cache limit (${TELEMETRY_MAX_FULL_TEXT_CODE_UNITS} chars / ${TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES} bytes); refused to clip or truncate.`
-            };
+            return;
           }
 
-          const postEnvelope = {
-            packet: {
-              productId: spec.productId,
-              productTitle: spec.productTitle,
-              mode: TELEMETRY_LIVE_BENCH_MODE,
-              sectionKey: TELEMETRY_LIVE_BENCH_MODE,
-              sectionLabel: "LIVE BENCH FIELD STATE",
-              runIdentity: spec.runIdentity,
-              runTimestamp: spec.runTimestamp,
-              capturedAt: spec.clientStateChangedAt,
-              benchSessionId: spec.benchSessionId,
-              benchRevision: revisionToUse,
-              selectionState: spec.selectionState,
-              baselineLoadedAt: spec.baselineLoadedAt,
-              fullText
-            },
-            uiAudit: null,
-            liveState: {
-              mode: TELEMETRY_LIVE_BENCH_MODE,
-              benchSessionId: spec.benchSessionId,
-              benchRevision: revisionToUse,
-              selectionState: spec.selectionState,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              baselineLoadedAt: spec.baselineLoadedAt
-            }
-          };
-
-          const serializedEnvelope = JSON.stringify(postEnvelope);
-          const envelopeBytes = measureUtf8BytesClient(serializedEnvelope);
-          if (envelopeBytes > TELEMETRY_MAX_POST_BODY_BYTES) {
-            return {
-              localOversize: true,
-              message: `POST body (${envelopeBytes} bytes) exceeds ${TELEMETRY_MAX_POST_BODY_BYTES}-byte endpoint limit; refused to clip.`
-            };
-          }
-
-          const response = await fetch(TELEMETRY_ENDPOINT_PATH, {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json"
-            },
-            body: serializedEnvelope
-          });
-
-          const contentType = response.headers.get("content-type") || "";
           let parsedJson = null;
+          const contentType = response.headers.get("content-type") || "";
           if (contentType.toLowerCase().includes("application/json")) {
             try {
               parsedJson = await response.json();
@@ -351,125 +405,122 @@ export function useBenchV2LiveTelemetryPublisher({
             }
           }
 
-          return {
-            localOversize: false,
-            httpStatus: response.status,
-            redirected: response.redirected,
-            parsedJson
-          };
-        };
-
-        if (isMountedRef.current) {
-          setTelemetrySyncStatus((prev) => ({
-            ...prev,
-            state: "syncing",
-            benchRevision: nextRevision,
-            productId: spec.productId,
-            clientStateChangedAt: spec.clientStateChangedAt,
-            errorCode: null,
-            message: `Publishing revision ${nextRevision} to Sidekick cache...`
-          }));
-        }
-
-        try {
-          let result = await attemptPublishWithRevision(nextRevision);
+          if (
+            (response.status === 200 || response.status === 201) &&
+            parsedJson?.ok === true &&
+            parsedJson?.selectionState === "none"
+          ) {
+            slotExposureStateRef.current = "cleared_confirmed";
+            exposedProductIdRef.current = null;
+            const activeProd = activeProductIdRef.current;
+            if (activeProd) {
+              lastErrorByProductRef.current.delete(activeProd);
+            }
+            bumpSyncVersion();
+            return;
+          }
 
           if (
-            !result.localOversize &&
-            result.httpStatus === 409 &&
-            result.parsedJson?.code === "stale_bench_revision" &&
-            typeof result.parsedJson?.highestRevision === "number" &&
-            Number.isSafeInteger(result.parsedJson.highestRevision) &&
-            !latestQueuedSnapshotSpecRef.current &&
-            isMountedRef.current
+            response.status === 409 &&
+            parsedJson?.code === "stale_bench_revision" &&
+            typeof parsedJson?.highestRevision === "number" &&
+            Number.isSafeInteger(parsedJson.highestRevision) &&
+            parsedJson.highestRevision >= benchRevisionRef.current
           ) {
-            nextRevision = result.parsedJson.highestRevision + 1;
-            benchRevisionRef.current = nextRevision;
-            result = await attemptPublishWithRevision(nextRevision);
+            benchRevisionRef.current = parsedJson.highestRevision;
           }
 
-          if (!isMountedRef.current) break;
-
-          if (result.localOversize) {
-            setTelemetrySyncStatus({
-              state: "error",
-              benchSessionId: spec.benchSessionId,
-              benchRevision: nextRevision,
-              reportId: null,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              serverReceivedAt: null,
-              errorCode: "payload_too_large_unclipped",
-              message: result.message
-            });
-            continue;
-          }
-
-          const { httpStatus, redirected, parsedJson } = result;
-          if ((httpStatus === 200 || httpStatus === 201) && parsedJson?.ok === true) {
-            const reportMeta = parsedJson.report || null;
-            const sessionMeta = parsedJson.liveSession || null;
-            setTelemetrySyncStatus({
-              state: "stored",
-              benchSessionId: spec.benchSessionId,
-              benchRevision: nextRevision,
-              reportId: reportMeta?.reportId || sessionMeta?.activeReportId || null,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              serverReceivedAt:
-                reportMeta?.serverReceivedAt ||
-                reportMeta?.storedAt ||
-                sessionMeta?.serverReceivedAt ||
-                null,
-              errorCode: null,
-              message: `Revision ${nextRevision} stored in process memory cache (volatile across server restarts or separate workers).`
-            });
-          } else {
-            const errCode =
-              parsedJson?.code ||
-              (redirected || httpStatus === 401 || httpStatus === 403
-                ? "auth_or_origin_rejected"
-                : `http_${httpStatus}`);
-            const errMsg =
-              parsedJson?.message ||
-              (redirected
-                ? "Telemetry POST was redirected (session authentication required)."
-                : `Telemetry POST returned HTTP ${httpStatus}.`);
-            setTelemetrySyncStatus({
-              state: "error",
-              benchSessionId: spec.benchSessionId,
-              benchRevision: nextRevision,
-              reportId: null,
-              productId: spec.productId,
-              clientStateChangedAt: spec.clientStateChangedAt,
-              serverReceivedAt: null,
-              errorCode: errCode,
-              message: errMsg
+          // Server outcome of clear is uncertain (network/5xx/409/non-JSON); do NOT
+          // claim guaranteed cleanup or auto-retry.
+          slotExposureStateRef.current = "exposed_unconfirmed";
+          const activeProd = activeProductIdRef.current;
+          if (activeProd) {
+            lastErrorByProductRef.current.set(activeProd, {
+              code: parsedJson?.code || `clear_http_${response.status}`,
+              message:
+                parsedJson?.message ||
+                `Previous Sidekick slot clear unconfirmed (HTTP ${response.status}); cleanup state is uncertain.`
             });
           }
-        } catch (networkErr) {
-          if (!isMountedRef.current) break;
-          setTelemetrySyncStatus({
-            state: "error",
-            benchSessionId: spec.benchSessionId,
-            benchRevision: nextRevision,
-            reportId: null,
-            productId: spec.productId,
-            clientStateChangedAt: spec.clientStateChangedAt,
-            serverReceivedAt: null,
-            errorCode: "network_error",
-            message: `Telemetry sync request failed: ${networkErr?.message || "Network error"}`
-          });
-        }
-      }
-    } finally {
-      isTelemetrySendInFlightRef.current = false;
-      if (latestQueuedSnapshotSpecRef.current && isMountedRef.current) {
-        drainTelemetryPublishQueue();
-      }
+          bumpSyncVersion();
+        })
+        .catch(() => {
+          if (useKeepalive || !isMountedRef.current) return;
+          if (
+            benchSessionIdRef.current !== targetSessionId ||
+            activeClearRequestTokenRef.current !== clearToken
+          ) {
+            return;
+          }
+          // Browser abort or network/timeout error does NOT prove server did not process or discard
+          slotExposureStateRef.current = "exposed_unconfirmed";
+          const activeProd = activeProductIdRef.current;
+          if (activeProd) {
+            lastErrorByProductRef.current.set(activeProd, {
+              code: timedOut ? "clear_timeout_uncertain" : "clear_network_uncertain",
+              message: timedOut
+                ? "Previous Sidekick slot clear timed out; server cleanup state is uncertain."
+                : "Previous Sidekick slot clear encountered a network/abort error; server cleanup state is uncertain."
+            });
+          }
+          bumpSyncVersion();
+        })
+        .finally(() => {
+          clearTimeout(timeoutId);
+          if (activeClearAbortControllerRef.current === controller) {
+            activeClearAbortControllerRef.current = null;
+          }
+        });
+    },
+    [abortInFlightSyncRequest, bumpSyncVersion]
+  );
+
+  // Track product transitions and real unmounts (safe under React 18 StrictMode replay)
+  const prevTrackedProductIdRef = useRef(activeProductId);
+  const prevTrackedSwitchingRef = useRef(Boolean(isSwitchingSelectedProduct));
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    const prevProd = prevTrackedProductIdRef.current;
+    const prevSwitching = prevTrackedSwitchingRef.current;
+    const currProd = activeProductId;
+    const currSwitching = Boolean(isSwitchingSelectedProduct);
+
+    const switchedProduct = Boolean(
+      (prevProd && currProd && prevProd !== currProd) ||
+        (!prevSwitching && currSwitching)
+    );
+
+    prevTrackedProductIdRef.current = currProd;
+    prevTrackedSwitchingRef.current = currSwitching;
+
+    if (
+      switchedProduct &&
+      slotExposureStateRef.current !== "never_dispatched" &&
+      slotExposureStateRef.current !== "cleared_confirmed"
+    ) {
+      dispatchSelectionClearRequest({ reason: "product_switch", useKeepalive: false });
     }
-  }, []);
 
+    return () => {
+      isMountedRef.current = false;
+      // Defer unmount check past microtask so React 18 StrictMode's immediate
+      // remount re-sets `isMountedRef.current = true` without sending a bogus clear.
+      queueMicrotask(() => {
+        if (
+          !isMountedRef.current &&
+          slotExposureStateRef.current !== "never_dispatched" &&
+          slotExposureStateRef.current !== "cleared_confirmed"
+        ) {
+          dispatchSelectionClearRequest({ reason: "unmount", useKeepalive: true });
+        }
+      });
+    };
+  }, [activeProductId, isSwitchingSelectedProduct, dispatchSelectionClearRequest]);
+
+  // Passive snapshot builder & dirty-fingerprint / edit-timestamp tracker.
+  // NEVER triggers field snapshot network requests automatically.
   useEffect(() => {
     if (isSwitchingSelectedProduct) {
       return;
@@ -1319,27 +1370,498 @@ export function useBenchV2LiveTelemetryPublisher({
     };
 
     const contentFingerprint = JSON.stringify(fingerprintObj);
-    if (contentFingerprint === lastEnqueuedFingerprintRef.current) {
+    const prevFingerprint = lastObservedFingerprintByProductRef.current.get(activeProductId);
+
+    if (contentFingerprint === prevFingerprint && latestSpecByProductRef.current.has(activeProductId)) {
       return;
     }
 
-    lastEnqueuedFingerprintRef.current = contentFingerprint;
-    const clientStateChangedAt = new Date().toISOString();
+    const editTimestampIso = new Date().toISOString();
+    lastObservedFingerprintByProductRef.current.set(activeProductId, contentFingerprint);
+    lastClientStateChangedAtByProductRef.current.set(activeProductId, editTimestampIso);
 
-    latestQueuedSnapshotSpecRef.current = {
+    latestSpecByProductRef.current.set(activeProductId, {
       benchSessionId: benchSessionIdRef.current,
       selectionState: "selected",
       productId: activeProductId,
       productTitle: activeProductHeadline,
       baselineLoadedAt,
-      clientStateChangedAt,
+      clientStateChangedAt: editTimestampIso,
       runIdentity: orderedEvents.runIdentity,
       runTimestamp: orderedEvents.runTimestamp,
-      snapshotBodyWithoutRevision
+      snapshotBodyWithoutRevision,
+      contentFingerprint
+    });
+
+    bumpSyncVersion();
+  }, [
+    isSwitchingSelectedProduct,
+    activeProductId,
+    activeProductHeadline,
+    activeProductPieceName,
+    activeProductTitle,
+    currentBaseline,
+    evaluatedDrawerGroups,
+    allEvaluatedRows,
+    totalVisibleFilteredRowCount,
+    stagedProposalRows,
+    validApprovedRows,
+    keepOriginalRows,
+    heldAiAlternativesCount,
+    activeProductMediaItems,
+    currentApprovalsMap,
+    currentKeepOriginalMap,
+    currentAiScanReport,
+    activeSaveReportForCurrentProduct,
+    currentRefChoicesRecord,
+    isCurrentRefChoicesBoundAndFresh,
+    stagedVisionCandidatesByProduct,
+    activeFilter,
+    openDrawersById,
+    isWriterBusy,
+    isAiScanBusy,
+    isRefChoicesBusy,
+    isBaselineReloading,
+    isPickerLoading,
+    hasBaselineErrors,
+    selectionError,
+    loadError,
+    clientPrevalidationBanner,
+    plainDrawerTitles,
+    bumpSyncVersion
+  ]);
+
+  const handleSyncForSidekick = useCallback(async () => {
+    if (isSyncInFlightRef.current) {
+      return;
+    }
+    if (
+      isSwitchingSelectedProductRef.current ||
+      isWriterBusy ||
+      isAiScanBusy ||
+      isRefChoicesBusy ||
+      isBaselineReloading
+    ) {
+      return;
+    }
+
+    const targetProductId = activeProductIdRef.current;
+    const targetSessionId = benchSessionIdRef.current;
+    if (!isExactProductGid(targetProductId) || typeof targetSessionId !== "string" || !targetSessionId.trim()) {
+      return;
+    }
+    if (!currentBaseline || currentBaseline.productId !== targetProductId) {
+      return;
+    }
+
+    const candidateSpec = latestSpecByProductRef.current.get(targetProductId);
+    if (!candidateSpec || candidateSpec.productId !== targetProductId) {
+      return;
+    }
+
+    // Freeze immutable click snapshot candidate
+    const sentFingerprint = candidateSpec.contentFingerprint;
+    const sentClientStateChangedAt =
+      lastClientStateChangedAtByProductRef.current.get(targetProductId) ||
+      candidateSpec.clientStateChangedAt;
+    const sentCapturedAt = buildClickCaptureIso(sentClientStateChangedAt);
+    const sentSnapshotBody = candidateSpec.snapshotBodyWithoutRevision;
+    const sentProductTitle = candidateSpec.productTitle;
+    const sentBaselineLoadedAt = candidateSpec.baselineLoadedAt;
+    const sentRunIdentity = candidateSpec.runIdentity;
+    const sentRunTimestamp = candidateSpec.runTimestamp;
+
+    generationTokenRef.current += 1;
+    const requestToken = generationTokenRef.current;
+    activeSyncRequestTokenRef.current = requestToken;
+    activeClearRequestTokenRef.current = null;
+    isSyncInFlightRef.current = true;
+
+    // Mark slot exposure BEFORE fetch() because a dispatched request can
+    // still reach/store on the server even if aborted later on the client.
+    slotExposureStateRef.current = "exposed_unconfirmed";
+    exposedProductIdRef.current = targetProductId;
+    lastErrorByProductRef.current.delete(targetProductId);
+
+    benchRevisionRef.current = Math.max(1, benchRevisionRef.current + 1);
+    let activeRevision = benchRevisionRef.current;
+
+    bumpSyncVersion();
+
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    activeSyncAbortControllerRef.current = controller;
+
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      if (controller) {
+        try {
+          controller.abort();
+        } catch {
+          // Ignore timeout abort
+        }
+      }
+    }, TELEMETRY_SYNC_TIMEOUT_MS);
+
+    const postOnce = async (revisionToSend) => {
+      const fullSnapshotObj = {
+        ...sentSnapshotBody,
+        benchSessionId: targetSessionId,
+        benchRevision: revisionToSend,
+        selectionState: "selected",
+        productId: targetProductId,
+        baselineLoadedAt: sentBaselineLoadedAt,
+        clientStateChangedAt: sentClientStateChangedAt
+      };
+
+      const fullText = JSON.stringify(fullSnapshotObj);
+      const fullTextCodeUnits = fullText.length;
+      const fullTextUtf8Bytes = measureUtf8BytesClient(fullText);
+
+      if (
+        fullTextCodeUnits > TELEMETRY_MAX_FULL_TEXT_CODE_UNITS ||
+        fullTextUtf8Bytes > TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES
+      ) {
+        return {
+          localOversize: true,
+          message: `Snapshot payload (${fullTextUtf8Bytes} UTF-8 bytes / ${fullTextCodeUnits} chars) exceeds cache limit (${TELEMETRY_MAX_FULL_TEXT_CODE_UNITS} chars / ${TELEMETRY_MAX_FULL_TEXT_UTF8_BYTES} bytes); refused to clip or truncate.`
+        };
+      }
+
+      const postEnvelope = {
+        packet: {
+          productId: targetProductId,
+          productTitle: sentProductTitle,
+          mode: TELEMETRY_LIVE_BENCH_MODE,
+          sectionKey: TELEMETRY_LIVE_BENCH_MODE,
+          sectionLabel: "LIVE BENCH FIELD STATE",
+          runIdentity: sentRunIdentity,
+          runTimestamp: sentRunTimestamp,
+          capturedAt: sentCapturedAt,
+          clientStateChangedAt: sentClientStateChangedAt,
+          benchSessionId: targetSessionId,
+          benchRevision: revisionToSend,
+          selectionState: "selected",
+          baselineLoadedAt: sentBaselineLoadedAt,
+          fullText
+        },
+        uiAudit: null,
+        liveState: {
+          mode: TELEMETRY_LIVE_BENCH_MODE,
+          benchSessionId: targetSessionId,
+          benchRevision: revisionToSend,
+          selectionState: "selected",
+          productId: targetProductId,
+          clientStateChangedAt: sentClientStateChangedAt,
+          baselineLoadedAt: sentBaselineLoadedAt
+        }
+      };
+
+      const serializedEnvelope = JSON.stringify(postEnvelope);
+      const envelopeBytes = measureUtf8BytesClient(serializedEnvelope);
+      if (envelopeBytes > TELEMETRY_MAX_POST_BODY_BYTES) {
+        return {
+          localOversize: true,
+          message: `POST body (${envelopeBytes} bytes) exceeds ${TELEMETRY_MAX_POST_BODY_BYTES}-byte endpoint limit; refused to clip.`
+        };
+      }
+
+      const response = await fetch(TELEMETRY_ENDPOINT_PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: serializedEnvelope,
+        ...(controller ? { signal: controller.signal } : {})
+      });
+
+      const contentType = response.headers.get("content-type") || "";
+      let parsedJson = null;
+      if (contentType.toLowerCase().includes("application/json")) {
+        try {
+          parsedJson = await response.json();
+        } catch {
+          parsedJson = null;
+        }
+      }
+
+      return {
+        localOversize: false,
+        httpStatus: response.status,
+        redirected: response.redirected,
+        parsedJson
+      };
     };
 
-    drainTelemetryPublishQueue();
-  });
+    const isStillCurrentRequest = () =>
+      Boolean(
+        isMountedRef.current &&
+          benchSessionIdRef.current === targetSessionId &&
+          activeProductIdRef.current === targetProductId &&
+          !isSwitchingSelectedProductRef.current &&
+          activeSyncRequestTokenRef.current === requestToken
+      );
 
-  return { telemetrySyncStatus };
+    try {
+      let attemptRes = await postOnce(activeRevision);
+
+      // At most ONE 409 stale_bench_revision reconciliation when this exact
+      // request is still the active un-superseded sync request.
+      if (
+        isStillCurrentRequest() &&
+        !attemptRes.localOversize &&
+        attemptRes.httpStatus === 409 &&
+        attemptRes.parsedJson?.code === "stale_bench_revision" &&
+        typeof attemptRes.parsedJson?.highestRevision === "number" &&
+        Number.isSafeInteger(attemptRes.parsedJson.highestRevision) &&
+        attemptRes.parsedJson.highestRevision >= activeRevision
+      ) {
+        activeRevision = attemptRes.parsedJson.highestRevision + 1;
+        benchRevisionRef.current = Math.max(benchRevisionRef.current, activeRevision);
+        attemptRes = await postOnce(activeRevision);
+      }
+
+      if (!isStillCurrentRequest()) {
+        return;
+      }
+
+      if (attemptRes.localOversize) {
+        slotExposureStateRef.current = "never_dispatched";
+        exposedProductIdRef.current = null;
+        lastErrorByProductRef.current.set(targetProductId, {
+          code: "payload_too_large_unclipped",
+          message: attemptRes.message
+        });
+        return;
+      }
+
+      const { httpStatus, redirected, parsedJson } = attemptRes;
+      const reportMeta = parsedJson?.report && typeof parsedJson.report === "object"
+        ? parsedJson.report
+        : null;
+      const sessionMeta = parsedJson?.liveSession && typeof parsedJson.liveSession === "object"
+        ? parsedJson.liveSession
+        : null;
+
+      const ackReportId =
+        typeof reportMeta?.reportId === "string" && reportMeta.reportId.trim()
+          ? reportMeta.reportId.trim()
+          : typeof sessionMeta?.activeReportId === "string" && sessionMeta.activeReportId.trim()
+            ? sessionMeta.activeReportId.trim()
+            : null;
+      const ackSessionId =
+        typeof reportMeta?.benchSessionId === "string"
+          ? reportMeta.benchSessionId.trim()
+          : typeof sessionMeta?.benchSessionId === "string"
+            ? sessionMeta.benchSessionId.trim()
+            : null;
+      const ackProductId =
+        reportMeta && Object.prototype.hasOwnProperty.call(reportMeta, "productId")
+          ? reportMeta.productId
+          : null;
+      const ackRevision =
+        typeof reportMeta?.benchRevision === "number"
+          ? reportMeta.benchRevision
+          : typeof sessionMeta?.benchRevision === "number"
+            ? sessionMeta.benchRevision
+            : null;
+
+      const isValidAckForSentRequest = Boolean(
+        (httpStatus === 200 || httpStatus === 201) &&
+          parsedJson?.ok === true &&
+          parsedJson?.status === "stored" &&
+          ackReportId &&
+          ackSessionId === targetSessionId &&
+          ackProductId === targetProductId &&
+          ackRevision === activeRevision
+      );
+
+      if (isValidAckForSentRequest) {
+        slotExposureStateRef.current = "acknowledged";
+        exposedProductIdRef.current = targetProductId;
+        benchRevisionRef.current = Math.max(benchRevisionRef.current, activeRevision);
+
+        lastAckFingerprintByProductRef.current.set(targetProductId, sentFingerprint);
+        lastAckMetaByProductRef.current.set(targetProductId, {
+          benchSessionId: targetSessionId,
+          benchRevision: activeRevision,
+          reportId: ackReportId,
+          productId: targetProductId,
+          clientStateChangedAt:
+            typeof reportMeta?.clientStateChangedAt === "string" && reportMeta.clientStateChangedAt.trim()
+              ? reportMeta.clientStateChangedAt.trim()
+              : sentClientStateChangedAt,
+          capturedAt:
+            typeof reportMeta?.capturedAt === "string" && reportMeta.capturedAt.trim()
+              ? reportMeta.capturedAt.trim()
+              : sentCapturedAt,
+          serverReceivedAt:
+            typeof reportMeta?.serverReceivedAt === "string" && reportMeta.serverReceivedAt.trim()
+              ? reportMeta.serverReceivedAt.trim()
+              : typeof reportMeta?.storedAt === "string" && reportMeta.storedAt.trim()
+                ? reportMeta.storedAt.trim()
+                : null,
+          expiresAt:
+            typeof reportMeta?.expiresAt === "string" && reportMeta.expiresAt.trim()
+              ? reportMeta.expiresAt.trim()
+              : typeof sessionMeta?.expiresAt === "string" && sessionMeta.expiresAt.trim()
+                ? sessionMeta.expiresAt.trim()
+                : null
+        });
+        lastErrorByProductRef.current.delete(targetProductId);
+      } else {
+        if (
+          typeof parsedJson?.highestRevision === "number" &&
+          Number.isSafeInteger(parsedJson.highestRevision) &&
+          parsedJson.highestRevision > benchRevisionRef.current
+        ) {
+          benchRevisionRef.current = parsedJson.highestRevision;
+        }
+        const errCode =
+          parsedJson?.code ||
+          (redirected || httpStatus === 401 || httpStatus === 403
+            ? "auth_or_origin_rejected"
+            : `http_${httpStatus}`);
+        const errMsg =
+          parsedJson?.message ||
+          (redirected
+            ? "Telemetry POST was redirected (session authentication required)."
+            : `Telemetry POST returned HTTP ${httpStatus}.`);
+        lastErrorByProductRef.current.set(targetProductId, {
+          code: errCode,
+          message: errMsg
+        });
+      }
+    } catch (networkErr) {
+      if (!isStillCurrentRequest()) {
+        return;
+      }
+      const errCode = timedOut ? "request_timeout" : "network_error";
+      const errMsg = timedOut
+        ? `Sidekick sync timed out after ${TELEMETRY_SYNC_TIMEOUT_MS}ms; server cache state is uncertain.`
+        : `Sidekick sync failed (${networkErr?.message || "Network error"}); server cache state is uncertain.`;
+      lastErrorByProductRef.current.set(targetProductId, {
+        code: errCode,
+        message: errMsg
+      });
+    } finally {
+      clearTimeout(timeoutId);
+      if (activeSyncAbortControllerRef.current === controller) {
+        activeSyncAbortControllerRef.current = null;
+      }
+      if (activeSyncRequestTokenRef.current === requestToken) {
+        activeSyncRequestTokenRef.current = null;
+        isSyncInFlightRef.current = false;
+      }
+      bumpSyncVersion();
+    }
+  }, [
+    currentBaseline,
+    isWriterBusy,
+    isAiScanBusy,
+    isRefChoicesBusy,
+    isBaselineReloading,
+    bumpSyncVersion
+  ]);
+
+  // Expose `syncVersion` in closure usage so `telemetrySyncStatus` recomputes cleanly
+  void syncVersion;
+
+  const isCurrentProductReadyToSync = Boolean(
+    !isSwitchingSelectedProduct &&
+      isExactProductGid(activeProductId) &&
+      currentBaseline &&
+      currentBaseline.productId === activeProductId &&
+      latestSpecByProductRef.current.has(activeProductId)
+  );
+
+  const currentObservedFingerprint = isExactProductGid(activeProductId)
+    ? lastObservedFingerprintByProductRef.current.get(activeProductId) || null
+    : null;
+  const currentAckFingerprint = isExactProductGid(activeProductId)
+    ? lastAckFingerprintByProductRef.current.get(activeProductId) || null
+    : null;
+  const currentAckMeta = isExactProductGid(activeProductId)
+    ? lastAckMetaByProductRef.current.get(activeProductId) || null
+    : null;
+  const currentErrorMeta = isExactProductGid(activeProductId)
+    ? lastErrorByProductRef.current.get(activeProductId) || null
+    : null;
+  const currentEditTimestamp = isExactProductGid(activeProductId)
+    ? lastClientStateChangedAtByProductRef.current.get(activeProductId) || null
+    : null;
+
+  const hasUnsyncedChanges = Boolean(
+    currentObservedFingerprint &&
+      currentObservedFingerprint !== currentAckFingerprint
+  );
+
+  // Drawer-facing `benchRevision` reflects ONLY the last acknowledged revision
+  // for the current product, or 0 when not currently synced for this product.
+  const currentProductAckRevision =
+    currentAckMeta &&
+    currentAckMeta.productId === activeProductId &&
+    currentAckMeta.benchSessionId === benchSessionIdRef.current &&
+    typeof currentAckMeta.benchRevision === "number" &&
+    currentAckMeta.benchRevision > 0
+      ? currentAckMeta.benchRevision
+      : 0;
+
+  let derivedState = "not_synced";
+  let derivedMessage =
+    "Not synced to Sidekick yet. Click Sync for Sidekick when ready.";
+
+  if (isSyncInFlightRef.current) {
+    derivedState = "syncing";
+    derivedMessage = "Syncing current bench snapshot to Sidekick...";
+  } else if (currentErrorMeta) {
+    derivedState = "error";
+    derivedMessage = currentErrorMeta.message;
+  } else if (hasUnsyncedChanges) {
+    derivedState = "unsynced";
+    derivedMessage = currentAckMeta
+      ? `Unsynced local edits since acknowledged rev ${currentAckMeta.benchRevision}. Click Sync for Sidekick to publish newer edits.`
+      : "Unsynced local bench state. Click Sync for Sidekick to publish snapshot.";
+  } else if (currentAckMeta && currentObservedFingerprint === currentAckFingerprint) {
+    derivedState = "stored";
+    derivedMessage = `Revision ${currentAckMeta.benchRevision} stored in process memory cache (expires ${currentAckMeta.expiresAt || "after 30m from capture"}; volatile across server restarts or separate workers).`;
+  } else if (!isCurrentProductReadyToSync) {
+    derivedState = "not_synced";
+    derivedMessage = isSwitchingSelectedProduct
+      ? "Switching product..."
+      : "Product baseline not ready for Sidekick sync.";
+  }
+
+  const telemetrySyncStatus = {
+    state: derivedState,
+    benchSessionId: benchSessionIdRef.current,
+    benchRevision: currentProductAckRevision,
+    acknowledgedRevision: currentProductAckRevision,
+    hasUnsyncedChanges,
+    isSyncInFlight: Boolean(isSyncInFlightRef.current),
+    canSyncCurrentProduct: Boolean(
+      isCurrentProductReadyToSync &&
+        !isSyncInFlightRef.current &&
+        !isWriterBusy &&
+        !isAiScanBusy &&
+        !isRefChoicesBusy &&
+        !isBaselineReloading
+    ),
+    slotExposureState: slotExposureStateRef.current,
+    reportId: currentAckMeta?.reportId || null,
+    productId: currentAckMeta?.productId || activeProductId || null,
+    clientStateChangedAt: currentEditTimestamp || currentAckMeta?.clientStateChangedAt || null,
+    capturedAt: currentAckMeta?.capturedAt || null,
+    serverReceivedAt: currentAckMeta?.serverReceivedAt || null,
+    expiresAt: currentAckMeta?.expiresAt || null,
+    errorCode: currentErrorMeta?.code || null,
+    message: derivedMessage
+  };
+
+  return {
+    telemetrySyncStatus,
+    handleSyncForSidekick
+  };
 }

@@ -260,6 +260,161 @@ export function resolveBenchV2ForegroundTaskStatus({
   return null;
 }
 
+function parseIsoMsSafe(isoStr) {
+  if (typeof isoStr !== "string" || !isoStr.trim()) return null;
+  const ms = Date.parse(isoStr.trim());
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function deriveSidekickSyncPresentation({
+  syncStatus,
+  isCurrentBaselineBoundToActiveProduct,
+  isSwitchingSelectedProduct,
+  isBaselineReloading,
+  isWriterBusy,
+  isJsonImportBusy,
+  isAiScanBusy,
+  isRefChoicesBusy,
+  hasSyncCallback
+}) {
+  const safeSync = syncStatus && typeof syncStatus === "object" ? syncStatus : {};
+  const rawState =
+    typeof safeSync.state === "string" && safeSync.state.trim()
+      ? safeSync.state.trim()
+      : "not_synced";
+  const hasUnsyncedChanges = Boolean(safeSync.hasUnsyncedChanges);
+  const isSyncInFlight = Boolean(
+    safeSync.isSyncInFlight || rawState === "syncing"
+  );
+  const ackRev =
+    typeof safeSync.acknowledgedRevision === "number" &&
+    safeSync.acknowledgedRevision > 0
+      ? safeSync.acknowledgedRevision
+      : typeof safeSync.benchRevision === "number" &&
+          safeSync.benchRevision > 0
+        ? safeSync.benchRevision
+        : null;
+
+  const expiresAtIso =
+    typeof safeSync.expiresAt === "string" && safeSync.expiresAt.trim()
+      ? safeSync.expiresAt.trim()
+      : null;
+  const expiresAtMs = parseIsoMsSafe(expiresAtIso);
+  const isAckExpiredByServerExpiry = Boolean(
+    !hasUnsyncedChanges &&
+      rawState === "stored" &&
+      expiresAtMs !== null &&
+      Date.now() >= expiresAtMs
+  );
+
+  const errorCode =
+    typeof safeSync.errorCode === "string" && safeSync.errorCode.trim()
+      ? safeSync.errorCode.trim()
+      : null;
+  const isClearUncertaintyNotice = Boolean(
+    !isSyncInFlight &&
+      errorCode &&
+      (errorCode === "clearing_previous_slot" ||
+        errorCode.startsWith("clear_"))
+  );
+
+  let badgeLabel = "Not Synced Yet";
+  let badgeTone = "warning";
+  let badgeBg = "#fffbeb";
+  let badgeBorder = "#d97706";
+  let badgeColor = "#78350f";
+
+  if (isSyncInFlight) {
+    badgeLabel = "Syncing...";
+    badgeTone = "info";
+    badgeBg = "#eff6ff";
+    badgeBorder = "#1d4ed8";
+    badgeColor = "#1e3a8a";
+  } else if (hasUnsyncedChanges) {
+    badgeLabel =
+      ackRev !== null
+        ? `Unsynced Local Edits (Last Synced: rev ${ackRev})`
+        : "Unsynced Local Edits";
+    badgeTone = "warning";
+    badgeBg = "#fffbeb";
+    badgeBorder = "#b45309";
+    badgeColor = "#78350f";
+  } else if (isAckExpiredByServerExpiry) {
+    badgeLabel =
+      ackRev !== null
+        ? `Cache Expired (rev ${ackRev})`
+        : "Cache Expired";
+    badgeTone = "warning";
+    badgeBg = "#fffbeb";
+    badgeBorder = "#b45309";
+    badgeColor = "#78350f";
+  } else if (rawState === "stored" && ackRev !== null) {
+    badgeLabel = `Synced (rev ${ackRev})`;
+    badgeTone = "success";
+    badgeBg = "#f0fdf4";
+    badgeBorder = "#15803d";
+    badgeColor = "#166534";
+  } else if (rawState === "error") {
+    badgeLabel = isClearUncertaintyNotice
+      ? "Previous Slot Clear Unconfirmed"
+      : errorCode
+        ? `Sync Failed (${errorCode})`
+        : "Sync Failed";
+    badgeTone = "critical";
+    badgeBg = "#fef2f2";
+    badgeBorder = "#b91c1c";
+    badgeColor = "#7f1d1d";
+  } else if (!isCurrentBaselineBoundToActiveProduct) {
+    badgeLabel = isSwitchingSelectedProduct
+      ? "Switching Product..."
+      : "Baseline Not Ready";
+    badgeTone = "info";
+    badgeBg = "#f1f5f9";
+    badgeBorder = "#64748b";
+    badgeColor = "#334155";
+  }
+
+  const canSyncFromProp =
+    typeof safeSync.canSyncCurrentProduct === "boolean"
+      ? safeSync.canSyncCurrentProduct
+      : isCurrentBaselineBoundToActiveProduct;
+
+  const isSyncButtonDisabled = Boolean(
+    !hasSyncCallback ||
+      isSyncInFlight ||
+      isSwitchingSelectedProduct ||
+      isBaselineReloading ||
+      isWriterBusy ||
+      isJsonImportBusy ||
+      isAiScanBusy ||
+      isRefChoicesBusy ||
+      !isCurrentBaselineBoundToActiveProduct ||
+      !canSyncFromProp
+  );
+
+  const summaryText =
+    typeof safeSync.message === "string" && safeSync.message.trim()
+      ? safeSync.message.trim()
+      : badgeLabel;
+
+  return {
+    rawState,
+    hasUnsyncedChanges,
+    isSyncInFlight,
+    ackRev,
+    expiresAtIso,
+    isAckExpiredByServerExpiry,
+    isClearUncertaintyNotice,
+    badgeLabel,
+    badgeTone,
+    badgeBg,
+    badgeBorder,
+    badgeColor,
+    isSyncButtonDisabled,
+    summaryText
+  };
+}
+
 export function BenchV2HeaderAndBannersView({
   activeProductId,
   activeProductTitle,
@@ -298,6 +453,7 @@ export function BenchV2HeaderAndBannersView({
   activeFilter,
   setActiveFilter,
   telemetrySyncStatus,
+  handleSyncForSidekick = null,
   hasBaselineErrors,
   selectionError,
   pickerPageError,
@@ -383,7 +539,7 @@ export function BenchV2HeaderAndBannersView({
   );
 
   // Foreground task status strictly reflects active in-flight foreground operations
-  // (never background telemetry and never missing/mismatched baseline alone).
+  // (never Sidekick sync and never missing/mismatched baseline alone).
   const activeForegroundTask = resolveBenchV2ForegroundTaskStatus({
     isWriterBusy: Boolean(isWriterBusy),
     isSwitchingSelectedProduct: Boolean(isSwitchingSelectedProduct),
@@ -393,6 +549,19 @@ export function BenchV2HeaderAndBannersView({
     isJsonImportBusy: Boolean(isJsonImportBusy),
     isPickerLoading: Boolean(isPickerLoading),
     activeProductTitle
+  });
+
+  const hasSyncCallback = typeof handleSyncForSidekick === "function";
+  const syncView = deriveSidekickSyncPresentation({
+    syncStatus: telemetrySyncStatus,
+    isCurrentBaselineBoundToActiveProduct,
+    isSwitchingSelectedProduct: Boolean(isSwitchingSelectedProduct),
+    isBaselineReloading: Boolean(isBaselineReloading),
+    isWriterBusy: Boolean(isWriterBusy),
+    isJsonImportBusy: Boolean(isJsonImportBusy),
+    isAiScanBusy: Boolean(isAiScanBusy),
+    isRefChoicesBusy: Boolean(isRefChoicesBusy),
+    hasSyncCallback
   });
 
   const isThumbnailStripActivelyLoading = Boolean(
@@ -536,6 +705,78 @@ export function BenchV2HeaderAndBannersView({
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center" }}>
+            <div
+              style={{
+                display: "inline-flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "8px",
+                padding: "4px 8px",
+                backgroundColor: "#f8fafc",
+                border: "1px solid #cbd5e1",
+                borderRadius: "10px"
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (syncView.isSyncButtonDisabled || !hasSyncCallback) return;
+                  handleSyncForSidekick();
+                }}
+                disabled={syncView.isSyncButtonDisabled}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "8px 14px",
+                  fontSize: "15px",
+                  fontWeight: 700,
+                  backgroundColor: syncView.isSyncInFlight
+                    ? "#1e3a8a"
+                    : syncView.isSyncButtonDisabled
+                      ? "#cbd5e1"
+                      : "#ffffff",
+                  color: syncView.isSyncInFlight
+                    ? "#ffffff"
+                    : syncView.isSyncButtonDisabled
+                      ? "#334155"
+                      : "#0f172a",
+                  border: "2px solid #1d4ed8",
+                  borderRadius: "8px",
+                  cursor: syncView.isSyncButtonDisabled ? "not-allowed" : "pointer"
+                }}
+              >
+                {syncView.isSyncInFlight && (
+                  <BenchV2TaskSpinner
+                    size={18}
+                    trackColor="#93c5fd"
+                    indicatorColor="#ffffff"
+                    marginRight="6px"
+                  />
+                )}
+                {syncView.isSyncInFlight ? "Syncing..." : "Sync for Sidekick"}
+              </button>
+
+              <span
+                role="status"
+                aria-live="polite"
+                data-tone={syncView.badgeTone}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "4px 10px",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  backgroundColor: syncView.badgeBg,
+                  color: syncView.badgeColor,
+                  border: `1px solid ${syncView.badgeBorder}`,
+                  borderRadius: "999px"
+                }}
+              >
+                {syncView.badgeLabel}
+              </span>
+            </div>
+
             <button
               type="button"
               onClick={handleExplicitAiScanProduct}
@@ -1313,7 +1554,7 @@ export function BenchV2HeaderAndBannersView({
                                   color: "#1d4ed8"
                                 }}
                               >
-                                • {stagedCountForItem} draft
+- {stagedCountForItem} draft
                                 {stagedCountForItem === 1 ? "" : "s"}
                                 {approvedCountForItem > 0
                                   ? ` (${approvedCountForItem} approved)`
@@ -1544,36 +1785,42 @@ export function BenchV2HeaderAndBannersView({
             </div>
             <div style={{ marginTop: "4px", paddingTop: "4px", borderTop: "1px solid #e2e8f0" }}>
               <strong>Sidekick Live Snapshot Sync:</strong>{" "}
-              {telemetrySyncStatus.state === "stored"
-                ? `Stored (rev ${telemetrySyncStatus.benchRevision})`
-                : telemetrySyncStatus.state === "syncing"
-                  ? `Syncing (rev ${telemetrySyncStatus.benchRevision})...`
-                  : telemetrySyncStatus.state === "error"
-                    ? `Error (${telemetrySyncStatus.errorCode || "failed"})`
-                    : "Idle"}{" "}
-              | <strong>Session:</strong> <code>{telemetrySyncStatus.benchSessionId}</code>
-              {telemetrySyncStatus.reportId && (
+              {syncView.badgeLabel} | <strong>Session:</strong>{" "}
+              <code>{telemetrySyncStatus?.benchSessionId || "Not available"}</code>
+              {telemetrySyncStatus?.reportId && (
                 <>
                   {" "}
                   | <strong>Report ID:</strong> <code>{telemetrySyncStatus.reportId}</code>
                 </>
               )}
-              {telemetrySyncStatus.clientStateChangedAt && (
+              {telemetrySyncStatus?.clientStateChangedAt && (
                 <>
                   {" "}
                   | <strong>State Changed At:</strong>{" "}
                   {telemetrySyncStatus.clientStateChangedAt}
                 </>
               )}
-              {telemetrySyncStatus.serverReceivedAt && (
+              {telemetrySyncStatus?.capturedAt && (
+                <>
+                  {" "}
+                  | <strong>Captured At:</strong> {telemetrySyncStatus.capturedAt}
+                </>
+              )}
+              {telemetrySyncStatus?.serverReceivedAt && (
                 <>
                   {" "}
                   | <strong>Server Received At:</strong>{" "}
                   {telemetrySyncStatus.serverReceivedAt}
                 </>
               )}
+              {syncView.expiresAtIso && (
+                <>
+                  {" "}
+                  | <strong>Expires At:</strong> {syncView.expiresAtIso}
+                </>
+              )}
               <div style={{ fontSize: "13px", color: "#475569", marginTop: "2px" }}>
-                {telemetrySyncStatus.message}
+                {syncView.summaryText}
               </div>
             </div>
           </div>

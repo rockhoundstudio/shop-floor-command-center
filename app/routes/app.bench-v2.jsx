@@ -1644,9 +1644,9 @@ export default function BenchV2Route() {
   // ==========================================================================
   // SIDEKICK LIVE BENCH SNAPSHOT BUILDER & SINGLE-FLIGHT PUBLISHER
   // ==========================================================================
-  const { telemetrySyncStatus } = useBenchV2LiveTelemetryPublisher({
+  const { telemetrySyncStatus, handleSyncForSidekick } = useBenchV2LiveTelemetryPublisher({
     benchSessionId: benchSessionIdRef.current,
-    isSwitchingSelectedProduct,
+    isSwitchingSelectedProduct: isForegroundProductSwitchLoading,
     activeProductId,
     activeProductHeadline,
     activeProductPieceName,
@@ -1746,6 +1746,7 @@ export default function BenchV2Route() {
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
           telemetrySyncStatus={telemetrySyncStatus}
+          handleSyncForSidekick={handleSyncForSidekick}
           hasBaselineErrors={hasBaselineErrors}
           selectionError={loaderData?.selectionError || null}
           pickerPageError={pickerPageState?.error || null}
