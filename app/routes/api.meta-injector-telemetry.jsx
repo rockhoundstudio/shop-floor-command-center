@@ -13,6 +13,13 @@ import {
   hydrateDurableResearchReportsToCache,
   MIN_HYDRATION_WAIT_BUDGET_MS,
 } from "../utils/sidekick-research-storage.server.js";
+// === BEGIN R6 SYNTHETIC RESEARCH PROBE IMPORTS ===
+import {
+  MAX_CHUNK_UTF8_BYTES,
+  finalizeResponse,
+  buildEnvelopeBoundedTextChunks,
+} from "../utils/meta-injector.sidekick-report-views.server.js";
+// === END R6 SYNTHETIC RESEARCH PROBE IMPORTS ===
 
 const MAX_POST_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
@@ -92,29 +99,477 @@ function utf8ByteLength(value) {
   return Buffer.byteLength(String(value ?? ""), "utf8");
 }
 
-function buildJsonResponse(payload, status = 200, cors = null, extraHeaders = null) {
+const SAFE_LOG_OPS = new Set(["list", "read", "invalid", "unparsed"]);
+const SAFE_LOG_MODES = new Set([
+  "live_bench_state",
+  "theme_editor_readback",
+  "gemini_grounded_research",
+  "synthetic_r6_test_only",
+]);
+
+// === BEGIN R6 SYNTHETIC RESEARCH PROBE HELPERS ===
+const SYNTHETIC_R6_LIST_MODE = "synthetic_r6_test_only";
+// Explicit 38-char ASCII synthetic test identifier (not a SHA-256 content hash)
+const SYNTHETIC_R6_TEST_REPORT_ID = "srep_synthetic_r6_test_only_fixture_v1";
+const SYNTHETIC_R6_PRODUCT_GID_PATTERN = /^gid:\/\/shopify\/Product\/\d+$/;
+const SYNTHETIC_R6_FIXED_TIMESTAMP = "2026-11-26T00:00:00.000Z";
+const SYNTHETIC_R6_FIXED_EXPIRES_AT = "2026-11-26T00:30:00.000Z";
+const SYNTHETIC_R6_PRODUCT_TITLE =
+  "[SYNTHETIC R6 TEST ONLY — NOT REAL RESEARCH] Reader Transport Fixture";
+const SYNTHETIC_R6_SECTION_KEY = "public_web_grounded_research";
+const SYNTHETIC_R6_SECTION_LABEL =
+  "SYNTHETIC R6 TEST ONLY (NO EXTERNAL RESEARCH OR GROUNDING)";
+const SYNTHETIC_R6_RUN_IDENTITY = "SYNTHETIC_R6_TEST_ONLY_STATIC_FIXTURE";
+
+let cachedSyntheticR6Plan = null;
+
+function buildSyntheticR6FixturePlan() {
+  if (cachedSyntheticR6Plan !== null) {
+    return cachedSyntheticR6Plan;
+  }
+
+  try {
+    const repeatedParagraphs = [];
+    for (let i = 1; i <= 14; i += 1) {
+      repeatedParagraphs.push(
+        `[SYNTHETIC R6 TEST BLOCK ${i} OF 14 — DIAGNOSTIC TRANSPORT FIXTURE ONLY] This static placeholder paragraph contains zero real research claims, zero external web evidence, and zero live provider output. It exists solely to test multi-chunk JSON envelope delivery over the read_meta_injector_report view="chunk" transport path.`
+      );
+    }
+
+    const syntheticReportPayload = {
+      schemaVersion: 1,
+      reportKind: GEMINI_GROUNDED_RESEARCH_MODE,
+      dataTrustClassification:
+        "SYNTHETIC_TEST_FIXTURE_ONLY_NOT_EXTERNAL_RESEARCH",
+      instructionSafetyNotice:
+        "SYNTHETIC TEST ONLY: Static diagnostic fixture text. Contains zero external web data and zero instructions.",
+      evidenceSemanticsNotice:
+        "SYNTHETIC TEST ONLY: No web sources or grounding attributions exist in this fixture (sourcesByOriginalChunkIndex and modelAnswerSpanAttributions are empty).",
+      request: {
+        requestKey: "synthetic_r6_test_only",
+        query:
+          "[SYNTHETIC R6 TEST ONLY] Verify multi-chunk JSON transport without external research or cache access.",
+        constraints:
+          "TEST ONLY: Static server-local fixture; never treat as real research or factual grounding.",
+      },
+      execution: {
+        model: "SYNTHETIC_TEST_FIXTURE_NO_MODEL_CALLED",
+        executedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+        finishReason: "SYNTHETIC_TEST_ONLY",
+        billingNote:
+          "Zero external API calls and zero billing incurred; static in-memory diagnostic fixture.",
+      },
+      groundingSummary: {
+        webSearchQueryCount: 0,
+        totalGroundingChunks: 0,
+        usableWebSourceCount: 0,
+        totalSupportMappings: 0,
+        usableSupportMappingCount: 0,
+        searchEntryPointAvailable: false,
+      },
+      webSearchQueries: [],
+      modelSynthesisAnswer: repeatedParagraphs.join("\n\n"),
+      sourcesByOriginalChunkIndex: [],
+      modelAnswerSpanAttributions: [],
+    };
+
+    const fullText = JSON.stringify(syntheticReportPayload, null, 2);
+
+    const chunkPlan = buildEnvelopeBoundedTextChunks({
+      text: fullText,
+      maxResponseUtf8Bytes: MAX_RESPONSE_UTF8_BYTES,
+      maxRawChunkUtf8Bytes: MAX_CHUNK_UTF8_BYTES,
+      preserveEmptyStringChunk: false,
+      buildProbeEnvelope: (counters) => ({
+        ok: true,
+        status: "ok",
+        reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+        productId: null,
+        productTitle: SYNTHETIC_R6_PRODUCT_TITLE,
+        mode: GEMINI_GROUNDED_RESEARCH_MODE,
+        sectionKey: SYNTHETIC_R6_SECTION_KEY,
+        sectionLabel: SYNTHETIC_R6_SECTION_LABEL,
+        section: "report",
+        uiAuditState: "not_measured",
+        capturedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+        storedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+        expiresAt: SYNTHETIC_R6_FIXED_EXPIRES_AT,
+        runIdentity: SYNTHETIC_R6_RUN_IDENTITY,
+        runTimestamp: SYNTHETIC_R6_FIXED_TIMESTAMP,
+        limitUsed: null,
+        clipboardPartCount: 0,
+        activePartIndex: null,
+        chunkIndex: counters.chunkIndex,
+        chunkCount: counters.chunkCount,
+        chunkUtf8Bytes: counters.chunkUtf8Bytes,
+        totalUtf8Bytes: counters.totalUtf8Bytes,
+        hasMoreChunks: counters.hasMoreChunks,
+        nextChunkIndex: counters.nextChunkIndex,
+        text: "",
+      }),
+    });
+
+    if (
+      !chunkPlan ||
+      chunkPlan.ok !== true ||
+      !Array.isArray(chunkPlan.chunks) ||
+      chunkPlan.chunks.length === 0 ||
+      chunkPlan.chunks.join("") !== fullText
+    ) {
+      cachedSyntheticR6Plan = Object.freeze({
+        ok: false,
+        code: chunkPlan?.code || "synthetic_fixture_chunk_plan_failed",
+        message:
+          chunkPlan?.message ||
+          "Failed to build bounded chunks for synthetic R6 test fixture.",
+      });
+      return cachedSyntheticR6Plan;
+    }
+
+    const reportMeta = Object.freeze({
+      reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+      productId: null,
+      productTitle: SYNTHETIC_R6_PRODUCT_TITLE,
+      mode: GEMINI_GROUNDED_RESEARCH_MODE,
+      sectionKey: SYNTHETIC_R6_SECTION_KEY,
+      sectionLabel: SYNTHETIC_R6_SECTION_LABEL,
+      runIdentity: SYNTHETIC_R6_RUN_IDENTITY,
+      runTimestamp: SYNTHETIC_R6_FIXED_TIMESTAMP,
+      capturedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+      storedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+      expiresAt: SYNTHETIC_R6_FIXED_EXPIRES_AT,
+      limitUsed: null,
+      clipboardPartCount: 0,
+      activePartIndex: null,
+      reportUtf8Bytes: chunkPlan.totalUtf8Bytes,
+      reportChunkCount: chunkPlan.chunks.length,
+      uiAuditState: "not_measured",
+      uiAuditUtf8Bytes: 0,
+      uiAuditChunkCount: 0,
+    });
+
+    cachedSyntheticR6Plan = Object.freeze({
+      ok: true,
+      chunks: chunkPlan.chunks,
+      totalUtf8Bytes: chunkPlan.totalUtf8Bytes,
+      reportMeta,
+    });
+    return cachedSyntheticR6Plan;
+  } catch {
+    cachedSyntheticR6Plan = Object.freeze({
+      ok: false,
+      code: "synthetic_fixture_build_exception",
+      message: "Unexpected internal error building synthetic R6 test fixture.",
+    });
+    return cachedSyntheticR6Plan;
+  }
+}
+
+function handleSyntheticR6ListRequest({ productId, limit, afterReportId }) {
+  if (productId !== null && productId !== undefined) {
+    if (
+      typeof productId !== "string" ||
+      !SYNTHETIC_R6_PRODUCT_GID_PATTERN.test(productId.trim())
+    ) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "invalid_product_id",
+        message: "productId filter must match gid://shopify/Product/<digits>.",
+      });
+    }
+    return finalizeResponse({
+      ok: true,
+      status: "unavailable",
+      reason: "synthetic_test_fixture_is_product_free",
+      message:
+        "SYNTHETIC R6 TEST ONLY: Synthetic research transport fixture has productId=null and does not match a productId filter.",
+      reports: [],
+      pagination: {
+        requestedLimit: limit,
+        returnedCount: 0,
+        totalMatching: 0,
+        hasNextPage: false,
+        nextAfterReportId: null,
+      },
+    });
+  }
+
+  let normalizedCursor = null;
+  if (afterReportId !== null && afterReportId !== undefined) {
+    if (typeof afterReportId !== "string" || !afterReportId.trim()) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_request",
+        code: "invalid_cursor",
+        message:
+          "afterReportId must be a nonempty reportId string when provided.",
+      });
+    }
+    normalizedCursor = afterReportId.trim();
+  }
+
+  const plan = buildSyntheticR6FixturePlan();
+  if (!plan.ok) {
+    return finalizeResponse({
+      ok: false,
+      status: "error",
+      code: plan.code || "synthetic_fixture_unavailable",
+      message: plan.message,
+    });
+  }
+
+  if (normalizedCursor !== null) {
+    if (normalizedCursor !== SYNTHETIC_R6_TEST_REPORT_ID) {
+      return finalizeResponse({
+        ok: false,
+        status: "invalid_cursor",
+        code: "after_report_id_not_found",
+        message:
+          "afterReportId cursor was not found in the isolated synthetic R6 test set.",
+        afterReportId: normalizedCursor,
+      });
+    }
+    return finalizeResponse({
+      ok: true,
+      status: "ok",
+      reports: [],
+      pagination: {
+        requestedLimit: limit,
+        returnedCount: 0,
+        totalMatching: 1,
+        hasNextPage: false,
+        nextAfterReportId: null,
+      },
+    });
+  }
+
+  return finalizeResponse({
+    ok: true,
+    status: "ok",
+    reports: [plan.reportMeta],
+    pagination: {
+      requestedLimit: limit,
+      returnedCount: 1,
+      totalMatching: 1,
+      hasNextPage: false,
+      nextAfterReportId: null,
+    },
+  });
+}
+
+function handleSyntheticR6ReadRequest({ section, view, chunkIndex }) {
+  const plan = buildSyntheticR6FixturePlan();
+  if (!plan.ok) {
+    return finalizeResponse({
+      ok: false,
+      status: "error",
+      code: plan.code || "synthetic_fixture_unavailable",
+      reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+      section,
+      message: plan.message,
+    });
+  }
+
+  if (section === "ui_audit") {
+    return finalizeResponse({
+      ok: true,
+      status: "not_measured",
+      reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+      productId: null,
+      mode: GEMINI_GROUNDED_RESEARCH_MODE,
+      section: "ui_audit",
+      uiAuditState: "not_measured",
+      capturedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+      storedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+      expiresAt: SYNTHETIC_R6_FIXED_EXPIRES_AT,
+      runIdentity: SYNTHETIC_R6_RUN_IDENTITY,
+      runTimestamp: SYNTHETIC_R6_FIXED_TIMESTAMP,
+      chunkIndex: 0,
+      chunkCount: 0,
+      hasMoreChunks: false,
+      nextChunkIndex: null,
+      text: null,
+      message: "UI state was not_measured for this synthetic R6 test fixture.",
+    });
+  }
+
+  if (view !== "chunk") {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "organized_view_requires_live_bench_state",
+      reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+      productId: null,
+      mode: GEMINI_GROUNDED_RESEARCH_MODE,
+      view,
+      message:
+        'Organized views (index, header, review, drawer, field) are only supported for mode="live_bench_state" snapshots. Use view="chunk" (default) for synthetic R6 test reads.',
+    });
+  }
+
+  if (chunkIndex >= plan.chunks.length) {
+    return finalizeResponse({
+      ok: false,
+      status: "invalid_request",
+      code: "chunk_index_out_of_range",
+      reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+      section: "report",
+      chunkIndex,
+      chunkCount: plan.chunks.length,
+      message: `chunkIndex ${chunkIndex} is out of bounds for synthetic R6 test report with ${plan.chunks.length} chunk(s).`,
+    });
+  }
+
+  const chunkText = plan.chunks[chunkIndex];
+  const hasMoreChunks = chunkIndex + 1 < plan.chunks.length;
+
+  return finalizeResponse({
+    ok: true,
+    status: "ok",
+    reportId: SYNTHETIC_R6_TEST_REPORT_ID,
+    productId: null,
+    productTitle: SYNTHETIC_R6_PRODUCT_TITLE,
+    mode: GEMINI_GROUNDED_RESEARCH_MODE,
+    sectionKey: SYNTHETIC_R6_SECTION_KEY,
+    sectionLabel: SYNTHETIC_R6_SECTION_LABEL,
+    section: "report",
+    uiAuditState: "not_measured",
+    capturedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+    storedAt: SYNTHETIC_R6_FIXED_TIMESTAMP,
+    expiresAt: SYNTHETIC_R6_FIXED_EXPIRES_AT,
+    runIdentity: SYNTHETIC_R6_RUN_IDENTITY,
+    runTimestamp: SYNTHETIC_R6_FIXED_TIMESTAMP,
+    limitUsed: null,
+    clipboardPartCount: 0,
+    activePartIndex: null,
+    chunkIndex,
+    chunkCount: plan.chunks.length,
+    chunkUtf8Bytes: utf8ByteLength(chunkText),
+    totalUtf8Bytes: plan.totalUtf8Bytes,
+    hasMoreChunks,
+    nextChunkIndex: hasMoreChunks ? chunkIndex + 1 : null,
+    text: chunkText,
+  });
+}
+// === END R6 SYNTHETIC RESEARCH PROBE HELPERS ===
+const SAFE_LOG_RESULT_STATUSES = new Set([
+  "ok",
+  "not_measured",
+  "unavailable",
+  "not_found",
+  "invalid_request",
+  "invalid_cursor",
+  "error",
+  "thrown_response",
+]);
+const SAFE_LOG_HYDRATION_OUTCOMES = new Set([
+  "not_run",
+  "clean_complete",
+  "partial",
+  "timed_out",
+  "error",
+]);
+const SAFE_CODE_TOKEN_PATTERN = /^[a-z0-9_]{1,64}$/;
+
+function sanitizeBoundedEnum(value, allowedSet, fallback = null) {
+  return typeof value === "string" && allowedSet.has(value) ? value : fallback;
+}
+
+function sanitizeSafeCodeToken(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return SAFE_CODE_TOKEN_PATTERN.test(trimmed) ? trimmed : "nonstandard_code";
+}
+
+function sanitizeSafeNonNegInt(value) {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+    ? value
+    : null;
+}
+
+function emitSafeTelemetryGetDiagnosticLog(rawFields) {
+  try {
+    const f = rawFields && typeof rawFields === "object" ? rawFields : {};
+    const entry = {
+      event: "meta_injector_telemetry_get",
+      op: sanitizeBoundedEnum(f.op, SAFE_LOG_OPS, "unparsed"),
+      section: sanitizeBoundedEnum(f.section, ALLOWED_READ_SECTIONS_SET, null),
+      view: sanitizeBoundedEnum(f.view, ALLOWED_READ_VIEWS_SET, null),
+      mode: sanitizeBoundedEnum(f.mode, SAFE_LOG_MODES, null),
+      chunkIndex: sanitizeSafeNonNegInt(f.chunkIndex),
+      chunkCount: sanitizeSafeNonNegInt(f.chunkCount),
+      returnedCount: sanitizeSafeNonNegInt(f.returnedCount),
+      httpStatus: sanitizeSafeNonNegInt(f.httpStatus),
+      ok: typeof f.ok === "boolean" ? f.ok : null,
+      resultStatus: sanitizeBoundedEnum(
+        f.resultStatus,
+        SAFE_LOG_RESULT_STATUSES,
+        null
+      ),
+      code: sanitizeSafeCodeToken(f.code),
+      serializedUtf8Bytes: sanitizeSafeNonNegInt(f.serializedUtf8Bytes),
+      elapsedMs: sanitizeSafeNonNegInt(f.elapsedMs),
+      hydrationOutcome: sanitizeBoundedEnum(
+        f.hydrationOutcome,
+        SAFE_LOG_HYDRATION_OUTCOMES,
+        "not_run"
+      ),
+      hydratedCount: sanitizeSafeNonNegInt(f.hydratedCount),
+    };
+    console.info(JSON.stringify(entry));
+  } catch {
+    // Diagnostic logging must never throw or alter endpoint behavior.
+  }
+}
+
+function buildJsonResponse(
+  payload,
+  status = 200,
+  cors = null,
+  extraHeaders = null,
+  outSerializeMeta = null
+) {
+  let effectivePayload = payload;
   let serialized = "";
   try {
     serialized = JSON.stringify(payload);
+    if (typeof serialized !== "string") {
+      throw new Error("non_string_json");
+    }
   } catch {
     status = 500;
-    serialized = JSON.stringify({
+    effectivePayload = {
       ok: false,
       status: "error",
       code: "serialization_failure",
       message: "Failed to serialize response payload.",
-    });
+    };
+    serialized = JSON.stringify(effectivePayload);
   }
 
-  if (Buffer.byteLength(serialized, "utf8") > MAX_RESPONSE_UTF8_BYTES) {
+  let finalUtf8Bytes = Buffer.byteLength(serialized, "utf8");
+  if (finalUtf8Bytes > MAX_RESPONSE_UTF8_BYTES) {
     status = 500;
-    serialized = JSON.stringify({
+    effectivePayload = {
       ok: false,
       status: "error",
       code: "response_too_large",
       message:
         "Response metadata exceeded the 3500 UTF-8 byte ceiling; report text was not truncated.",
-    });
+    };
+    serialized = JSON.stringify(effectivePayload);
+    finalUtf8Bytes = Buffer.byteLength(serialized, "utf8");
+  }
+
+  if (outSerializeMeta && typeof outSerializeMeta === "object") {
+    outSerializeMeta.httpStatus = status;
+    outSerializeMeta.serializedUtf8Bytes = finalUtf8Bytes;
+    outSerializeMeta.effectivePayload = effectivePayload;
   }
 
   const headers = new Headers({
@@ -881,15 +1336,91 @@ function validatePostEnvelopeAndLiveIdentity(parsedBody) {
 
 export async function loader({ request }) {
   const loaderStartMs = Date.now();
+  const diag = {
+    op: "unparsed",
+    section: null,
+    view: null,
+    mode: null,
+    chunkIndex: null,
+    hydrationOutcome: "not_run",
+    hydratedCount: null,
+  };
+
+  const respondFromLoader = (
+    payload,
+    status = 200,
+    corsFn = null,
+    extraHeaders = null
+  ) => {
+    const serializeMeta = {
+      httpStatus: status,
+      serializedUtf8Bytes: null,
+      effectivePayload: payload,
+    };
+    const resp = buildJsonResponse(
+      payload,
+      status,
+      corsFn,
+      extraHeaders,
+      serializeMeta
+    );
+    const eff =
+      serializeMeta.effectivePayload &&
+      typeof serializeMeta.effectivePayload === "object"
+        ? serializeMeta.effectivePayload
+        : null;
+    emitSafeTelemetryGetDiagnosticLog({
+      op: diag.op,
+      section:
+        typeof eff?.section === "string" ? eff.section : diag.section,
+      view: typeof eff?.view === "string" ? eff.view : diag.view,
+      mode: typeof eff?.mode === "string" ? eff.mode : diag.mode,
+      chunkIndex:
+        typeof eff?.chunkIndex === "number" ? eff.chunkIndex : diag.chunkIndex,
+      chunkCount: typeof eff?.chunkCount === "number" ? eff.chunkCount : null,
+      returnedCount: Array.isArray(eff?.reports) ? eff.reports.length : null,
+      httpStatus: serializeMeta.httpStatus,
+      ok: typeof eff?.ok === "boolean" ? eff.ok : null,
+      resultStatus: typeof eff?.status === "string" ? eff.status : null,
+      code:
+        typeof eff?.code === "string"
+          ? eff.code
+          : typeof eff?.reason === "string"
+            ? eff.reason
+            : null,
+      serializedUtf8Bytes: serializeMeta.serializedUtf8Bytes,
+      elapsedMs: Math.max(0, Date.now() - loaderStartMs),
+      hydrationOutcome: diag.hydrationOutcome,
+      hydratedCount: diag.hydratedCount,
+    });
+    return resp;
+  };
 
   let authContext;
   try {
     authContext = await authenticate.admin(request);
   } catch (err) {
     if (isResponseInstance(err)) {
+      emitSafeTelemetryGetDiagnosticLog({
+        op: diag.op,
+        section: diag.section,
+        view: diag.view,
+        mode: diag.mode,
+        chunkIndex: diag.chunkIndex,
+        chunkCount: null,
+        returnedCount: null,
+        httpStatus: typeof err.status === "number" ? err.status : null,
+        ok: false,
+        resultStatus: "thrown_response",
+        code: "auth_thrown_response",
+        serializedUtf8Bytes: null,
+        elapsedMs: Math.max(0, Date.now() - loaderStartMs),
+        hydrationOutcome: diag.hydrationOutcome,
+        hydratedCount: diag.hydratedCount,
+      });
       throw err;
     }
-    return buildJsonResponse(
+    return respondFromLoader(
       {
         ok: false,
         status: "error",
@@ -908,7 +1439,7 @@ export async function loader({ request }) {
       : "";
 
   if (!authenticatedShop) {
-    return buildJsonResponse(
+    return respondFromLoader(
       {
         ok: false,
         status: "invalid_request",
@@ -922,7 +1453,7 @@ export async function loader({ request }) {
 
   const method = (request.method || "GET").toUpperCase();
   if (method !== "GET") {
-    return buildJsonResponse(
+    return respondFromLoader(
       {
         ok: false,
         status: "invalid_request",
@@ -939,7 +1470,7 @@ export async function loader({ request }) {
   try {
     url = new URL(request.url);
   } catch {
-    return buildJsonResponse(
+    return respondFromLoader(
       {
         ok: false,
         status: "invalid_request",
@@ -953,7 +1484,7 @@ export async function loader({ request }) {
 
   const params = url.searchParams;
   if (params.has("shop")) {
-    return buildJsonResponse(
+    return respondFromLoader(
       {
         ok: false,
         status: "invalid_request",
@@ -968,7 +1499,8 @@ export async function loader({ request }) {
 
   const opValues = params.getAll("op");
   if (opValues.length > 1) {
-    return buildJsonResponse(
+    diag.op = "invalid";
+    return respondFromLoader(
       {
         ok: false,
         status: "invalid_request",
@@ -984,7 +1516,8 @@ export async function loader({ request }) {
   const op = typeof rawOp === "string" ? rawOp.trim() : "";
 
   if (op !== "list" && op !== "read") {
-    return buildJsonResponse(
+    diag.op = "invalid";
+    return respondFromLoader(
       {
         ok: false,
         status: "invalid_request",
@@ -995,12 +1528,13 @@ export async function loader({ request }) {
       cors
     );
   }
+  diag.op = op;
 
   try {
     if (op === "list") {
       for (const key of params.keys()) {
         if (!ALLOWED_QUERY_KEYS_LIST.has(key)) {
-          return buildJsonResponse(
+          return respondFromLoader(
             {
               ok: false,
               status: "invalid_request",
@@ -1012,7 +1546,7 @@ export async function loader({ request }) {
           );
         }
         if (params.getAll(key).length > 1) {
-          return buildJsonResponse(
+          return respondFromLoader(
             {
               ok: false,
               status: "invalid_request",
@@ -1030,12 +1564,13 @@ export async function loader({ request }) {
       const afterReportId = params.has("afterReportId")
         ? params.get("afterReportId")
         : null;
+      diag.mode = typeof mode === "string" ? mode.trim() : null;
 
       let limit = 3;
       if (params.has("limit")) {
         const parsedLimit = parseStrictPositiveIntRange(params.get("limit"), 1, 5);
         if (parsedLimit === null) {
-          return buildJsonResponse(
+          return respondFromLoader(
             {
               ok: false,
               status: "invalid_request",
@@ -1048,6 +1583,25 @@ export async function loader({ request }) {
         }
         limit = parsedLimit;
       }
+
+      // === BEGIN R6 SYNTHETIC RESEARCH LIST INTERCEPT ===
+      if (typeof mode === "string" && mode.trim() === SYNTHETIC_R6_LIST_MODE) {
+        const syntheticListResult = handleSyntheticR6ListRequest({
+          productId,
+          limit,
+          afterReportId,
+        });
+        const syntheticListHttpStatus = mapCacheResultToHttpStatus(
+          syntheticListResult,
+          false
+        );
+        return respondFromLoader(
+          syntheticListResult,
+          syntheticListHttpStatus,
+          cors
+        );
+      }
+      // === END R6 SYNTHETIC RESEARCH LIST INTERCEPT ===
 
       let result = listTelemetryReports({
         shop: authenticatedShop,
@@ -1115,6 +1669,15 @@ export async function loader({ request }) {
                   waitBudgetMs,
                 });
 
+          diag.hydrationOutcome =
+            typeof hydrationResult?.outcome === "string"
+              ? hydrationResult.outcome
+              : "error";
+          diag.hydratedCount =
+            typeof hydrationResult?.hydratedCount === "number"
+              ? hydrationResult.hydratedCount
+              : 0;
+
           if (hydrationResult.hydratedCount > 0) {
             result = listTelemetryReports({
               shop: authenticatedShop,
@@ -1136,13 +1699,13 @@ export async function loader({ request }) {
       }
 
       const httpStatus = mapCacheResultToHttpStatus(result, false);
-      return buildJsonResponse(result, httpStatus, cors);
+      return respondFromLoader(result, httpStatus, cors);
     }
 
     // op === "read"
     for (const key of params.keys()) {
       if (!ALLOWED_QUERY_KEYS_READ.has(key)) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1154,7 +1717,7 @@ export async function loader({ request }) {
         );
       }
       if (params.getAll(key).length > 1) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1168,7 +1731,7 @@ export async function loader({ request }) {
     }
 
     if (!params.has("reportId")) {
-      return buildJsonResponse(
+      return respondFromLoader(
         {
           ok: false,
           status: "invalid_request",
@@ -1183,7 +1746,7 @@ export async function loader({ request }) {
     const rawReportId = params.get("reportId");
     const reportId = typeof rawReportId === "string" ? rawReportId.trim() : "";
     if (!reportId) {
-      return buildJsonResponse(
+      return respondFromLoader(
         {
           ok: false,
           status: "invalid_request",
@@ -1198,7 +1761,7 @@ export async function loader({ request }) {
     const rawSection = params.has("section") ? params.get("section") : "report";
     const section = typeof rawSection === "string" ? rawSection.trim() : "";
     if (!ALLOWED_READ_SECTIONS_SET.has(section)) {
-      return buildJsonResponse(
+      return respondFromLoader(
         {
           ok: false,
           status: "invalid_request",
@@ -1209,11 +1772,12 @@ export async function loader({ request }) {
         cors
       );
     }
+    diag.section = section;
 
     const rawView = params.has("view") ? params.get("view") : "chunk";
     const view = typeof rawView === "string" ? rawView.trim() : "";
     if (!ALLOWED_READ_VIEWS_SET.has(view)) {
-      return buildJsonResponse(
+      return respondFromLoader(
         {
           ok: false,
           status: "invalid_request",
@@ -1225,9 +1789,10 @@ export async function loader({ request }) {
         cors
       );
     }
+    diag.view = view;
 
     if (section === "ui_audit" && view !== "chunk") {
-      return buildJsonResponse(
+      return respondFromLoader(
         {
           ok: false,
           status: "invalid_request",
@@ -1248,7 +1813,7 @@ export async function loader({ request }) {
 
     if (view === "drawer") {
       if (!drawer || drawer.length > 200) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1261,7 +1826,7 @@ export async function loader({ request }) {
         );
       }
       if (hasFieldKeyParam) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1274,7 +1839,7 @@ export async function loader({ request }) {
       }
     } else if (view === "field") {
       if (!fieldKey || fieldKey.length > 200) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1287,7 +1852,7 @@ export async function loader({ request }) {
         );
       }
       if (hasDrawerParam) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1300,7 +1865,7 @@ export async function loader({ request }) {
       }
     } else {
       if (hasDrawerParam) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1312,7 +1877,7 @@ export async function loader({ request }) {
         );
       }
       if (hasFieldKeyParam) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1329,7 +1894,7 @@ export async function loader({ request }) {
     if (params.has("chunkIndex")) {
       const parsedChunkIndex = parseStrictNonNegativeInt(params.get("chunkIndex"));
       if (parsedChunkIndex === null) {
-        return buildJsonResponse(
+        return respondFromLoader(
           {
             ok: false,
             status: "invalid_request",
@@ -1342,6 +1907,26 @@ export async function loader({ request }) {
       }
       chunkIndex = parsedChunkIndex;
     }
+    diag.chunkIndex = chunkIndex;
+
+    // === BEGIN R6 SYNTHETIC RESEARCH READ INTERCEPT ===
+    if (reportId === SYNTHETIC_R6_TEST_REPORT_ID) {
+      const syntheticReadResult = handleSyntheticR6ReadRequest({
+        section,
+        view,
+        chunkIndex,
+      });
+      const syntheticReadHttpStatus = mapCacheResultToHttpStatus(
+        syntheticReadResult,
+        false
+      );
+      return respondFromLoader(
+        syntheticReadResult,
+        syntheticReadHttpStatus,
+        cors
+      );
+    }
+    // === END R6 SYNTHETIC RESEARCH READ INTERCEPT ===
 
     // Fast O(1) RAM lookup first (all warm reads and chunk continuations 1..N-1
     // resolve immediately without Shopify I/O).
@@ -1384,6 +1969,15 @@ export async function loader({ request }) {
               waitBudgetMs,
             });
 
+      diag.hydrationOutcome =
+        typeof hydrationResult?.outcome === "string"
+          ? hydrationResult.outcome
+          : "error";
+      diag.hydratedCount =
+        typeof hydrationResult?.hydratedCount === "number"
+          ? hydrationResult.hydratedCount
+          : 0;
+
       if (hydrationResult.hydratedCount > 0) {
         result = readTelemetryReport({
           shop: authenticatedShop,
@@ -1413,12 +2007,29 @@ export async function loader({ request }) {
     }
 
     const httpStatus = mapCacheResultToHttpStatus(result, false);
-    return buildJsonResponse(result, httpStatus, cors);
+    return respondFromLoader(result, httpStatus, cors);
   } catch (err) {
     if (isResponseInstance(err)) {
+      emitSafeTelemetryGetDiagnosticLog({
+        op: diag.op,
+        section: diag.section,
+        view: diag.view,
+        mode: diag.mode,
+        chunkIndex: diag.chunkIndex,
+        chunkCount: null,
+        returnedCount: null,
+        httpStatus: typeof err.status === "number" ? err.status : null,
+        ok: false,
+        resultStatus: "thrown_response",
+        code: "loader_thrown_response",
+        serializedUtf8Bytes: null,
+        elapsedMs: Math.max(0, Date.now() - loaderStartMs),
+        hydrationOutcome: diag.hydrationOutcome,
+        hydratedCount: diag.hydratedCount,
+      });
       throw err;
     }
-    return buildJsonResponse(
+    return respondFromLoader(
       {
         ok: false,
         status: "error",
