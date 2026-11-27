@@ -13,8 +13,9 @@
 // - Enforces a strict 120,000 UTF-8 byte ceiling on "savedReportJson".
 // - Preserves 100% of the grounded report intact (modelSynthesisAnswer,
 //   webSearchQueries, sourcesByOriginalChunkIndex, modelAnswerSpanAttributions,
-//   and searchEntryPointHtml). NEVER strips citation spans or searchEntryPoint,
-//   and NEVER silently truncates answers or sources.
+//   searchEntryPointHtml, and optional contextProvenance / inputAttachments
+//   metadata). NEVER strips citation spans or searchEntryPoint, NEVER persists
+//   or exposes raw image bytes or base64, and NEVER silently truncates answers.
 // - Owns the single canonical publishGroundedResearchToTelemetryCache() and
 //   hydrateDurableResearchReportsToCache() helpers shared by the queue route
 //   and the telemetry reader route (no route-to-route imports).
@@ -58,6 +59,19 @@ const HYDRATION_STATE_GLOBAL_KEY =
   "__ROCKHOUND_SIDEKICK_RESEARCH_HYDRATION_STATE_V1__";
 const HYDRATION_CLEAN_EMPTY_COOLDOWN_MS = 5000;
 
+const LENGTH_INPUT_ERROR_CODES = new Set([
+  "missing_query",
+  "query_too_short",
+  "query_too_long",
+  "constraints_too_long",
+  "request_key_too_long",
+]);
+
+const FORBIDDEN_BINARY_ATTACHMENT_KEY_REGEX =
+  /^(?:data|base64|inlinedata|rawbytes|buffer|bytes)$/i;
+
+const SHA256_HEX_REGEX = /^[a-f0-9]{64}$/i;
+
 export const CALM_CARD_STATES = Object.freeze({
   READY_TO_RUN: "ready_to_run",
   RUNNING: "running",
@@ -76,6 +90,17 @@ function isPlainObject(value) {
 
 export function utf8ByteLength(value) {
   return Buffer.byteLength(String(value ?? ""), "utf8");
+}
+
+function clampCleanSingleLine(value, maxChars, fallback = null) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const cleaned = value.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+  if (!cleaned) {
+    return fallback;
+  }
+  return cleaned.length > maxChars ? cleaned.slice(0, maxChars) : cleaned;
 }
 
 function canonicalizeValue(value) {
@@ -137,9 +162,9 @@ function parseStrictIsoTimestampString(value) {
 }
 
 /**
-- True ONLY when a raw savedReportJson field value is genuinely absent or
-- whitespace-empty. Any nonempty string or unexpected non-string value returns
-- false so the request is treated as non-runnable pending review.
+ * True ONLY when a raw savedReportJson field value is genuinely absent or
+ * whitespace-empty. Any nonempty string or unexpected non-string value returns
+ * false so the request is treated as non-runnable pending review.
  */
 export function isSavedReportFieldGenuinelyEmpty(rawFieldValue) {
   if (rawFieldValue === undefined || rawFieldValue === null) {
@@ -152,14 +177,14 @@ export function isSavedReportFieldGenuinelyEmpty(rawFieldValue) {
 }
 
 /**
-- Shared six-part run-eligibility contract for both server dispatch and calm UI
-- card state:
-- 1. status is "queued" or "failed_pre_dispatch" (empty defaults to "queued")
-- 2. claimId is empty
-- 3. executedAt is empty
-- 4. reportId is empty
-- 5. savedReportJson is genuinely empty (never nonempty, malformed, or non-string)
-- 6. validateResearchInputs({ query, constraints, requestKey }) passes
+ * Shared six-part run-eligibility contract for both server dispatch and calm UI
+ * card state:
+ * 1. status is "queued" or "failed_pre_dispatch" (empty defaults to "queued")
+ * 2. claimId is empty
+ * 3. executedAt is empty
+ * 4. reportId is empty
+ * 5. savedReportJson is genuinely empty (never nonempty, malformed, or non-string)
+ * 6. validateResearchInputs({ query, constraints, requestKey }) passes
  */
 export function evaluateResearchRunEligibility(rawFields = {}) {
   const f = isPlainObject(rawFields) ? rawFields : {};
@@ -167,7 +192,10 @@ export function evaluateResearchRunEligibility(rawFields = {}) {
     typeof f.status === "string" && f.status.trim()
       ? f.status.trim().toLowerCase()
       : "queued";
-  const claimId = typeof f.claimId === "string" ? f.claimId.trim() : String(f.claimId ?? "").trim();
+  const claimId =
+    typeof f.claimId === "string"
+      ? f.claimId.trim()
+      : String(f.claimId ?? "").trim();
   const executedAt =
     typeof f.executedAt === "string"
       ? f.executedAt.trim()
@@ -283,9 +311,86 @@ function buildPreDispatchInputHelperMessage(inputCheck) {
   }
 }
 
+function validateOptionalContextAndAttachmentFields(reportObj) {
+  if (
+    reportObj.contextProvenance !== undefined &&
+    reportObj.contextProvenance !== null
+  ) {
+    if (
+      !isPlainObject(reportObj.contextProvenance) ||
+      typeof reportObj.contextProvenance.provided !== "boolean"
+    ) {
+      return {
+        ok: false,
+        code: "invalid_context_provenance",
+        message:
+          "Grounded report contextProvenance must be a plain object with boolean provided.",
+      };
+    }
+  }
+
+  if (
+    reportObj.inputAttachments !== undefined &&
+    reportObj.inputAttachments !== null
+  ) {
+    if (!isPlainObject(reportObj.inputAttachments)) {
+      return {
+        ok: false,
+        code: "invalid_input_attachments",
+        message: "Grounded report inputAttachments must be a plain object.",
+      };
+    }
+
+    if (reportObj.inputAttachments.rawBinaryOrBase64Persisted !== false) {
+      return {
+        ok: false,
+        code: "binary_or_base64_attachment_persistence_forbidden",
+        message:
+          "Saved research reports must never persist raw image bytes or base64 data.",
+      };
+    }
+
+    const rawImages = reportObj.inputAttachments.imageAttachments;
+    if (rawImages !== undefined && !Array.isArray(rawImages)) {
+      return {
+        ok: false,
+        code: "invalid_image_attachments_metadata",
+        message: "inputAttachments.imageAttachments must be an array when present.",
+      };
+    }
+
+    if (Array.isArray(rawImages)) {
+      for (let i = 0; i < rawImages.length; i += 1) {
+        const item = rawImages[i];
+        if (!isPlainObject(item)) {
+          return {
+            ok: false,
+            code: "invalid_image_attachments_metadata",
+            message: `inputAttachments.imageAttachments[${i}] must be a metadata object.`,
+          };
+        }
+        const keys = Object.keys(item);
+        for (let k = 0; k < keys.length; k += 1) {
+          if (FORBIDDEN_BINARY_ATTACHMENT_KEY_REGEX.test(keys[k])) {
+            return {
+              ok: false,
+              code: "binary_or_base64_attachment_persistence_forbidden",
+              message: `inputAttachments.imageAttachments[${i}] contains forbidden binary/base64 property "${keys[k]}".`,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
 /**
-- Validates that a reportObject contains the complete, unstripped grounded
-- structure produced by app/utils/gemini-grounded-research.server.js.
+ * Validates that a reportObject contains the complete, unstripped grounded
+ * structure produced by app/utils/gemini-grounded-research.server.js while
+ * preserving full compatibility with legacy saved reports that predate
+ * contextProvenance and inputAttachments.
  */
 export function validateCompleteGroundedReportObject(reportObj) {
   if (!isPlainObject(reportObj)) {
@@ -345,15 +450,295 @@ export function validateCompleteGroundedReportObject(reportObj) {
     };
   }
 
-  return { ok: true };
+  return validateOptionalContextAndAttachmentFields(reportObj);
 }
 
 /**
-- Canonical server-owned publisher for mode="gemini_grounded_research".
-- Preserves the immutable execution timestamp as both packet.capturedAt and
-- packet.runTimestamp, uses canonical JSON.stringify(reportObject, null, 2)
-- formatting, and verifies any expectedReportId against the deterministic
-- cache reportId without rewriting saved IDs or aliasing mismatches.
+ * Extracts an honest, concise context provenance summary from a grounded
+ * reportObject (or optional RAM vault snapshot) without inventing complete/live
+ * store coverage or hardcoded business facts.
+ */
+export function extractContextProvenanceSummary(
+  reportObj,
+  vaultSnapshot = null
+) {
+  const rawCtx = isPlainObject(reportObj?.contextProvenance)
+    ? reportObj.contextProvenance
+    : isPlainObject(reportObj?.contextSnapshot)
+      ? reportObj.contextSnapshot
+      : isPlainObject(vaultSnapshot?.contextProvenance)
+        ? vaultSnapshot.contextProvenance
+        : isPlainObject(vaultSnapshot?.contextSnapshot)
+          ? vaultSnapshot.contextSnapshot
+          : null;
+
+  if (!rawCtx) {
+    return {
+      recorded: false,
+      provided: false,
+      version: null,
+      source: null,
+      capturedAt: null,
+      coverage: "not_recorded",
+      completenessNote:
+        "Legacy report without contextProvenance metadata; missing store or project context is unavailable, not complete store access.",
+      utf8Bytes: 0,
+      sha256: null,
+      verifiedCaptureCount: 0,
+      missingOrUnverifiedCount: 0,
+      summaryLine: null,
+    };
+  }
+
+  if (rawCtx.provided !== true) {
+    const source =
+      clampCleanSingleLine(rawCtx.source, 160, null) || "none_supplied";
+    const coverage =
+      clampCleanSingleLine(rawCtx.coverage, 80, null) || "none_supplied";
+    const completenessNote =
+      clampCleanSingleLine(rawCtx.completenessNote, 320, null) ||
+      "No store or project contextPackage was supplied for this research run; missing context is unavailable, not complete store access.";
+
+    return {
+      recorded: true,
+      provided: false,
+      version: null,
+      source,
+      capturedAt: parseStrictIsoTimestampString(rawCtx.capturedAt),
+      coverage,
+      completenessNote,
+      utf8Bytes: 0,
+      sha256: null,
+      verifiedCaptureCount: 0,
+      missingOrUnverifiedCount: 0,
+      summaryLine: `Context: none supplied (coverage=${coverage}; missing context is unavailable, not complete store access)`,
+    };
+  }
+
+  const version =
+    typeof rawCtx.version === "number" && Number.isInteger(rawCtx.version)
+      ? rawCtx.version
+      : clampCleanSingleLine(rawCtx.version, 64, "unspecified");
+  const source =
+    clampCleanSingleLine(rawCtx.source, 160, null) || "unspecified_source";
+  const capturedAt = parseStrictIsoTimestampString(rawCtx.capturedAt);
+  const coverage =
+    clampCleanSingleLine(rawCtx.coverage, 80, null) || "unspecified_coverage";
+  const completenessNote =
+    clampCleanSingleLine(rawCtx.completenessNote, 320, null) ||
+    "Scoped point-in-time context metadata only; missing or omitted store data is unavailable, NOT complete store access.";
+  const utf8Bytes =
+    typeof rawCtx.utf8Bytes === "number" &&
+    Number.isSafeInteger(rawCtx.utf8Bytes) &&
+    rawCtx.utf8Bytes >= 0
+      ? rawCtx.utf8Bytes
+      : 0;
+  const sha256 =
+    typeof rawCtx.sha256 === "string" && SHA256_HEX_REGEX.test(rawCtx.sha256.trim())
+      ? rawCtx.sha256.trim().toLowerCase()
+      : null;
+  const verifiedCaptureCount = Array.isArray(rawCtx.verifiedCaptures)
+    ? rawCtx.verifiedCaptures.length
+    : 0;
+  const missingOrUnverifiedCount = Array.isArray(rawCtx.missingOrUnverified)
+    ? rawCtx.missingOrUnverified.length
+    : 0;
+
+  const detailParts = [
+    `version=${String(version)}`,
+    `source=${source}`,
+    `capturedAt=${capturedAt || "unknown"}`,
+    `coverage=${coverage}`,
+  ];
+  if (verifiedCaptureCount > 0) {
+    detailParts.push(`verifiedCaptures=${verifiedCaptureCount}`);
+  }
+  if (missingOrUnverifiedCount > 0) {
+    detailParts.push(`missingOrUnverified=${missingOrUnverifiedCount}`);
+  }
+
+  return {
+    recorded: true,
+    provided: true,
+    version,
+    source,
+    capturedAt,
+    coverage,
+    completenessNote,
+    utf8Bytes,
+    sha256,
+    verifiedCaptureCount,
+    missingOrUnverifiedCount,
+    summaryLine: `Context: ${detailParts.join(" | ")} (scoped snapshot only, not live/complete store access)`,
+  };
+}
+
+/**
+ * Extracts strictly safe, byte-free attachment metadata from a grounded
+ * reportObject (or optional RAM vault snapshot). Never copies or exposes raw
+ * image bytes or base64 content.
+ */
+export function extractInputAttachmentsSummary(
+  reportObj,
+  vaultSnapshot = null
+) {
+  const rawAtt = isPlainObject(reportObj?.inputAttachments)
+    ? reportObj.inputAttachments
+    : isPlainObject(vaultSnapshot?.inputAttachments)
+      ? vaultSnapshot.inputAttachments
+      : null;
+
+  if (!rawAtt) {
+    return {
+      recorded: false,
+      hasExplicitInputs: false,
+      rawBinaryOrBase64Persisted: false,
+      publicPageUrlsRequestedCount: 0,
+      publicPageUrlsRetrievedCount: 0,
+      publicPageUrlRetrievals: [],
+      imageAttachmentsCount: 0,
+      imageAttachments: [],
+      summaryLine: null,
+    };
+  }
+
+  const rawPageRetrievals = Array.isArray(rawAtt.publicPageUrlRetrievals)
+    ? rawAtt.publicPageUrlRetrievals
+    : [];
+  const publicPageUrlRetrievals = [];
+  let retrievedOkCount = 0;
+
+  for (let i = 0; i < rawPageRetrievals.length; i += 1) {
+    const entry = rawPageRetrievals[i];
+    if (!isPlainObject(entry)) {
+      continue;
+    }
+    const retrievedUrl = clampCleanSingleLine(entry.retrievedUrl, 2048, null);
+    const retrievalStatus =
+      clampCleanSingleLine(entry.retrievalStatus, 120, null) ||
+      "URL_RETRIEVAL_STATUS_UNSPECIFIED";
+    const retrievedOk = Boolean(entry.retrievedOk === true);
+    if (retrievedOk) {
+      retrievedOkCount += 1;
+    }
+    publicPageUrlRetrievals.push({
+      retrievedUrl,
+      retrievalStatus,
+      retrievedOk,
+    });
+  }
+
+  const declaredPageCount =
+    typeof rawAtt.publicPageUrlsRequestedCount === "number" &&
+    Number.isSafeInteger(rawAtt.publicPageUrlsRequestedCount) &&
+    rawAtt.publicPageUrlsRequestedCount >= 0
+      ? rawAtt.publicPageUrlsRequestedCount
+      : publicPageUrlRetrievals.length;
+  const publicPageUrlsRequestedCount = Math.max(
+    declaredPageCount,
+    publicPageUrlRetrievals.length
+  );
+
+  const rawImages = Array.isArray(rawAtt.imageAttachments)
+    ? rawAtt.imageAttachments
+    : [];
+  const imageAttachments = [];
+
+  for (let i = 0; i < rawImages.length; i += 1) {
+    const img = rawImages[i];
+    if (!isPlainObject(img)) {
+      continue;
+    }
+    const attachmentIndex =
+      typeof img.attachmentIndex === "number" &&
+      Number.isSafeInteger(img.attachmentIndex) &&
+      img.attachmentIndex >= 0
+        ? img.attachmentIndex
+        : i;
+    const url = clampCleanSingleLine(img.url, 2048, null);
+    const hostname = clampCleanSingleLine(img.hostname, 255, null);
+    const mimeType =
+      clampCleanSingleLine(img.mimeType, 64, null) || "application/octet-stream";
+    const byteLength =
+      typeof img.byteLength === "number" &&
+      Number.isSafeInteger(img.byteLength) &&
+      img.byteLength >= 0
+        ? img.byteLength
+        : 0;
+    const sha256 =
+      typeof img.sha256 === "string" && SHA256_HEX_REGEX.test(img.sha256.trim())
+        ? img.sha256.trim().toLowerCase()
+        : null;
+    const fetchedAt = parseStrictIsoTimestampString(img.fetchedAt);
+    const deliveryStatus =
+      clampCleanSingleLine(img.deliveryStatus, 120, null) ||
+      "metadata_only_no_bytes_persisted";
+
+    imageAttachments.push({
+      attachmentIndex,
+      kind: "verified_inline_image",
+      url,
+      hostname,
+      mimeType,
+      byteLength,
+      sha256,
+      fetchedAt,
+      deliveryStatus,
+    });
+  }
+
+  const declaredImageCount =
+    typeof rawAtt.imageAttachmentsCount === "number" &&
+    Number.isSafeInteger(rawAtt.imageAttachmentsCount) &&
+    rawAtt.imageAttachmentsCount >= 0
+      ? rawAtt.imageAttachmentsCount
+      : imageAttachments.length;
+  const imageAttachmentsCount = Math.max(
+    declaredImageCount,
+    imageAttachments.length
+  );
+
+  const hasExplicitInputs =
+    publicPageUrlsRequestedCount > 0 || imageAttachmentsCount > 0;
+
+  let summaryLine = null;
+  if (hasExplicitInputs) {
+    const parts = [];
+    if (publicPageUrlsRequestedCount > 0) {
+      parts.push(
+        `pages=${retrievedOkCount}/${publicPageUrlsRequestedCount} retrieved`
+      );
+    }
+    if (imageAttachmentsCount > 0) {
+      const compactImgSpecs = imageAttachments
+        .map((img) => `${img.mimeType} ${img.byteLength}B`)
+        .join(", ");
+      parts.push(
+        `images=${imageAttachmentsCount} verified${compactImgSpecs ? ` (${compactImgSpecs})` : ""} [metadata only, no bytes persisted]`
+      );
+    }
+    summaryLine = `Explicit Inputs: ${parts.join(" | ")}`;
+  }
+
+  return {
+    recorded: true,
+    hasExplicitInputs,
+    rawBinaryOrBase64Persisted: false,
+    publicPageUrlsRequestedCount,
+    publicPageUrlsRetrievedCount: retrievedOkCount,
+    publicPageUrlRetrievals,
+    imageAttachmentsCount,
+    imageAttachments,
+    summaryLine,
+  };
+}
+
+/**
+ * Canonical server-owned publisher for mode="gemini_grounded_research".
+ * Preserves the immutable execution timestamp as both packet.capturedAt and
+ * packet.runTimestamp, uses canonical JSON.stringify(reportObject, null, 2)
+ * formatting, and verifies any expectedReportId against the deterministic
+ * cache reportId without rewriting saved IDs or aliasing mismatches.
  */
 export function publishGroundedResearchToTelemetryCache({
   shop,
@@ -372,7 +757,8 @@ export function publishGroundedResearchToTelemetryCache({
       ok: false,
       idMatchesExpected: false,
       code: "missing_metaobject_id",
-      message: "A nonempty metaobjectId is required to publish grounded research to RAM cache.",
+      message:
+        "A nonempty metaobjectId is required to publish grounded research to RAM cache.",
       reportId: null,
       expectedReportId:
         typeof expectedReportId === "string" && expectedReportId.trim()
@@ -669,7 +1055,11 @@ async function runSingleShopDurableHydrationPass(admin, normalizedShop) {
   // retained if manual shop cache capacity limits are ever approached.
   for (let i = edges.length - 1; i >= 0; i -= 1) {
     const node = edges[i]?.node;
-    if (!node || typeof node.id !== "string" || node.type !== RESEARCH_METAOBJECT_TYPE) {
+    if (
+      !node ||
+      typeof node.id !== "string" ||
+      node.type !== RESEARCH_METAOBJECT_TYPE
+    ) {
       continue;
     }
     scannedCount += 1;
@@ -786,21 +1176,21 @@ async function runSingleShopDurableHydrationPass(admin, normalizedShop) {
 }
 
 /**
-- Hydrates verified durable savedReportJson answers from Shopify into the
-- 30-minute process RAM cache under strict shop isolation.
-- Uses per-shop single-flight coalescing and a bounded caller wait timer while
-- safely handling late background completion or errors without unhandled
-- rejections.
+ * Hydrates verified durable savedReportJson answers from Shopify into the
+ * 30-minute process RAM cache under strict shop isolation.
+ * Uses per-shop single-flight coalescing and a bounded caller wait timer while
+ * safely handling late background completion or errors without unhandled
+ * rejections.
  *
-- Returned `outcome` values:
-- - "clean_complete" : All research records for this shop were scanned and all
--                      verified durable answers were published cleanly.
-- - "partial"        : Hydration succeeded for scanned items, but older records
--                      exist beyond HYDRATION_SCAN_PAGE_LIMIT or an item had an
--                      ID mismatch / cache cap skip. Never infer global absence.
-- - "timed_out"      : Caller wait budget elapsed while background GraphQL read
--                      is still running. Never return false not_found.
-- - "error"          : Admin client missing or Shopify GraphQL read failed.
+ * Returned `outcome` values:
+ * - "clean_complete" : All research records for this shop were scanned and all
+ *                      verified durable answers were published cleanly.
+ * - "partial"        : Hydration succeeded for scanned items, but older records
+ *                      exist beyond HYDRATION_SCAN_PAGE_LIMIT or an item had an
+ *                      ID mismatch / cache cap skip. Never infer global absence.
+ * - "timed_out"      : Caller wait budget elapsed while background GraphQL read
+ *                      is still running. Never return false not_found.
+ * - "error"          : Admin client missing or Shopify GraphQL read failed.
  */
 export async function hydrateDurableResearchReportsToCache({
   admin,
@@ -821,7 +1211,8 @@ export async function hydrateDurableResearchReportsToCache({
       idMismatchCount: 0,
       cachePublishErrorCount: 0,
       reason: "invalid_shop",
-      message: "Authenticated shop identity is required for durable report hydration.",
+      message:
+        "Authenticated shop identity is required for durable report hydration.",
     };
   }
 
@@ -870,7 +1261,8 @@ export async function hydrateDurableResearchReportsToCache({
       idMismatchCount: 0,
       cachePublishErrorCount: 0,
       reason: "recent_clean_empty_cooldown",
-      message: "Shop durable research list was verified empty within the last 5 seconds.",
+      message:
+        "Shop durable research list was verified empty within the last 5 seconds.",
     };
   }
 
@@ -957,9 +1349,9 @@ export async function hydrateDurableResearchReportsToCache({
 }
 
 /**
-- Builds the lossless durable envelope without dropping searchEntryPointHtml,
-- citation-span metadata, or source entries, and checks the 120,000 UTF-8 byte
-- ceiling.
+ * Builds the lossless durable envelope without dropping searchEntryPointHtml,
+ * citation-span metadata, source entries, or safe provenance/attachment metadata,
+ * and checks the 120,000 UTF-8 byte ceiling.
  */
 export function buildDurableSavedReportEnvelope({
   metaobjectId,
@@ -1125,10 +1517,10 @@ function normalizeSpanProjection(spansArray) {
 }
 
 /**
-- Parses a raw savedReportJson value from a Shopify metaobject field and
-- validates that its grounded report content is structurally complete.
-- Explicitly flags unexpected non-string nonempty values as present=true,
-- valid=false so they are never treated as empty/runnable.
+ * Parses a raw savedReportJson value from a Shopify metaobject field and
+ * validates that its grounded report content is structurally complete.
+ * Explicitly flags unexpected non-string nonempty values as present=true,
+ * valid=false so they are never treated as empty/runnable.
  */
 export function parseSavedReportField(rawFieldValue) {
   if (rawFieldValue === undefined || rawFieldValue === null) {
@@ -1267,13 +1659,17 @@ export function parseSavedReportField(rawFieldValue) {
 }
 
 /**
-- Verifies read-back savedReportJson content against the exact submitted
-- envelope across synthesis answer, every source URI/title/index, every
-- citation span mapping, webSearchQueries, searchEntryPointHtml, and expected
-- reportId/metaobjectId.
+ * Verifies read-back savedReportJson content against the exact submitted
+ * envelope across synthesis answer, every source URI/title/index, every
+ * citation span mapping, webSearchQueries, searchEntryPointHtml, expected
+ * reportId/metaobjectId, and full canonical reportObject digest (including
+ * any contextProvenance and inputAttachments metadata).
  */
 export function verifySavedReportReadback(expectedEnvelope, rawReadbackString) {
-  if (!isPlainObject(expectedEnvelope) || !isPlainObject(expectedEnvelope.reportObject)) {
+  if (
+    !isPlainObject(expectedEnvelope) ||
+    !isPlainObject(expectedEnvelope.reportObject)
+  ) {
     return {
       verified: false,
       code: "missing_expected_envelope",
@@ -1315,12 +1711,14 @@ export function verifySavedReportReadback(expectedEnvelope, rawReadbackString) {
     return {
       verified: false,
       code: "metaobject_id_mismatch_on_readback",
-      message: "Readback envelope metaobjectId did not match submitted metaobjectId.",
+      message:
+        "Readback envelope metaobjectId did not match submitted metaobjectId.",
     };
   }
 
   const expectedReportId =
-    typeof expectedEnvelope.reportId === "string" && expectedEnvelope.reportId.trim()
+    typeof expectedEnvelope.reportId === "string" &&
+    expectedEnvelope.reportId.trim()
       ? expectedEnvelope.reportId.trim()
       : null;
   const actualReportId =
@@ -1339,7 +1737,8 @@ export function verifySavedReportReadback(expectedEnvelope, rawReadbackString) {
     return {
       verified: false,
       code: "answer_mismatch_on_readback",
-      message: "Readback modelSynthesisAnswer did not match the submitted answer byte-for-byte.",
+      message:
+        "Readback modelSynthesisAnswer did not match the submitted answer byte-for-byte.",
     };
   }
 
@@ -1404,14 +1803,16 @@ export function verifySavedReportReadback(expectedEnvelope, rawReadbackString) {
     return {
       verified: false,
       code: "report_object_digest_mismatch",
-      message: "Readback reportObject canonical digest differed from submitted report.",
+      message:
+        "Readback reportObject canonical digest differed from submitted report.",
     };
   }
 
   return {
     verified: true,
     code: "verified_exact_match",
-    message: "Readback verified exact answer, sources, citation spans, and metadata.",
+    message:
+      "Readback verified exact answer, sources, citation spans, and metadata.",
   };
 }
 
@@ -1431,13 +1832,13 @@ function isMissingSavedReportFieldDefinitionError(rawErrorMessage) {
 }
 
 /**
-- Persists metadata + complete intact savedReportJson (when <= 120,000 bytes)
-- using the caller's existing updateMetaobjectFields and readMetaobjectById
-- callbacks, without authoring or altering any Admin GraphQL mutations.
+ * Persists metadata + complete intact savedReportJson (when <= 120,000 bytes)
+ * using the caller's existing updateMetaobjectFields and readMetaobjectById
+ * callbacks, without authoring or altering any Admin GraphQL mutations.
  *
-- If "savedReportJson" is not yet added to the Shopify metaobject definition,
-- safely falls back to updating the existing metadata fields so the run result
-- metadata is still recorded while flagging durablySaved = false.
+ * If "savedReportJson" is not yet added to the Shopify metaobject definition,
+ * safely falls back to updating the existing metadata fields so the run result
+ * metadata is still recorded while flagging durablySaved = false.
  */
 export async function writeAndVerifyDurableResearchReport({
   admin,
@@ -1506,7 +1907,8 @@ export async function writeAndVerifyDurableResearchReport({
   });
 
   if (!fullWriteAttempt?.ok) {
-    const errText = fullWriteAttempt?.message || "Unknown metaobjectUpdate error.";
+    const errText =
+      fullWriteAttempt?.message || "Unknown metaobjectUpdate error.";
     const missingSchemaField = isMissingSavedReportFieldDefinitionError(errText);
 
     // Fallback: record standard metadata fields without savedReportJson so
@@ -1589,9 +1991,10 @@ export async function writeAndVerifyDurableResearchReport({
 }
 
 /**
-- Formats a clean, plain-text answer + numbered source list for Bob's
-- one-click "Copy Answer" button (works from either durable Shopify JSON or
-- 30-minute server RAM vault).
+ * Formats a clean, plain-text answer + numbered source list + concise optional
+ * attachment metadata and context provenance for Bob's one-click "Copy Answer"
+ * button (works from either durable Shopify JSON or 30-minute server RAM vault,
+ * and never includes raw image bytes or base64).
  */
 export function buildPlainTextCopyBlock({
   query = "",
@@ -1599,6 +2002,8 @@ export function buildPlainTextCopyBlock({
   reportId = "",
   answerText = "",
   sources = [],
+  contextSummary = null,
+  attachmentsSummary = null,
 }) {
   const lines = [];
   if (query) {
@@ -1606,7 +2011,9 @@ export function buildPlainTextCopyBlock({
     lines.push("");
   }
   if (answerText) {
-    lines.push("ANSWER (Grounded Synthesis — Verify Critical Claims Against Sources):");
+    lines.push(
+      "ANSWER (Grounded Synthesis — Verify Critical Claims Against Sources):"
+    );
     lines.push(answerText.trim());
     lines.push("");
   }
@@ -1627,6 +2034,57 @@ export function buildPlainTextCopyBlock({
     }
     lines.push("");
   }
+
+  if (
+    isPlainObject(attachmentsSummary) &&
+    attachmentsSummary.hasExplicitInputs === true
+  ) {
+    lines.push(
+      "EXPLICIT INPUT ATTACHMENTS (Metadata Only — No Image Bytes Persisted):"
+    );
+    const pageRetrievals = Array.isArray(
+      attachmentsSummary.publicPageUrlRetrievals
+    )
+      ? attachmentsSummary.publicPageUrlRetrievals
+      : [];
+    for (let i = 0; i < pageRetrievals.length; i += 1) {
+      const p = pageRetrievals[i];
+      if (isPlainObject(p)) {
+        lines.push(
+          `[Page ${i + 1}] ${p.retrievedUrl || "(unspecified URL)"} — ${p.retrievalStatus || "unknown"}`
+        );
+      }
+    }
+    const imgs = Array.isArray(attachmentsSummary.imageAttachments)
+      ? attachmentsSummary.imageAttachments
+      : [];
+    for (let i = 0; i < imgs.length; i += 1) {
+      const img = imgs[i];
+      if (isPlainObject(img)) {
+        const idx =
+          typeof img.attachmentIndex === "number" ? img.attachmentIndex + 1 : i + 1;
+        const shortHash =
+          typeof img.sha256 === "string" && img.sha256.length >= 12
+            ? `, sha256:${img.sha256.slice(0, 12)}`
+            : "";
+        lines.push(
+          `[Image ${idx}] ${img.url || "(unspecified image URL)"} (${img.mimeType || "image"}, ${img.byteLength || 0} bytes${shortHash})`
+        );
+      }
+    }
+    lines.push("");
+  }
+
+  if (
+    isPlainObject(contextSummary) &&
+    contextSummary.recorded === true &&
+    typeof contextSummary.summaryLine === "string" &&
+    contextSummary.summaryLine.trim()
+  ) {
+    lines.push(contextSummary.summaryLine.trim());
+    lines.push("");
+  }
+
   const footerParts = [];
   if (reportId) footerParts.push(`Report ID: ${reportId}`);
   if (executedAt) footerParts.push(`Executed: ${executedAt}`);
@@ -1637,11 +2095,16 @@ export function buildPlainTextCopyBlock({
 }
 
 function extractUsableSourcesFromReportObject(reportObj) {
-  if (!isPlainObject(reportObj) || !Array.isArray(reportObj.sourcesByOriginalChunkIndex)) {
+  if (
+    !isPlainObject(reportObj) ||
+    !Array.isArray(reportObj.sourcesByOriginalChunkIndex)
+  ) {
     return [];
   }
   return reportObj.sourcesByOriginalChunkIndex
-    .filter((c) => c && c.usableWebSource && typeof c.uri === "string" && c.uri.trim())
+    .filter(
+      (c) => c && c.usableWebSource && typeof c.uri === "string" && c.uri.trim()
+    )
     .map((c) => ({
       chunkIndex: c.chunkIndex,
       title: c.title || "Untitled web source",
@@ -1649,11 +2112,52 @@ function extractUsableSourcesFromReportObject(reportObj) {
     }));
 }
 
+function composeTechnicalGroundingSummaryLine({
+  rawGroundingSummary,
+  contextSummary,
+  attachmentsSummary,
+}) {
+  const base =
+    typeof rawGroundingSummary === "string" ? rawGroundingSummary.trim() : "";
+  const extraParts = [];
+
+  if (
+    isPlainObject(attachmentsSummary) &&
+    attachmentsSummary.hasExplicitInputs === true &&
+    typeof attachmentsSummary.summaryLine === "string" &&
+    attachmentsSummary.summaryLine.trim() &&
+    !base.includes("Explicit Inputs:")
+  ) {
+    extraParts.push(attachmentsSummary.summaryLine.trim());
+  }
+
+  if (
+    isPlainObject(contextSummary) &&
+    contextSummary.recorded === true &&
+    typeof contextSummary.summaryLine === "string" &&
+    contextSummary.summaryLine.trim() &&
+    !base.includes("Context:")
+  ) {
+    extraParts.push(contextSummary.summaryLine.trim());
+  }
+
+  if (!base && extraParts.length === 0) {
+    return null;
+  }
+  if (!base) {
+    return extraParts.join(" | ");
+  }
+  if (extraParts.length === 0) {
+    return base;
+  }
+  return `${base} | ${extraParts.join(" | ")}`;
+}
+
 /**
-- Maps raw Shopify metaobject fields + optional 30-minute server repair-vault
-- snapshot + live RAM cache readability into a calm, dyslexia-friendly view
-- model for SidekickQueueCalmView.jsx, while keeping completed-but-unsaved
-- states and invalid/unverified saved data strictly non-runnable.
+ * Maps raw Shopify metaobject fields + optional 30-minute server repair-vault
+ * snapshot + live RAM cache readability into a calm, dyslexia-friendly view
+ * model for SidekickQueueCalmView.jsx, while keeping completed-but-unsaved
+ * states and invalid/unverified saved data strictly non-runnable.
  */
 export function buildCalmResearchCardModel({
   id,
@@ -1726,6 +2230,23 @@ export function buildCalmResearchCardModel({
       ? parsedVaultObj
       : null;
 
+  const contextSummary = extractContextProvenanceSummary(
+    activeReportObj,
+    vaultSnapshot
+  );
+  const attachmentsSummary = extractInputAttachmentsSummary(
+    activeReportObj,
+    vaultSnapshot
+  );
+
+  const executionModel =
+    clampCleanSingleLine(
+      activeReportObj?.execution?.providerModelVersion ||
+        activeReportObj?.execution?.model,
+      120,
+      null
+    ) || null;
+
   const fullAnswerText = activeReportObj
     ? activeReportObj.modelSynthesisAnswer
     : vaultSnapshot?.answerPreview || "";
@@ -1759,8 +2280,18 @@ export function buildCalmResearchCardModel({
         reportId: reportId || "",
         answerText: fullAnswerText,
         sources,
+        contextSummary,
+        attachmentsSummary,
       })
     : "";
+
+  const effectiveTechnicalGroundingSummary = composeTechnicalGroundingSummaryLine(
+    {
+      rawGroundingSummary: groundingSummary,
+      contextSummary,
+      attachmentsSummary,
+    }
+  );
 
   const runEligibility = evaluateResearchRunEligibility(f);
   const isEligibleToRun =
@@ -1782,7 +2313,9 @@ export function buildCalmResearchCardModel({
     !hasCorruptOrUnverifiedSavedField &&
     !hasEnvelopeIdentityMismatch &&
     rawStatus !== "completed_unverified_save" &&
-    (rawStatus.startsWith("completed") || Boolean(vaultSnapshot) || hasFullVaultReport);
+    (rawStatus.startsWith("completed") ||
+      Boolean(vaultSnapshot) ||
+      hasFullVaultReport);
 
   // Determine calm state & single clear primary action
   let calmState = CALM_CARD_STATES.NEEDS_ATTENTION;
@@ -1898,7 +2431,7 @@ export function buildCalmResearchCardModel({
     badgeTone = "warning";
     statusHelperText =
       rawStatus === "failed_pre_dispatch"
-        ? "Inputs now pass length checks (no API call was sent earlier). Click Run Research when ready."
+        ? "Inputs now pass checks (no API call was sent earlier). Click Run Research when ready."
         : "Reviewed in Shopify Admin. Click Run Research when ready.";
     primaryAction = {
       kind: "run",
@@ -1906,7 +2439,9 @@ export function buildCalmResearchCardModel({
     };
   } else if (isPreDispatchDraftWithInputIssue) {
     calmState = CALM_CARD_STATES.NEEDS_ATTENTION;
-    badgeLabel = "Edit Length in Admin First";
+    badgeLabel = LENGTH_INPUT_ERROR_CODES.has(runEligibility.inputCheck.code)
+      ? "Edit Length in Admin First"
+      : "Edit Input in Admin First";
     badgeTone = "warning";
     statusHelperText = buildPreDispatchInputHelperMessage(
       runEligibility.inputCheck
@@ -1921,7 +2456,8 @@ export function buildCalmResearchCardModel({
     statusHelperText =
       rawStatus === "uncertain_no_retry"
         ? "Connection dropped or timed out after sending. To prevent double charges, this record stays locked—create a new request if needed."
-        : errorDetail || "This request could not run. Open Technical Details for exact code.";
+        : errorDetail ||
+          "This request could not run. Open Technical Details for exact code.";
   }
 
   const durableDiagnosticCode = hasEnvelopeIdentityMismatch
@@ -1966,13 +2502,16 @@ export function buildCalmResearchCardModel({
       claimId: claimId || null,
       reportId,
       executedAt: executedAt || null,
+      executionModel,
       durablySaved: hasVerifiedDurableReport,
       durableParseCode: durableDiagnosticCode,
       runEligibilityCode: runEligibility.code,
       cacheReadableNow: Boolean(cacheReadableNow),
-      groundingSummary: groundingSummary || null,
+      groundingSummary: effectiveTechnicalGroundingSummary,
       errorDetail: errorDetail || null,
       webSearchQueries,
+      contextSnapshot: contextSummary,
+      inputAttachments: attachmentsSummary,
     },
   };
 }

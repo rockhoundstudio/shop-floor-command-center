@@ -33,7 +33,10 @@ import {
   executeGroundedGeminiResearch,
   checkGeminiResearchEnvReady,
 } from "../utils/gemini-grounded-research.server.js";
-import { readTelemetryReport } from "../utils/meta-injector.sidekick-report-cache.server.js";
+import {
+  readTelemetryReport,
+  listTelemetryReports,
+} from "../utils/meta-injector.sidekick-report-cache.server.js";
 import SidekickQueueCalmView from "../components/SidekickQueueCalmView.jsx";
 import {
   RESEARCH_METAOBJECT_TYPE,
@@ -111,7 +114,7 @@ function saveServerRepairEntry({
   purgeExpiredVaultEntries(vault, nowMs);
 
   const normalizedShop = String(shop).trim().toLowerCase();
-  const compositeKey = buildCompositeKey(normalizedShop, metaobjectId);
+  const compositeKey = buildResearchLockCompositeKey(normalizedShop, metaobjectId);
 
   const shopEntries = [];
   for (const [k, v] of vault.entries()) {
@@ -351,6 +354,209 @@ function normalizeResearchStatus(rawStatus) {
   const clean = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
   return clean || "queued";
 }
+const SAFE_PUBLIC_DOMAIN_HOST_REGEX =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+function extractValidPublicDomainHost(rawCandidate) {
+  if (typeof rawCandidate !== "string" || !rawCandidate.trim()) {
+    return null;
+  }
+  const trimmed = rawCandidate.trim().toLowerCase();
+  let host = trimmed;
+  if (trimmed.includes("://")) {
+    try {
+      host = new URL(trimmed).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  } else {
+    host = trimmed.split("/")[0].replace(/:\d+$/, "");
+  }
+  if (
+    !host ||
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host.endsWith(".home.arpa") ||
+    !SAFE_PUBLIC_DOMAIN_HOST_REGEX.test(host)
+  ) {
+    return null;
+  }
+  return host;
+}
+
+function resolveAllowedResearchImageHosts(authenticatedShop) {
+  const hosts = new Set();
+  const shopHost = extractValidPublicDomainHost(authenticatedShop);
+  if (shopHost) {
+    hosts.add(shopHost);
+  }
+  const customDomainHost = extractValidPublicDomainHost(
+    process.env.SHOP_CUSTOM_DOMAIN || ""
+  );
+  if (customDomainHost) {
+    hosts.add(customDomainHost);
+  }
+  return Array.from(hosts);
+}
+
+function clampContextFieldString(value, maxLen = 160) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const cleaned = value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .trim();
+  if (!cleaned) {
+    return null;
+  }
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen) : cleaned;
+}
+
+function buildQueueResearchContextPackage({
+  authenticatedShop,
+  metaobjectId,
+  requestKey = null,
+  publicPageUrls = [],
+  imageUrls = [],
+}) {
+  const capturedAt = new Date().toISOString();
+  const normalizedShop =
+    clampContextFieldString(authenticatedShop, 255)?.toLowerCase() ||
+    "unknown_shop";
+
+  const verifiedCaptures = [];
+  const liveBenchSessions = [];
+  const missingOrUnverified = [
+    "Full Shopify product catalog, uncaptured Admin records, and live storefront DOM are not included in this scoped metadata package.",
+  ];
+  let cacheInspectionFailed = false;
+
+  try {
+    const listRes = listTelemetryReports({
+      shop: normalizedShop,
+      limit: 5,
+    });
+
+    if (listRes && Array.isArray(listRes.liveSessions)) {
+      for (let i = 0; i < listRes.liveSessions.length && i < 3; i += 1) {
+        const s = listRes.liveSessions[i];
+        if (!s || typeof s !== "object") {
+          continue;
+        }
+        liveBenchSessions.push({
+          benchSessionId: clampContextFieldString(s.benchSessionId, 120),
+          benchRevision:
+            typeof s.benchRevision === "number" &&
+            Number.isSafeInteger(s.benchRevision)
+              ? s.benchRevision
+              : null,
+          selectionState: clampContextFieldString(s.selectionState, 40),
+          activeProductId: clampContextFieldString(s.activeProductId, 128),
+          activeReportId: clampContextFieldString(s.activeReportId, 128),
+          clientStateChangedAt: clampContextFieldString(
+            s.clientStateChangedAt,
+            64
+          ),
+          baselineLoadedAt: clampContextFieldString(s.baselineLoadedAt, 64),
+          workingState: clampContextFieldString(s.workingState, 64),
+        });
+      }
+    }
+
+    if (listRes && listRes.ok === true && Array.isArray(listRes.reports)) {
+      for (let i = 0; i < listRes.reports.length; i += 1) {
+        const r = listRes.reports[i];
+        if (
+          !r ||
+          typeof r !== "object" ||
+          r.mode === "gemini_grounded_research"
+        ) {
+          continue;
+        }
+        if (verifiedCaptures.length >= 4) {
+          break;
+        }
+        verifiedCaptures.push({
+          reportId: clampContextFieldString(r.reportId, 128),
+          mode: clampContextFieldString(r.mode, 80),
+          productId: clampContextFieldString(r.productId, 128),
+          productTitle: clampContextFieldString(r.productTitle, 180),
+          sectionKey: clampContextFieldString(r.sectionKey, 100),
+          capturedAt: clampContextFieldString(r.capturedAt, 64),
+          expiresAt: clampContextFieldString(r.expiresAt, 64),
+          uiAuditState: clampContextFieldString(r.uiAuditState, 40),
+          benchSessionId: clampContextFieldString(r.benchSessionId, 120),
+          benchRevision:
+            typeof r.benchRevision === "number" &&
+            Number.isSafeInteger(r.benchRevision)
+              ? r.benchRevision
+              : null,
+          selectionState: clampContextFieldString(r.selectionState, 40),
+          baselineLoadedAt: clampContextFieldString(r.baselineLoadedAt, 64),
+          baselineSource: clampContextFieldString(r.baselineSource, 64),
+          workingState: clampContextFieldString(r.workingState, 64),
+        });
+      }
+    }
+  } catch {
+    cacheInspectionFailed = true;
+    missingOrUnverified.push(
+      "Process-local telemetry report cache metadata could not be inspected during context packaging."
+    );
+  }
+
+  const hasBenchCapture = verifiedCaptures.some(
+    (c) => c.mode === "live_bench_state"
+  );
+  const hasThemeCapture = verifiedCaptures.some(
+    (c) => c.mode === "theme_editor_readback"
+  );
+
+  if (!hasBenchCapture) {
+    missingOrUnverified.push(
+      "No active live_bench_state product snapshot was held in process RAM at run time."
+    );
+  }
+  if (!hasThemeCapture) {
+    missingOrUnverified.push(
+      "No active theme_editor_readback MAIN-theme snapshot was held in process RAM at run time."
+    );
+  }
+  if (verifiedCaptures.length > 0) {
+    missingOrUnverified.push(
+      "Verified RAM capture entries provide header/provenance metadata only; full field/theme chunk bodies were not expanded into the research prompt."
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    source: "sidekick_queue_authenticated_ram_metadata",
+    capturedAt,
+    coverage:
+      verifiedCaptures.length > 0
+        ? "partial_verified_captures"
+        : "minimal_metadata",
+    summary: {
+      shopDomain: normalizedShop,
+      researchMetaobjectId: clampContextFieldString(metaobjectId, 128),
+      requestKey: clampContextFieldString(requestKey, 160),
+      activeStoreCaptureCountInRam: verifiedCaptures.length,
+      activeLiveBenchSessionCountInRam: liveBenchSessions.length,
+      ...(liveBenchSessions.length > 0 ? { liveBenchSessions } : {}),
+      explicitPublicPageUrlCount: Array.isArray(publicPageUrls)
+        ? publicPageUrls.length
+        : 0,
+      explicitImageUrlCount: Array.isArray(imageUrls) ? imageUrls.length : 0,
+      cacheMetadataInspected: !cacheInspectionFailed,
+      writeRouteBoundary:
+        "read_only_research_only_store_changes_use_reviewed_sidekick_proposals",
+    },
+    ...(verifiedCaptures.length > 0 ? { verifiedCaptures } : {}),
+    missingOrUnverified,
+  };
+}
 
 // ==========================================
 // 1. ENGINE: FETCH JOBS & READ-ONLY RESEARCH
@@ -477,7 +683,7 @@ export const loader = async ({ request }) => {
         const storedStatus = normalizeResearchStatus(f.status);
         const isInFlightInWorker = Boolean(
           authenticatedShop &&
-            activeInFlightSet.has(buildCompositeKey(authenticatedShop, edge.node.id))
+            activeInFlightSet.has(buildResearchLockCompositeKey(authenticatedShop, edge.node.id))
         );
         const effectiveRawFields =
           isInFlightInWorker &&
@@ -488,7 +694,7 @@ export const loader = async ({ request }) => {
 
         const vaultSnap = vaultByMetaobjectId[edge.node.id] || null;
         const rawVaultEntry = authenticatedShop
-          ? rawVaultMap.get(buildCompositeKey(authenticatedShop, edge.node.id)) || null
+          ? rawVaultMap.get(buildResearchLockCompositeKey(authenticatedShop, edge.node.id)) || null
           : null;
         const parsedDurableForId = parseSavedReportField(f[SAVED_REPORT_FIELD_KEY]);
         const durableEnvelopeReportId =
@@ -753,7 +959,7 @@ export const action = async ({ request }) => {
     }
 
     const inFlightSet = getResearchInFlightLockSet();
-    const lockKey = buildCompositeKey(authenticatedShop, metaobjectId);
+    const lockKey = buildResearchLockCompositeKey(authenticatedShop, metaobjectId);
     if (inFlightSet.has(lockKey)) {
       return Response.json(
         {
@@ -922,6 +1128,16 @@ export const action = async ({ request }) => {
         query: inputCheck.query,
         constraints: inputCheck.constraints,
         requestKey: inputCheck.requestKey,
+        publicPageUrls: inputCheck.publicPageUrls,
+        imageUrls: inputCheck.imageUrls,
+        allowedImageHosts: resolveAllowedResearchImageHosts(authenticatedShop),
+        contextPackage: buildQueueResearchContextPackage({
+          authenticatedShop,
+          metaobjectId,
+          requestKey: inputCheck.requestKey,
+          publicPageUrls: inputCheck.publicPageUrls,
+          imageUrls: inputCheck.imageUrls,
+        }),
       });
 
       if (!researchResult.ok) {
@@ -1094,7 +1310,7 @@ export const action = async ({ request }) => {
 
     const vault = getRepairVaultMap();
     purgeExpiredVaultEntries(vault, Date.now());
-    const compositeKey = buildCompositeKey(authenticatedShop, metaobjectId);
+    const compositeKey = buildResearchLockCompositeKey(authenticatedShop, metaobjectId);
     const rawHeldEntry = vault.get(compositeKey);
     const heldEntry =
       rawHeldEntry && rawHeldEntry.shop === authenticatedShop
