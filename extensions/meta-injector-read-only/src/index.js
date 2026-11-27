@@ -1,8 +1,12 @@
 const TELEMETRY_ENDPOINT =
   "https://shop-floor-command-center.onrender.com/api/meta-injector-telemetry";
+const STATUS_ENDPOINT =
+  "https://shop-floor-command-center.onrender.com/api/sidekick-research-status";
 const REQUEST_TIMEOUT_MS = 4500;
 const MAX_RESPONSE_UTF8_BYTES = 3500;
+const MAX_REQUEST_KEY_CHARS = 160;
 const PRODUCT_GID_REGEX = /^gid:\/\/shopify\/Product\/\d+$/;
+const METAOBJECT_GID_REGEX = /^gid:\/\/shopify\/Metaobject\/\d+$/;
 
 const ALLOWED_LIST_KEYS = new Set([
   "productId",
@@ -19,6 +23,8 @@ const ALLOWED_READ_KEYS = new Set([
   "fieldKey",
   "chunkIndex",
 ]);
+
+const ALLOWED_STATUS_KEYS = new Set(["metaobjectId", "requestKey"]);
 
 const ALLOWED_READ_SECTIONS = new Set(["report", "ui_audit"]);
 
@@ -482,7 +488,77 @@ function buildReadSearchParams(rawInput) {
   return { ok: true, params };
 }
 
-async function fetchTelemetryGet(searchParams) {
+function buildStatusSearchParams(rawInput) {
+  if (!isPlainObject(rawInput)) {
+    return {
+      ok: false,
+      error: buildErrorResult(
+        "invalid_request",
+        "invalid_input",
+        "Tool input must be a plain object with a required metaobjectId."
+      ),
+    };
+  }
+
+  const keyError = validateAllowedKeys(
+    rawInput,
+    ALLOWED_STATUS_KEYS,
+    "get_sidekick_research_request_status"
+  );
+  if (keyError) {
+    return { ok: false, error: keyError };
+  }
+
+  if (
+    typeof rawInput.metaobjectId !== "string" ||
+    !METAOBJECT_GID_REGEX.test(rawInput.metaobjectId.trim())
+  ) {
+    return {
+      ok: false,
+      error: buildErrorResult(
+        "invalid_request",
+        "invalid_metaobject_id",
+        "metaobjectId is required and must match gid://shopify/Metaobject/<digits>."
+      ),
+    };
+  }
+
+  const params = new URLSearchParams();
+  params.set("metaobjectId", rawInput.metaobjectId.trim());
+
+  if (rawInput.requestKey !== undefined && rawInput.requestKey !== null) {
+    if (typeof rawInput.requestKey !== "string") {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "invalid_request_key",
+          "requestKey must be a nonempty string up to 160 characters when provided."
+        ),
+      };
+    }
+    const trimmedKey = rawInput.requestKey.trim();
+    if (
+      trimmedKey.length === 0 ||
+      trimmedKey.length > MAX_REQUEST_KEY_CHARS ||
+      /[\u0000-\u001F\u007F]/.test(trimmedKey)
+    ) {
+      return {
+        ok: false,
+        error: buildErrorResult(
+          "invalid_request",
+          "invalid_request_key",
+          `requestKey must be between 1 and ${MAX_REQUEST_KEY_CHARS} characters without control characters.`
+        ),
+      };
+    }
+    params.set("requestKey", trimmedKey);
+  }
+
+  return { ok: true, params };
+}
+
+async function fetchJsonGetEndpoint(endpointUrl, searchParams, serviceLabel) {
   const controller = new AbortController();
   let timedOut = false;
 
@@ -491,7 +567,7 @@ async function fetchTelemetryGet(searchParams) {
     controller.abort();
   }, REQUEST_TIMEOUT_MS);
 
-  const requestUrl = `${TELEMETRY_ENDPOINT}?${searchParams.toString()}`;
+  const requestUrl = `${endpointUrl}?${searchParams.toString()}`;
 
   try {
     const response = await fetch(requestUrl, {
@@ -511,7 +587,7 @@ async function fetchTelemetryGet(searchParams) {
       return buildErrorResult(
         "error",
         "authentication_redirect_blocked",
-        "Telemetry endpoint returned a redirect instead of authenticated JSON; redirects are not followed."
+        `${serviceLabel} endpoint returned a redirect instead of authenticated JSON; redirects are not followed.`
       );
     }
 
@@ -550,7 +626,7 @@ async function fetchTelemetryGet(searchParams) {
       return buildErrorResult(
         "error",
         "authentication_failed",
-        `Telemetry endpoint rejected authentication or authorization (HTTP ${response.status}).`
+        `${serviceLabel} endpoint rejected authentication or authorization (HTTP ${response.status}).`
       );
     }
 
@@ -558,31 +634,39 @@ async function fetchTelemetryGet(searchParams) {
       return buildErrorResult(
         "error",
         "non_json_response",
-        `Telemetry endpoint returned a non-JSON or malformed response (HTTP ${response.status}).`
+        `${serviceLabel} endpoint returned a non-JSON or malformed response (HTTP ${response.status}).`
       );
     }
 
     return buildErrorResult(
       "error",
       "invalid_backend_contract",
-      `Telemetry endpoint returned JSON without required ok/status fields (HTTP ${response.status}).`
+      `${serviceLabel} endpoint returned JSON without required ok/status fields (HTTP ${response.status}).`
     );
   } catch (err) {
     if (timedOut || (err && typeof err === "object" && err.name === "AbortError")) {
       return buildErrorResult(
         "error",
         "request_timeout",
-        `Telemetry request timed out after ${REQUEST_TIMEOUT_MS}ms.`
+        `${serviceLabel} request timed out after ${REQUEST_TIMEOUT_MS}ms.`
       );
     }
     return buildErrorResult(
       "error",
       "network_error",
-      "Network or CORS failure while contacting the telemetry endpoint."
+      `Network or CORS failure while contacting the ${serviceLabel} endpoint.`
     );
   } finally {
     clearTimeout(timerId);
   }
+}
+
+async function fetchTelemetryGet(searchParams) {
+  return await fetchJsonGetEndpoint(TELEMETRY_ENDPOINT, searchParams, "telemetry");
+}
+
+async function fetchStatusGet(searchParams) {
+  return await fetchJsonGetEndpoint(STATUS_ENDPOINT, searchParams, "status");
 }
 
 export default async function extension() {
@@ -600,5 +684,13 @@ export default async function extension() {
       return built.error;
     }
     return await fetchTelemetryGet(built.params);
+  });
+
+  shopify.tools.register("get_sidekick_research_request_status", async (input) => {
+    const built = buildStatusSearchParams(input);
+    if (!built.ok) {
+      return built.error;
+    }
+    return await fetchStatusGet(built.params);
   });
 }

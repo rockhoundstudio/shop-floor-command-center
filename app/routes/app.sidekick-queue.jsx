@@ -45,10 +45,12 @@ import {
   writeAndVerifyDurableResearchReport,
   buildCalmResearchCardModel,
 } from "../utils/sidekick-research-storage.server.js";
+import {
+  getResearchInFlightLockSet,
+  buildResearchLockCompositeKey,
+} from "../utils/sidekick-research-status.server.js";
 const METAOBJECT_GID_REGEX = /^gid:\/\/shopify\/Metaobject\/\d+$/;
 
-const IN_FLIGHT_GLOBAL_KEY =
-  "__ROCKHOUND_SIDEKICK_RESEARCH_IN_FLIGHT_LOCKS_V1__";
 const REPAIR_VAULT_GLOBAL_KEY =
   "__ROCKHOUND_SIDEKICK_RESEARCH_REPAIR_VAULT_V1__";
 
@@ -73,18 +75,6 @@ const RESEARCH_FIELD_DEFINITIONS = [
   { name: "Saved Report JSON", key: SAVED_REPORT_FIELD_KEY, type: "json" },
 ];
 
-function getInFlightSet() {
-  if (!(globalThis[IN_FLIGHT_GLOBAL_KEY] instanceof Set)) {
-    Object.defineProperty(globalThis, IN_FLIGHT_GLOBAL_KEY, {
-      value: new Set(),
-      writable: false,
-      enumerable: false,
-      configurable: true,
-    });
-  }
-  return globalThis[IN_FLIGHT_GLOBAL_KEY];
-}
-
 function getRepairVaultMap() {
   if (!(globalThis[REPAIR_VAULT_GLOBAL_KEY] instanceof Map)) {
     Object.defineProperty(globalThis, REPAIR_VAULT_GLOBAL_KEY, {
@@ -95,10 +85,6 @@ function getRepairVaultMap() {
     });
   }
   return globalThis[REPAIR_VAULT_GLOBAL_KEY];
-}
-
-function buildCompositeKey(shop, metaobjectId) {
-  return `${String(shop).trim().toLowerCase()}::${String(metaobjectId).trim()}`;
 }
 
 function purgeExpiredVaultEntries(vault, nowMs = Date.now()) {
@@ -484,7 +470,7 @@ export const loader = async ({ request }) => {
       );
       const reqData = await reqResponse.json();
       const reqEdges = reqData?.data?.metaobjects?.edges || [];
-      const activeInFlightSet = getInFlightSet();
+      const activeInFlightSet = getResearchInFlightLockSet();
 
       researchRequests = reqEdges.map((edge) => {
         const f = mapFieldsArrayToObject(edge.node.fields);
@@ -766,7 +752,7 @@ export const action = async ({ request }) => {
       );
     }
 
-    const inFlightSet = getInFlightSet();
+    const inFlightSet = getResearchInFlightLockSet();
     const lockKey = buildCompositeKey(authenticatedShop, metaobjectId);
     if (inFlightSet.has(lockKey)) {
       return Response.json(
@@ -1084,7 +1070,7 @@ export const action = async ({ request }) => {
         message: `Answer saved to Shopify (verified by exact readback) and active in 30-minute Sidekick cache (${reportId}).`,
       });
     } finally {
-      inFlightSet.delete(lockKey);
+      inFlightSet.delete(buildResearchLockCompositeKey(authenticatedShop, metaobjectId));
     }
   }
 

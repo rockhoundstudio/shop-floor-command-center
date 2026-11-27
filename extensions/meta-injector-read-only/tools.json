@@ -96,5 +96,39 @@
       "required": ["ok", "status"],
       "additionalProperties": true
     }
+  },
+  {
+    "$schema": "https://extensions.shopifycdn.com/shopifycloud/schemas/v1/tool.json",
+    "name": "get_sidekick_research_request_status",
+    "description": "Read-only status for one research request: saved evidence, eligibility, and local process lock only. Does not execute research or read answer bodies.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "metaobjectId": {
+          "type": "string",
+          "pattern": "^gid://shopify/Metaobject/\\d+$"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": ["metaobjectId"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": ["ok", "status"],
+      "additionalProperties": true
+    }
   }
 ]
