@@ -10,7 +10,9 @@
 //   app/utils/sidekick-research-storage.server.js -> buildCalmResearchCardModel
 // and scopes active submission + actionData outcome overlays strictly to the
 // matching card while preserving permanent client-side run locks once a card
-// is claimed, executed, uncertain, or completed.
+// is claimed, executed, uncertain, or completed—except where current queue
+// and storage projections explicitly permit a deliberate merchant retry of a
+// confirmed completed failure.
 // ============================================================================
 
 import { useState, useCallback, useEffect } from "react";
@@ -95,7 +97,7 @@ async function writeTextToClipboard(text) {
 
 /**
  * Evaluates whether a card already carries server-reported claim, execution,
- * uncertain, or completion evidence that permanently forbids offering Run.
+ * uncertain, or completion evidence that forbids offering a first-run Run.
  */
 function hasCardRunLockEvidence(card) {
   if (!card || typeof card !== "object") {
@@ -169,6 +171,17 @@ function extractLatchFromActionData(actionData, cardId) {
   const code = normalizeCleanString(actionData.code) || null;
   const eligibilityCode =
     normalizeCleanString(actionData.eligibilityCode) || null;
+  const retryEligible =
+    typeof actionData.retryEligible === "boolean"
+      ? actionData.retryEligible
+      : null;
+  const retryEligibilityCode =
+    normalizeCleanString(actionData.retryEligibilityCode) || null;
+  const failureDiagnostics =
+    actionData.failureDiagnostics &&
+    typeof actionData.failureDiagnostics === "object"
+      ? actionData.failureDiagnostics
+      : null;
 
   const lockRunForever = Boolean(
     targetId === PERMANENT_NO_RETRY_REQUEST_ID ||
@@ -196,6 +209,9 @@ function extractLatchFromActionData(actionData, cardId) {
     durablySaved,
     code,
     eligibilityCode,
+    retryEligible,
+    retryEligibilityCode,
+    failureDiagnostics,
     message: normalizeCleanString(actionData.message) || null,
     error: normalizeCleanString(actionData.error) || null,
     lockRunForever,
@@ -295,6 +311,30 @@ function deriveEffectiveCardView({
 
   const executionOutcome = activeOverlay?.executionOutcome || null;
 
+  const isUncertainOrRunningCase = Boolean(
+    isPinnedUncertainRecord ||
+      confirmedSavedStatus === "running" ||
+      executionOutcome === "running" ||
+      confirmedSavedStatus === "uncertain_no_retry" ||
+      executionOutcome === "uncertain_no_retry" ||
+      String(confirmedSavedStatus || "").startsWith("uncertain") ||
+      String(executionOutcome || "").startsWith("uncertain")
+  );
+
+  const overlayDisallowsRetry = Boolean(
+    cardActionOverlay?.retryEligible === false ||
+      (cardActionOverlay && !cardActionOverlay.ok && isUncertainOrRunningCase)
+  );
+
+  const isRetryEligibleCompletedFailure = Boolean(
+    !isUncertainOrRunningCase &&
+      !overlayDisallowsRetry &&
+      card.retryEligibleCompletedFailure === true &&
+      !verifiedDurablySaved &&
+      !canonicalReportId &&
+      !card.hasRamVaultCopy
+  );
+
   // RAM cache readability: true from loader check, or when current action
   // cleanly published/reloaded cache without an ID mismatch.
   const ramCacheActive = Boolean(
@@ -331,6 +371,11 @@ function deriveEffectiveCardView({
       badgeTone = "info";
       statusHelperText =
         "Searching public web sources now. Please wait—do not close or resend.";
+    } else if (submittingIntentForCard === "retryResearch") {
+      badgeLabel = "Retrying...";
+      badgeTone = "info";
+      statusHelperText =
+        "Sending one deliberate retry after preserving prior attempt details. Please wait—do not close or resend.";
     } else if (submittingIntentForCard === "repairPublication") {
       badgeLabel = "Saving / Reloading (Free)...";
       badgeTone = "info";
@@ -393,6 +438,16 @@ function deriveEffectiveCardView({
       };
       secondaryAction = null;
     }
+  } else if (isRetryEligibleCompletedFailure) {
+    badgeLabel =
+      confirmedSavedStatus === "failed_provider_http"
+        ? "Provider Error — Retry Available"
+        : "Ungrounded — Retry Available";
+    badgeTone = "warning";
+    statusHelperText =
+      "Previous attempt did not produce a saved grounded answer. Click Retry Research only when ready to send one deliberate retry.";
+    primaryAction = { kind: "retry", label: "Retry Research" };
+    secondaryAction = null;
   } else if (
     activeOverlay &&
     !activeOverlay.ok &&
@@ -461,8 +516,10 @@ function deriveEffectiveCardView({
     }
   }
 
-  // Final ironclad gate: if locked for ANY reason, Run action can NEVER survive
-  // stale loader props, failed writebacks, null statuses, or navigation settles.
+  // Final ironclad gate: if locked for ANY reason, first-run Run action can
+  // NEVER survive stale loader props, failed writebacks, null statuses, or
+  // navigation settles. Retry is allowed ONLY when explicitly projected as a
+  // retry-eligible completed failure and never for uncertain/running cases.
   if (runPermanentlyLocked) {
     if (primaryAction?.kind === "run") {
       primaryAction = card.copyPlainText
@@ -483,10 +540,48 @@ function deriveEffectiveCardView({
     }
   }
 
+  if (primaryAction?.kind === "retry" && !isRetryEligibleCompletedFailure) {
+    primaryAction = null;
+  }
+  if (secondaryAction?.kind === "retry" && !isRetryEligibleCompletedFailure) {
+    secondaryAction = null;
+  }
+
+  // Never display an ungrounded failed attempt as a saved/grounded answer.
+  const hasUngroundedFailureSignal = Boolean(
+    !verifiedDurablySaved &&
+      (confirmedSavedStatus === "failed_ungrounded" ||
+        confirmedSavedStatus === "failed_provider_http" ||
+        executionOutcome === "failed_ungrounded" ||
+        executionOutcome === "failed_provider_http")
+  );
+
+  const attemptHistoryList = Array.isArray(card.attemptHistoryEntries)
+    ? card.attemptHistoryEntries.filter(
+        (entry) => typeof entry === "string" && entry.trim().length > 0
+      )
+    : [];
+
+  const overlayDiagSummary =
+    typeof cardActionOverlay?.failureDiagnostics?.summaryLine === "string" &&
+    cardActionOverlay.failureDiagnostics.summaryLine.trim()
+      ? cardActionOverlay.failureDiagnostics.summaryLine.trim()
+      : null;
+  const techGrounding = normalizeCleanString(tech.groundingSummary) || null;
+  const techError = normalizeCleanString(tech.errorDetail) || null;
+
+  const latestDiagnosticLine =
+    overlayDiagSummary ||
+    (hasUngroundedFailureSignal ? techGrounding || techError : techGrounding) ||
+    null;
+
   return {
     isPinnedUncertainRecord,
     runPermanentlyLocked,
+    isRetryEligibleCompletedFailure,
+    isUncertainOrRunningCase,
     verifiedDurablySaved,
+    hasUngroundedFailureSignal,
     ramCacheActive,
     badgeLabel,
     badgeTone,
@@ -502,6 +597,8 @@ function deriveEffectiveCardView({
     confirmedSavedStatus,
     statusPersistedState,
     executionOutcome,
+    latestDiagnosticLine,
+    attemptHistoryList,
   };
 }
 
@@ -513,6 +610,7 @@ function ResearchRequestCalmCard({
   cardActionData = null,
   latchedRecord = null,
   onRunResearch,
+  onRetryResearch,
   onRepairOrRepublish,
 }) {
   const [techDetailsOpen, setTechDetailsOpen] = useState(false);
@@ -563,6 +661,19 @@ function ResearchRequestCalmCard({
         }
         return;
       }
+      if (actionSpec.kind === "retry") {
+        if (
+          view.isUncertainOrRunningCase ||
+          !view.isRetryEligibleCompletedFailure ||
+          isAnyActionSubmitting
+        ) {
+          return;
+        }
+        if (typeof onRetryResearch === "function") {
+          onRetryResearch(card.id);
+        }
+        return;
+      }
       if (actionSpec.kind === "republish") {
         if (view.isPinnedUncertainRecord || isAnyActionSubmitting) {
           return;
@@ -577,8 +688,11 @@ function ResearchRequestCalmCard({
       handleCopyClick,
       isAnyActionSubmitting,
       onRepairOrRepublish,
+      onRetryResearch,
       onRunResearch,
       view.isPinnedUncertainRecord,
+      view.isRetryEligibleCompletedFailure,
+      view.isUncertainOrRunningCase,
       view.runPermanentlyLocked,
     ]
   );
@@ -589,6 +703,8 @@ function ResearchRequestCalmCard({
       view.primaryAction.kind !== "copy" &&
       ((view.primaryAction.kind === "run" &&
         submittingIntentForCard === "runResearch") ||
+        (view.primaryAction.kind === "retry" &&
+          submittingIntentForCard === "retryResearch") ||
         (view.primaryAction.kind === "republish" &&
           submittingIntentForCard === "repairPublication"))
   );
@@ -599,6 +715,8 @@ function ResearchRequestCalmCard({
       view.secondaryAction.kind !== "copy" &&
       ((view.secondaryAction.kind === "run" &&
         submittingIntentForCard === "runResearch") ||
+        (view.secondaryAction.kind === "retry" &&
+          submittingIntentForCard === "retryResearch") ||
         (view.secondaryAction.kind === "republish" &&
           submittingIntentForCard === "repairPublication"))
   );
@@ -609,7 +727,9 @@ function ResearchRequestCalmCard({
       : view.primaryAction?.label || null;
 
   const primaryBtnTone =
-    view.primaryAction?.kind === "run" ? "success" : undefined;
+    view.primaryAction?.kind === "run" || view.primaryAction?.kind === "retry"
+      ? "success"
+      : undefined;
 
   const tech = card.technicalDetails || {};
   const usableSources = Array.isArray(card.sources) ? card.sources : [];
@@ -639,7 +759,10 @@ function ResearchRequestCalmCard({
                     ? !card.copyPlainText
                     : Boolean(isAnyActionSubmitting) ||
                       (view.primaryAction.kind === "run" &&
-                        view.runPermanentlyLocked)
+                        view.runPermanentlyLocked) ||
+                      (view.primaryAction.kind === "retry" &&
+                        (!view.isRetryEligibleCompletedFailure ||
+                          view.isUncertainOrRunningCase))
                 }
                 onClick={() => executeCardAction(view.primaryAction)}
               >
@@ -656,7 +779,10 @@ function ResearchRequestCalmCard({
                     ? !card.copyPlainText
                     : Boolean(isAnyActionSubmitting) ||
                       (view.secondaryAction.kind === "run" &&
-                        view.runPermanentlyLocked)
+                        view.runPermanentlyLocked) ||
+                      (view.secondaryAction.kind === "retry" &&
+                        (!view.isRetryEligibleCompletedFailure ||
+                          view.isUncertainOrRunningCase))
                 }
                 onClick={() => executeCardAction(view.secondaryAction)}
               >
@@ -704,7 +830,7 @@ function ResearchRequestCalmCard({
           </Banner>
         )}
 
-        {/* 2. PLAIN QUESTION + CONCISE CALM HELPER LINE */}
+        {/* 2. PLAIN QUESTION + CONCISE CALM HELPER LINE + DIAGNOSTICS/HISTORY */}
         <BlockStack gap="150">
           <Text as="h3" variant="headingMd">
             {card.query || "(Empty question)"}
@@ -719,6 +845,28 @@ function ResearchRequestCalmCard({
               {view.statusHelperText}
             </Text>
           )}
+          {view.latestDiagnosticLine && !view.verifiedDurablySaved && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              Diagnostics: {view.latestDiagnosticLine}
+            </Text>
+          )}
+          {view.attemptHistoryList.length > 0 && (
+            <BlockStack gap="050">
+              <Text as="p" variant="bodySm" tone="subdued">
+                Previous attempts ({view.attemptHistoryList.length}):
+              </Text>
+              {view.attemptHistoryList.map((entry, idx) => (
+                <Text
+                  key={`${card.id}_attempt_${idx}`}
+                  as="p"
+                  variant="bodySm"
+                  tone="subdued"
+                >
+                  • {entry}
+                </Text>
+              ))}
+            </BlockStack>
+          )}
         </BlockStack>
 
         {/* 3. READABLE ANSWER + ACCESSIBLE SOURCES + SANDBOXED SEARCH SUGGESTIONS */}
@@ -732,8 +880,9 @@ function ResearchRequestCalmCard({
           >
             <BlockStack gap="300">
               <Text as="p" variant="bodySm" tone="subdued">
-                Web synthesis — verify important facts against cited links.
-                Highlighted spans are AI summaries, not direct quotes.
+                {view.hasUngroundedFailureSignal
+                  ? "Ungrounded attempt output — NOT a verified grounded answer."
+                  : "Web synthesis — verify important facts against cited links. Highlighted spans are AI summaries, not direct quotes."}
               </Text>
 
               {card.answerText && (
@@ -901,6 +1050,22 @@ function ResearchRequestCalmCard({
                     <strong>Grounding Summary:</strong> {tech.groundingSummary}
                   </Text>
                 )}
+                {view.attemptHistoryList.length > 0 && (
+                  <BlockStack gap="050">
+                    <Text as="p" variant="bodySm">
+                      <strong>Attempt History:</strong>
+                    </Text>
+                    {view.attemptHistoryList.map((entry, idx) => (
+                      <Text
+                        key={`${card.id}_tech_attempt_${idx}`}
+                        as="p"
+                        variant="bodySm"
+                      >
+                        • <code>{entry}</code>
+                      </Text>
+                    ))}
+                  </BlockStack>
+                )}
                 {searchQueries.length > 0 && (
                   <Text as="p" variant="bodySm">
                     <strong>Search Queries Used:</strong>{" "}
@@ -936,13 +1101,15 @@ export default function SidekickQueueCalmView({
   onRefresh,
   onSetupDefinition,
   onRunResearch,
+  onRetryResearch,
   onRepairOrRepublish,
 }) {
   const [systemToolsOpen, setSystemToolsOpen] = useState(false);
 
   // Sticky client-side latch so any card that was claimed, executed, uncertain,
-  // or completed during this browser session NEVER regains a Run button even if
-  // Shopify status writeback failed or loader data has not caught up yet.
+  // or completed during this browser session NEVER regains a first-run Run
+  // button even if Shopify status writeback failed or loader data has not
+  // caught up yet.
   const [latchedByCardId, setLatchedByCardId] = useState(() => ({
     [PERMANENT_NO_RETRY_REQUEST_ID]: {
       intent: "runResearch",
@@ -1235,6 +1402,7 @@ export default function SidekickQueueCalmView({
                   cardActionData={matchedCardActionData}
                   latchedRecord={latchedByCardId[cardId] || null}
                   onRunResearch={onRunResearch}
+                  onRetryResearch={onRetryResearch}
                   onRepairOrRepublish={onRepairOrRepublish}
                 />
               );

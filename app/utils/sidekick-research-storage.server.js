@@ -72,6 +72,24 @@ const FORBIDDEN_BINARY_ATTACHMENT_KEY_REGEX =
 
 const SHA256_HEX_REGEX = /^[a-f0-9]{64}$/i;
 
+export const RETRYABLE_COMPLETED_FAILURE_STATUSES = Object.freeze([
+  "failed_ungrounded",
+  "failed_provider_http",
+]);
+const RETRYABLE_COMPLETED_FAILURE_STATUS_SET = new Set(
+  RETRYABLE_COMPLETED_FAILURE_STATUSES
+);
+
+const NON_RETRYABLE_UNCERTAIN_STATUS_SET = new Set([
+  "uncertain_no_retry",
+  "uncertain_after_dispatch",
+]);
+
+const MAX_ATTEMPT_HISTORY_ENTRIES = 6;
+const MAX_ATTEMPT_HISTORY_FIELD_CHARS = 1600;
+const MAX_SINGLE_ATTEMPT_RECORD_CHARS = 340;
+const ATTEMPT_HISTORY_HEADER = "ATTEMPT HISTORY (OLDEST -> NEWEST):";
+
 export const CALM_CARD_STATES = Object.freeze({
   READY_TO_RUN: "ready_to_run",
   RUNNING: "running",
@@ -159,6 +177,589 @@ function parseStrictIsoTimestampString(value) {
     return null;
   }
   return trimmed;
+}
+
+function sanitizeSingleLineText(value, maxChars, fallback = null) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const cleaned = value.replace(/[\u0000-\u001F\u007F]+/g, " ").trim();
+  if (!cleaned) {
+    return fallback;
+  }
+  return cleaned.length > maxChars
+    ? `${cleaned.slice(0, Math.max(0, maxChars - 3))}...`
+    : cleaned;
+}
+
+/**
+ * Normalizes a provider failureDiagnostics object (or summaryLine) into a
+ * bounded, secret-free structure without converting unknown/absent/unreached
+ * signals into verified zeros. Does not import provider modules.
+ */
+export function normalizeFailureDiagnosticsSnapshot(rawDiagnostics) {
+  if (!isPlainObject(rawDiagnostics)) {
+    return null;
+  }
+
+  const dispatchedToProvider =
+    typeof rawDiagnostics.dispatchedToProvider === "boolean"
+      ? rawDiagnostics.dispatchedToProvider
+      : null;
+  const requestedModel =
+    sanitizeSingleLineText(rawDiagnostics.requestedModel, 96, null) ||
+    "gemini-2.5-flash";
+  const providerModelVersion = sanitizeSingleLineText(
+    rawDiagnostics.providerModelVersion,
+    96,
+    null
+  );
+  const actualModel =
+    sanitizeSingleLineText(rawDiagnostics.actualModel, 96, null) ||
+    providerModelVersion ||
+    (dispatchedToProvider === true ? requestedModel : null);
+  const httpStatus =
+    typeof rawDiagnostics.httpStatus === "number" &&
+    Number.isInteger(rawDiagnostics.httpStatus)
+      ? rawDiagnostics.httpStatus
+      : null;
+  const providerErrorStatus = sanitizeSingleLineText(
+    rawDiagnostics.providerErrorStatus,
+    80,
+    null
+  );
+  const toolsRequested = Array.isArray(rawDiagnostics.toolsRequested)
+    ? rawDiagnostics.toolsRequested
+        .map((t) => sanitizeSingleLineText(t, 64, null))
+        .filter(Boolean)
+        .slice(0, 8)
+    : null;
+  const contextPromptIncluded =
+    typeof rawDiagnostics.contextPromptIncluded === "boolean"
+      ? rawDiagnostics.contextPromptIncluded
+      : null;
+  const candidatesFieldPresent =
+    typeof rawDiagnostics.candidatesFieldPresent === "boolean"
+      ? rawDiagnostics.candidatesFieldPresent
+      : null;
+  const candidateCount =
+    typeof rawDiagnostics.candidateCount === "number" &&
+    Number.isInteger(rawDiagnostics.candidateCount) &&
+    rawDiagnostics.candidateCount >= 0
+      ? rawDiagnostics.candidateCount
+      : null;
+  const promptBlockReason = sanitizeSingleLineText(
+    rawDiagnostics.promptBlockReason,
+    80,
+    null
+  );
+  const finishReason = sanitizeSingleLineText(
+    rawDiagnostics.finishReason,
+    80,
+    null
+  );
+  const answerPartsPresent =
+    typeof rawDiagnostics.answerPartsPresent === "boolean"
+      ? rawDiagnostics.answerPartsPresent
+      : null;
+  const answerCharCount =
+    typeof rawDiagnostics.answerCharCount === "number" &&
+    Number.isInteger(rawDiagnostics.answerCharCount) &&
+    rawDiagnostics.answerCharCount >= 0
+      ? rawDiagnostics.answerCharCount
+      : null;
+  const groundingMetadataPresent =
+    typeof rawDiagnostics.groundingMetadataPresent === "boolean"
+      ? rawDiagnostics.groundingMetadataPresent
+      : null;
+  const groundingMetadataKeys = Array.isArray(
+    rawDiagnostics.groundingMetadataKeys
+  )
+    ? rawDiagnostics.groundingMetadataKeys
+        .map((k) => sanitizeSingleLineText(k, 64, null))
+        .filter(Boolean)
+        .slice(0, 24)
+    : null;
+  const webSearchQueriesFieldPresent =
+    typeof rawDiagnostics.webSearchQueriesFieldPresent === "boolean"
+      ? rawDiagnostics.webSearchQueriesFieldPresent
+      : null;
+  const observedWebSearchQueryCount =
+    typeof rawDiagnostics.observedWebSearchQueryCount === "number" &&
+    Number.isInteger(rawDiagnostics.observedWebSearchQueryCount) &&
+    rawDiagnostics.observedWebSearchQueryCount >= 0
+      ? rawDiagnostics.observedWebSearchQueryCount
+      : null;
+  const groundingChunksFieldPresent =
+    typeof rawDiagnostics.groundingChunksFieldPresent === "boolean"
+      ? rawDiagnostics.groundingChunksFieldPresent
+      : null;
+  const totalGroundingChunkCount =
+    typeof rawDiagnostics.totalGroundingChunkCount === "number" &&
+    Number.isInteger(rawDiagnostics.totalGroundingChunkCount) &&
+    rawDiagnostics.totalGroundingChunkCount >= 0
+      ? rawDiagnostics.totalGroundingChunkCount
+      : null;
+  const usableWebSourceCount =
+    typeof rawDiagnostics.usableWebSourceCount === "number" &&
+    Number.isInteger(rawDiagnostics.usableWebSourceCount) &&
+    rawDiagnostics.usableWebSourceCount >= 0
+      ? rawDiagnostics.usableWebSourceCount
+      : null;
+  const groundingSupportsFieldPresent =
+    typeof rawDiagnostics.groundingSupportsFieldPresent === "boolean"
+      ? rawDiagnostics.groundingSupportsFieldPresent
+      : null;
+  const totalSupportCount =
+    typeof rawDiagnostics.totalSupportCount === "number" &&
+    Number.isInteger(rawDiagnostics.totalSupportCount) &&
+    rawDiagnostics.totalSupportCount >= 0
+      ? rawDiagnostics.totalSupportCount
+      : null;
+  const urlContextMetadataPresent =
+    typeof rawDiagnostics.urlContextMetadataPresent === "boolean"
+      ? rawDiagnostics.urlContextMetadataPresent
+      : null;
+  const urlContextRetrievedCount =
+    typeof rawDiagnostics.urlContextRetrievedCount === "number" &&
+    Number.isInteger(rawDiagnostics.urlContextRetrievedCount) &&
+    rawDiagnostics.urlContextRetrievedCount >= 0
+      ? rawDiagnostics.urlContextRetrievedCount
+      : null;
+
+  const providedSummary = sanitizeSingleLineText(
+    rawDiagnostics.summaryLine,
+    480,
+    null
+  );
+
+  let derivedSummary = providedSummary;
+  if (!derivedSummary) {
+    if (dispatchedToProvider === false) {
+      derivedSummary = [
+        "dispatched=false",
+        `requestedModel=${requestedModel}`,
+        "finishReason=not_dispatched",
+        "answerChars=not_dispatched",
+        "groundingKeys=not_dispatched",
+        "sources=not_dispatched",
+        "searchQueries=not_dispatched",
+      ].join(" | ");
+    } else {
+      const hasCandidate =
+        groundingMetadataPresent !== null ||
+        answerPartsPresent !== null ||
+        finishReason !== null;
+      const parts = [
+        `dispatched=${dispatchedToProvider === true ? "true" : "unknown"}`,
+        `model=${requestedModel}${
+          providerModelVersion && providerModelVersion !== requestedModel
+            ? ` (providerVersion=${providerModelVersion})`
+            : ""
+        }`,
+        httpStatus !== null
+          ? providerErrorStatus
+            ? `httpStatus=${httpStatus} (${providerErrorStatus})`
+            : `httpStatus=${httpStatus}`
+          : "httpStatus=unknown",
+      ];
+      if (!hasCandidate) {
+        parts.push(
+          candidateCount !== null
+            ? promptBlockReason
+              ? `candidates=${candidateCount} (blockReason=${promptBlockReason})`
+              : `candidates=${candidateCount}`
+            : promptBlockReason
+              ? `candidates=missing_field (blockReason=${promptBlockReason})`
+              : "candidates=unknown",
+          "finishReason=no_candidate",
+          "answerChars=no_candidate",
+          "groundingKeys=no_candidate",
+          "sources=no_candidate",
+          "searchQueries=no_candidate"
+        );
+      } else {
+        parts.push(`finishReason=${finishReason || "missing_field"}`);
+        parts.push(
+          answerCharCount !== null
+            ? `answerChars=${answerCharCount}`
+            : answerPartsPresent === false
+              ? "answerChars=missing_parts"
+              : "answerChars=unknown"
+        );
+        if (groundingMetadataPresent === false) {
+          parts.push(
+            "groundingKeys=absent",
+            "sources=absent (usable=absent)",
+            "searchQueries=absent"
+          );
+        } else if (groundingMetadataPresent === true) {
+          parts.push(
+            `groundingKeys=[${(groundingMetadataKeys || []).join(",")}]`
+          );
+          parts.push(
+            groundingChunksFieldPresent === true
+              ? `sources=${
+                  totalGroundingChunkCount !== null
+                    ? totalGroundingChunkCount
+                    : "unknown"
+                } (usable=${
+                  usableWebSourceCount !== null
+                    ? usableWebSourceCount
+                    : "unknown"
+                })`
+              : "sources=missing_field (usable=missing_field)"
+          );
+          parts.push(
+            webSearchQueriesFieldPresent === true
+              ? `searchQueries=${
+                  observedWebSearchQueryCount !== null
+                    ? observedWebSearchQueryCount
+                    : "unknown"
+                }`
+              : "searchQueries=missing_field"
+          );
+        } else {
+          parts.push(
+            "groundingKeys=unknown",
+            "sources=unknown",
+            "searchQueries=unknown"
+          );
+        }
+      }
+      if (urlContextRetrievedCount !== null) {
+        parts.push(`urlContextRetrieved=${urlContextRetrievedCount}`);
+      }
+      derivedSummary = parts.join(" | ");
+    }
+  }
+
+  return Object.freeze({
+    dispatchedToProvider,
+    requestedModel,
+    providerModelVersion,
+    actualModel,
+    httpStatus,
+    providerErrorStatus,
+    toolsRequested: toolsRequested ? Object.freeze(toolsRequested) : null,
+    contextPromptIncluded,
+    candidatesFieldPresent,
+    candidateCount,
+    promptBlockReason,
+    finishReason,
+    answerPartsPresent,
+    answerCharCount,
+    groundingMetadataPresent,
+    groundingMetadataKeys: groundingMetadataKeys
+      ? Object.freeze(groundingMetadataKeys)
+      : null,
+    webSearchQueriesFieldPresent,
+    observedWebSearchQueryCount,
+    groundingChunksFieldPresent,
+    totalGroundingChunkCount,
+    usableWebSourceCount,
+    groundingSupportsFieldPresent,
+    totalSupportCount,
+    urlContextMetadataPresent,
+    urlContextRetrievedCount,
+    summaryLine: sanitizeSingleLineText(derivedSummary, 480, "Diagnostics unavailable."),
+  });
+}
+
+/**
+ * Pure read-only check for deliberate merchant retry eligibility on a
+ * confirmed completed failure.
+ *
+ * Important provider-contract nuance: in gemini-grounded-research.server.js,
+ * buildFailureResult sets retryPermitted: false on all failures and marks
+ * failed_provider_http with executionOutcomeCertain: false while failed_ungrounded
+ * has executionOutcomeCertain: true. Therefore retryability is derived from the
+ * explicit confirmed failure status ("failed_ungrounded" or
+ * "failed_provider_http"), NOT from provider retryPermitted or certainty flags.
+ *
+ * Requires:
+ * - confirmed failure status in {"failed_ungrounded", "failed_provider_http"}
+ * - empty reportId
+ * - genuinely empty savedReportJson (never nonempty, malformed, or non-string)
+ * - valid research inputs via validateResearchInputs({ query, constraints, requestKey })
+ *
+ * Reading this helper only reports eligibility; it never authorizes or executes
+ * an API call.
+ */
+export function evaluateCompletedFailureRetryEligibility(rawFields = {}) {
+  const f = isPlainObject(rawFields) ? rawFields : {};
+  const rawStatus =
+    typeof f.status === "string" && f.status.trim()
+      ? f.status.trim().toLowerCase()
+      : "queued";
+  const claimId = sanitizeSingleLineText(
+    typeof f.claimId === "string" ? f.claimId : String(f.claimId ?? ""),
+    128,
+    null
+  );
+  const executedAt = sanitizeSingleLineText(
+    typeof f.executedAt === "string" ? f.executedAt : String(f.executedAt ?? ""),
+    80,
+    null
+  );
+  const reportId = sanitizeSingleLineText(
+    typeof f.reportId === "string" ? f.reportId : String(f.reportId ?? ""),
+    128,
+    null
+  );
+  const savedReportEmpty = isSavedReportFieldGenuinelyEmpty(
+    f[SAVED_REPORT_FIELD_KEY]
+  );
+
+  const queryStr = typeof f.query === "string" ? f.query : "";
+  const constraintsVal =
+    typeof f.constraints === "string"
+      ? f.constraints
+      : f.constraints === undefined || f.constraints === null
+        ? null
+        : String(f.constraints);
+  const requestKeyVal =
+    typeof f.requestKey === "string"
+      ? f.requestKey
+      : f.requestKey === undefined || f.requestKey === null
+        ? null
+        : String(f.requestKey);
+
+  const inputCheck = validateResearchInputs({
+    query: queryStr,
+    constraints: constraintsVal,
+    requestKey: requestKeyVal,
+  });
+
+  if (!savedReportEmpty) {
+    return {
+      eligible: false,
+      code: "saved_report_field_present",
+      rawStatus,
+      claimId,
+      executedAt,
+      reportId,
+      inputCheck,
+      message:
+        "Record already contains savedReportJson data and is not eligible for retry.",
+    };
+  }
+
+  if (reportId !== null) {
+    return {
+      eligible: false,
+      code: "report_id_present",
+      rawStatus,
+      claimId,
+      executedAt,
+      reportId,
+      inputCheck,
+      message:
+        "Record already has a reportId and is not eligible for retry.",
+    };
+  }
+
+  if (
+    NON_RETRYABLE_UNCERTAIN_STATUS_SET.has(rawStatus) ||
+    rawStatus.startsWith("uncertain")
+  ) {
+    return {
+      eligible: false,
+      code: "uncertain_outcome_locked",
+      rawStatus,
+      claimId,
+      executedAt,
+      reportId,
+      inputCheck,
+      message:
+        "Uncertain post-dispatch outcomes are never retried automatically or manually to prevent duplicate charges.",
+    };
+  }
+
+  if (!RETRYABLE_COMPLETED_FAILURE_STATUS_SET.has(rawStatus)) {
+    return {
+      eligible: false,
+      code: "not_retryable_completed_failure",
+      rawStatus,
+      claimId,
+      executedAt,
+      reportId,
+      inputCheck,
+      message: `Status "${rawStatus}" is not a retryable completed failure (${RETRYABLE_COMPLETED_FAILURE_STATUS_SET.size} allowed: ${RETRYABLE_COMPLETED_FAILURE_STATUSES.join(", ")}).`,
+    };
+  }
+
+  if (!inputCheck.ok) {
+    return {
+      eligible: false,
+      code: inputCheck.code,
+      rawStatus,
+      claimId,
+      executedAt,
+      reportId,
+      inputCheck,
+      message: inputCheck.message,
+    };
+  }
+
+  return {
+    eligible: true,
+    code: "eligible_completed_failure_retry",
+    rawStatus,
+    claimId,
+    executedAt,
+    reportId,
+    inputCheck,
+    message:
+      "Confirmed completed failure with empty reportId and empty savedReportJson is eligible for one deliberate merchant retry.",
+  };
+}
+
+function stripExistingAttemptHistorySection(rawText) {
+  if (typeof rawText !== "string" || !rawText.trim()) {
+    return { prefixText: "", existingLines: [] };
+  }
+  const idx = rawText.indexOf(ATTEMPT_HISTORY_HEADER);
+  if (idx === -1) {
+    return {
+      prefixText: rawText.trim(),
+      existingLines: [],
+    };
+  }
+  const prefixText = rawText.slice(0, idx).trim();
+  const tailText = rawText.slice(idx + ATTEMPT_HISTORY_HEADER.length);
+  const existingLines = tailText
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*-\s*/, "").trim())
+    .filter(Boolean);
+  return { prefixText, existingLines };
+}
+
+/**
+ * Formats one bounded, secret-free attempt history entry (never raw answers,
+ * full prompts, secrets, or savedReportJson).
+ */
+export function formatAttemptHistoryEntryLine(attempt = {}) {
+  const src = isPlainObject(attempt) ? attempt : {};
+  const attemptNum =
+    typeof src.attemptNumber === "number" &&
+    Number.isInteger(src.attemptNumber) &&
+    src.attemptNumber >= 1
+      ? src.attemptNumber
+      : null;
+  const status = sanitizeSingleLineText(src.status, 64, "unknown_status");
+  const code = sanitizeSingleLineText(src.code, 80, null);
+  const claimId = sanitizeSingleLineText(src.claimId, 96, null);
+  const executedAt = sanitizeSingleLineText(src.executedAt, 64, null);
+  const error = sanitizeSingleLineText(src.error || src.message, 140, null);
+  const diagSnap = normalizeFailureDiagnosticsSnapshot(src.failureDiagnostics);
+  const diagSummary =
+    diagSnap?.summaryLine ||
+    sanitizeSingleLineText(src.diagnosticSummary, 160, null);
+
+  const pieces = [];
+  pieces.push(attemptNum !== null ? `attempt#${attemptNum}` : "attempt");
+  pieces.push(`status=${status}`);
+  if (code) {
+    pieces.push(`code=${code}`);
+  }
+  if (claimId) {
+    pieces.push(`claim=${claimId}`);
+  }
+  if (executedAt) {
+    pieces.push(`at=${executedAt}`);
+  }
+  if (error) {
+    pieces.push(`note=${error}`);
+  }
+  if (diagSummary) {
+    pieces.push(`diag=${diagSummary}`);
+  }
+
+  return sanitizeSingleLineText(
+    pieces.join(" ; "),
+    MAX_SINGLE_ATTEMPT_RECORD_CHARS,
+    "attempt ; status=unknown"
+  );
+}
+
+/**
+ * Appends a bounded attempt record into an existing text field
+ * (groundingSummary or errorDetail) while preserving prior attempts and
+ * never silently dropping all prior history: if the total string would exceed
+ * maxFieldChars, oldest entries are compacted/folded into a single oldest-summary
+ * line while keeping recent entries intact rather than silently discarding all
+ * prior history.
+ */
+export function appendBoundedAttemptHistoryToTextField(
+  existingFieldValue,
+  attemptRecord,
+  options = {}
+) {
+  const maxEntries =
+    typeof options.maxEntries === "number" &&
+    Number.isInteger(options.maxEntries) &&
+    options.maxEntries >= 2
+      ? options.maxEntries
+      : MAX_ATTEMPT_HISTORY_ENTRIES;
+  const maxFieldChars =
+    typeof options.maxFieldChars === "number" &&
+    Number.isInteger(options.maxFieldChars) &&
+    options.maxFieldChars >= 300
+      ? options.maxFieldChars
+      : MAX_ATTEMPT_HISTORY_FIELD_CHARS;
+
+  const { prefixText, existingLines } =
+    stripExistingAttemptHistorySection(existingFieldValue);
+  const newLine = formatAttemptHistoryEntryLine(attemptRecord);
+
+  const entries = [...existingLines, newLine];
+  let foldedOldCount = 0;
+
+  const renderWithEntries = (list, foldedCount) => {
+    const renderedList = [...list];
+    if (foldedCount > 0) {
+      renderedList.unshift(
+        `${foldedCount} earlier attempt(s) compacted to preserve history bound`
+      );
+    }
+    const historyBlock = `${ATTEMPT_HISTORY_HEADER}\n${renderedList
+      .map((l) => `- ${l}`)
+      .join("\n")}`;
+    return prefixText ? `${prefixText}\n\n${historyBlock}` : historyBlock;
+  };
+
+  while (entries.length > maxEntries) {
+    entries.shift();
+    foldedOldCount += 1;
+  }
+
+  let composed = renderWithEntries(entries, foldedOldCount);
+  while (composed.length > maxFieldChars && entries.length > 1) {
+    entries.shift();
+    foldedOldCount += 1;
+    composed = renderWithEntries(entries, foldedOldCount);
+  }
+
+  if (composed.length > maxFieldChars) {
+    composed = composed.slice(0, maxFieldChars - 3) + "...";
+  }
+
+  return composed;
+}
+
+/**
+ * Parses bounded attempt lines back out of an existing text field for
+ * read-only technical inspection without touching savedReportJson.
+ */
+export function extractAttemptHistoryFromTextField(rawFieldValue) {
+  const { prefixText, existingLines } =
+    stripExistingAttemptHistorySection(rawFieldValue);
+  return {
+    leadSummary: prefixText || null,
+    entryCount: existingLines.length,
+    entries: existingLines,
+  };
 }
 
 /**
@@ -2294,11 +2895,29 @@ export function buildCalmResearchCardModel({
   );
 
   const runEligibility = evaluateResearchRunEligibility(f);
+  const completedFailureRetryEligibility =
+    evaluateCompletedFailureRetryEligibility(f);
   const isEligibleToRun =
     runEligibility.eligible &&
     !hasAnySavedReportData &&
     !vaultSnapshot &&
     !hasFullVaultReport;
+  const retryEligibleCompletedFailure = Boolean(
+    completedFailureRetryEligibility.eligible &&
+      !hasAnySavedReportData &&
+      !vaultSnapshot &&
+      !hasFullVaultReport
+  );
+  const parsedHistoryFromError = extractAttemptHistoryFromTextField(
+    errorDetail
+  );
+  const parsedHistoryFromSummary = extractAttemptHistoryFromTextField(
+    groundingSummary
+  );
+  const attemptHistoryEntries =
+    parsedHistoryFromError.entryCount > 0
+      ? parsedHistoryFromError.entries
+      : parsedHistoryFromSummary.entries;
 
   const isPreDispatchDraftWithInputIssue =
     !hasAnySavedReportData &&
@@ -2480,6 +3099,8 @@ export function buildCalmResearchCardModel({
     statusHelperText,
     durablySaved: hasVerifiedDurableReport,
     cacheReadableNow: Boolean(cacheReadableNow),
+    retryEligibleCompletedFailure,
+    attemptHistoryEntries,
     hasRamVaultCopy: Boolean(hasFullVaultReport || vaultSnapshot),
     hasCompleteAnswerText: Boolean(activeReportObj),
     isAnswerPreviewTruncated,
@@ -2506,6 +3127,8 @@ export function buildCalmResearchCardModel({
       durablySaved: hasVerifiedDurableReport,
       durableParseCode: durableDiagnosticCode,
       runEligibilityCode: runEligibility.code,
+      retryEligibilityCode: completedFailureRetryEligibility.code,
+      attemptHistoryCount: attemptHistoryEntries.length,
       cacheReadableNow: Boolean(cacheReadableNow),
       groundingSummary: effectiveTechnicalGroundingSummary,
       errorDetail: errorDetail || null,

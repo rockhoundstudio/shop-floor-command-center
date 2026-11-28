@@ -17,6 +17,9 @@
 import {
   SAVED_REPORT_FIELD_KEY,
   evaluateResearchRunEligibility,
+  evaluateCompletedFailureRetryEligibility,
+  normalizeFailureDiagnosticsSnapshot,
+  extractAttemptHistoryFromTextField,
   isSavedReportFieldGenuinelyEmpty,
   parseSavedReportField,
 } from "./sidekick-research-storage.server.js";
@@ -29,6 +32,7 @@ const MAX_SHORT_ID_CHARS = 64;
 const MAX_REQUEST_KEY_CHARS = 160;
 const MAX_STATUS_CODE_CHARS = 80;
 const MAX_REASON_CHARS = 240;
+const MAX_DIAG_SUMMARY_CHARS = 320;
 
 function isPlainObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -61,7 +65,8 @@ function normalizeIsoObservationTime(rawObservedAt) {
 }
 
 export function buildResearchLockCompositeKey(shop, metaobjectId) {
-  const normalizedShop = typeof shop === "string" ? shop.trim().toLowerCase() : "";
+  const normalizedShop =
+    typeof shop === "string" ? shop.trim().toLowerCase() : "";
   const normalizedMetaobjectId =
     typeof metaobjectId === "string" ? metaobjectId.trim() : "";
   return `${normalizedShop}::${normalizedMetaobjectId}`;
@@ -83,14 +88,63 @@ export function getResearchInFlightLockSet() {
 }
 
 export function isResearchInFlightLocally(shop, metaobjectId) {
-  const normalizedShop = typeof shop === "string" ? shop.trim().toLowerCase() : "";
+  const normalizedShop =
+    typeof shop === "string" ? shop.trim().toLowerCase() : "";
   const normalizedMetaobjectId =
     typeof metaobjectId === "string" ? metaobjectId.trim() : "";
   if (!normalizedShop || !METAOBJECT_GID_PATTERN.test(normalizedMetaobjectId)) {
     return false;
   }
   const lockSet = getResearchInFlightLockSet();
-  return lockSet.has(buildResearchLockCompositeKey(normalizedShop, normalizedMetaobjectId));
+  return lockSet.has(
+    buildResearchLockCompositeKey(normalizedShop, normalizedMetaobjectId)
+  );
+}
+
+function buildDiagnosticsMetadata(fields, opts) {
+  const explicitDiag = normalizeFailureDiagnosticsSnapshot(
+    opts.failureDiagnostics
+  );
+  const errorHistory = extractAttemptHistoryFromTextField(fields.errorDetail);
+  const summaryHistory = extractAttemptHistoryFromTextField(
+    fields.groundingSummary
+  );
+  const attemptHistoryCount = Math.max(
+    errorHistory.entryCount,
+    summaryHistory.entryCount
+  );
+
+  // Only expose diagnostic presence/summary for the latest observation when
+  // supplied or present in current summary/error text; never manufacture or
+  // infer diagnostics for older attempts.
+  const latestSummaryCandidate =
+    explicitDiag?.summaryLine ||
+    summaryHistory.leadSummary ||
+    errorHistory.leadSummary ||
+    null;
+  const boundedLatestSummary = clampShortString(
+    latestSummaryCandidate,
+    MAX_DIAG_SUMMARY_CHARS,
+    null
+  );
+
+  const diagnosticPresent = Boolean(
+    explicitDiag ||
+      summaryHistory.leadSummary ||
+      errorHistory.leadSummary ||
+      (typeof fields.groundingSummary === "string" &&
+        fields.groundingSummary.trim().length > 0) ||
+      (typeof fields.errorDetail === "string" &&
+        fields.errorDetail.trim().length > 0)
+  );
+
+  return {
+    diagnosticPresent,
+    latestSummary: boundedLatestSummary,
+    attemptHistoryCount,
+    olderAttemptDiagnosticsManufactured: false,
+    preservesMissingVsZero: true,
+  };
 }
 
 export function buildSingleRequestStatusMetadata(options = {}) {
@@ -105,7 +159,11 @@ export function buildSingleRequestStatusMetadata(options = {}) {
     ? rawMetaobjectId
     : clampShortString(rawMetaobjectId, 128, null);
   const shortId = validGid
-    ? clampShortString(rawMetaobjectId.split("/").pop() || null, MAX_SHORT_ID_CHARS, null)
+    ? clampShortString(
+        rawMetaobjectId.split("/").pop() || null,
+        MAX_SHORT_ID_CHARS,
+        null
+      )
     : null;
 
   const fields = isPlainObject(opts.fields) ? opts.fields : {};
@@ -121,7 +179,11 @@ export function buildSingleRequestStatusMetadata(options = {}) {
 
   const rawStatusTrimmed =
     typeof fields.status === "string" && fields.status.trim().length > 0
-      ? clampShortString(fields.status.toLowerCase(), MAX_STATUS_CODE_CHARS, null)
+      ? clampShortString(
+          fields.status.toLowerCase(),
+          MAX_STATUS_CODE_CHARS,
+          null
+        )
       : null;
   const effectiveNormalizedStatus = rawStatusTrimmed || "queued";
 
@@ -158,12 +220,31 @@ export function buildSingleRequestStatusMetadata(options = {}) {
   }
 
   const eligibilityEval = evaluateResearchRunEligibility(fields);
+  const retryEval = evaluateCompletedFailureRetryEligibility(fields);
   const inCurrentProcess =
     Boolean(normalizedShop) && validGid
       ? isResearchInFlightLocally(normalizedShop, rawMetaobjectId)
       : false;
 
+  const isUncertainCase =
+    effectiveNormalizedStatus === "uncertain_no_retry" ||
+    effectiveNormalizedStatus === "uncertain_after_dispatch" ||
+    effectiveNormalizedStatus.startsWith("uncertain");
+  const isRunningCase =
+    inCurrentProcess || effectiveNormalizedStatus === "running";
+
+  const executionKind = isRunningCase
+    ? "running"
+    : isUncertainCase
+      ? "uncertain"
+      : retryEval.eligible
+        ? "retryable_completed_failure"
+        : eligibilityEval.eligible
+          ? "first_run_eligible"
+          : "non_runnable_or_completed";
+
   const resolvedReportId = reportIdStr || parsedEnvelopeReportId || null;
+  const diagnosticsMeta = buildDiagnosticsMetadata(fields, opts);
 
   return {
     observedAt,
@@ -176,6 +257,8 @@ export function buildSingleRequestStatusMetadata(options = {}) {
       constraintsPresent,
       storedStatus: rawStatusTrimmed,
       normalizedStatus: effectiveNormalizedStatus,
+      executionKind,
+      treatedAsFreshQueued: false,
     },
     savedEvidence: {
       claimIdPresent: Boolean(claimIdStr),
@@ -191,15 +274,31 @@ export function buildSingleRequestStatusMetadata(options = {}) {
     },
     eligibility: {
       eligible: Boolean(eligibilityEval.eligible),
-      code: clampShortString(eligibilityEval.code, MAX_STATUS_CODE_CHARS, "unknown"),
+      code: clampShortString(
+        eligibilityEval.code,
+        MAX_STATUS_CODE_CHARS,
+        "unknown"
+      ),
       reason: clampShortString(
         eligibilityEval.message,
         MAX_REASON_CHARS,
         "Eligibility status evaluated."
       ),
+      retryEligible: Boolean(retryEval.eligible && !isUncertainCase && !isRunningCase),
+      retryCode: clampShortString(
+        retryEval.code,
+        MAX_STATUS_CODE_CHARS,
+        "unknown"
+      ),
+      retryReason: clampShortString(
+        retryEval.message,
+        MAX_REASON_CHARS,
+        "Retry eligibility evaluated."
+      ),
       nullFieldsDoNotProveRetrySafety: true,
       eligibilityIsNotRunAuthorization: true,
     },
+    diagnostics: diagnosticsMeta,
     localProcessLock: {
       inCurrentProcess,
       scope: "single_process_ram_only",

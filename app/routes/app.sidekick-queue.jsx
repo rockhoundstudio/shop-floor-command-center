@@ -42,6 +42,10 @@ import {
   RESEARCH_METAOBJECT_TYPE,
   SAVED_REPORT_FIELD_KEY,
   evaluateResearchRunEligibility,
+  evaluateCompletedFailureRetryEligibility,
+  normalizeFailureDiagnosticsSnapshot,
+  appendBoundedAttemptHistoryToTextField,
+  extractAttemptHistoryFromTextField,
   publishGroundedResearchToTelemetryCache,
   buildDurableSavedReportEnvelope,
   parseSavedReportField,
@@ -687,7 +691,10 @@ export const loader = async ({ request }) => {
         );
         const effectiveRawFields =
           isInFlightInWorker &&
-          (storedStatus === "queued" || storedStatus === "failed_pre_dispatch")
+          (storedStatus === "queued" ||
+            storedStatus === "failed_pre_dispatch" ||
+            storedStatus === "failed_ungrounded" ||
+            storedStatus === "failed_provider_http")
             ? { ...f, status: "running" }
             : f;
         const effectiveStatus = normalizeResearchStatus(effectiveRawFields.status);
@@ -927,11 +934,13 @@ export const action = async ({ request }) => {
     }
   }
 
-  // --- INTENT B: EXPLICIT MERCHANT-AUTHORIZED GROUNDED RESEARCH RUN ---
-  if (intent === "runResearch") {
+  // --- INTENT B: EXPLICIT MERCHANT-AUTHORIZED FIRST RUN OR DELIBERATE RETRY ---
+  if (intent === "runResearch" || intent === "retryResearch") {
+    const isRetryIntent = intent === "retryResearch";
     const metaobjectId = String(formData.get("metaobjectId") || "").trim();
-    const merchantRunConfirmed =
-      String(formData.get("merchantRunConfirmed") || "") === "true";
+    const merchantRunConfirmed = isRetryIntent
+      ? String(formData.get("merchantRetryConfirmed") || "") === "true"
+      : String(formData.get("merchantRunConfirmed") || "") === "true";
 
     if (!merchantRunConfirmed) {
       return Response.json(
@@ -939,8 +948,9 @@ export const action = async ({ request }) => {
           ok: false,
           intent,
           metaobjectId: metaobjectId || null,
-          error:
-            "Explicit merchant Run confirmation is required before invoking the Gemini API.",
+          error: isRetryIntent
+            ? "Explicit merchant Retry confirmation is required before retrying a completed research failure."
+            : "Explicit merchant Run confirmation is required before invoking the Gemini API.",
         },
         { status: 400 }
       );
@@ -995,62 +1005,86 @@ export const action = async ({ request }) => {
       const fields = initialRead.fields;
       const currentStatus = normalizeResearchStatus(fields.status);
       const existingClaim = (fields.claimId || "").trim();
+      const existingExecutedAt = (fields.executedAt || "").trim();
+      const existingErrorDetail = String(fields.errorDetail || "");
+      const existingGroundingSummary = String(fields.groundingSummary || "");
 
-      // Shared 6-part eligibility contract:
-      // Requires status in {"queued", "failed_pre_dispatch"}, empty claimId,
-      // empty executedAt, empty reportId, genuinely empty savedReportJson, and
-      // passing validateResearchInputs. Any nonempty/invalid savedReportJson or
-      // prior claim/execution evidence is strictly non-runnable.
-      const eligibility = evaluateResearchRunEligibility(fields);
-      if (!eligibility.eligible) {
-        if (
-          !eligibility.hasExecutionOrSaveEvidence &&
-          (currentStatus === "queued" || currentStatus === "failed_pre_dispatch") &&
-          !eligibility.inputCheck.ok
-        ) {
-          const preDispatchWrite = await updateResearchMetaobjectFields(
-            admin,
-            metaobjectId,
-            {
-              status: "failed_pre_dispatch",
-              errorDetail: `${eligibility.inputCheck.code}: ${eligibility.inputCheck.message}`,
-            }
-          );
-          const confirmedPreStatus = preDispatchWrite.ok
-            ? normalizeResearchStatus(preDispatchWrite.fields?.status)
-            : null;
+      let inputCheck = null;
+
+      if (isRetryIntent) {
+        // Explicit deliberate retry path ONLY for confirmed completed failures
+        // with empty reportId and genuinely empty savedReportJson.
+        const retryEligibility = evaluateCompletedFailureRetryEligibility(fields);
+        if (!retryEligibility.eligible) {
           return Response.json(
             {
               ok: false,
               intent,
               metaobjectId,
-              executionOutcome: "failed_pre_dispatch",
-              status: confirmedPreStatus,
-              statusPersisted: Boolean(preDispatchWrite.ok),
-              error: `Validation failed before API dispatch (${eligibility.inputCheck.code}): ${eligibility.inputCheck.message}`,
+              status: currentStatus,
+              statusPersisted: true,
+              retryEligible: false,
+              retryEligibilityCode: retryEligibility.code,
+              error: `Retry not permitted (${retryEligibility.code}): ${retryEligibility.message}`,
             },
-            { status: 400 }
+            { status: 409 }
+          );
+        }
+        inputCheck = retryEligibility.inputCheck;
+      } else {
+        // First-run path (unchanged: requires queued/failed_pre_dispatch and
+        // empty claimId, executedAt, reportId, savedReportJson).
+        const eligibility = evaluateResearchRunEligibility(fields);
+        if (!eligibility.eligible) {
+          if (
+            !eligibility.hasExecutionOrSaveEvidence &&
+            (currentStatus === "queued" || currentStatus === "failed_pre_dispatch") &&
+            !eligibility.inputCheck.ok
+          ) {
+            const preDispatchWrite = await updateResearchMetaobjectFields(
+              admin,
+              metaobjectId,
+              {
+                status: "failed_pre_dispatch",
+                errorDetail: `${eligibility.inputCheck.code}: ${eligibility.inputCheck.message}`,
+              }
+            );
+            const confirmedPreStatus = preDispatchWrite.ok
+              ? normalizeResearchStatus(preDispatchWrite.fields?.status)
+              : null;
+            return Response.json(
+              {
+                ok: false,
+                intent,
+                metaobjectId,
+                executionOutcome: "failed_pre_dispatch",
+                status: confirmedPreStatus,
+                statusPersisted: Boolean(preDispatchWrite.ok),
+                error: `Validation failed before API dispatch (${eligibility.inputCheck.code}): ${eligibility.inputCheck.message}`,
+              },
+              { status: 400 }
+            );
+          }
+
+          return Response.json(
+            {
+              ok: false,
+              intent,
+              metaobjectId,
+              status: currentStatus,
+              statusPersisted: true,
+              eligibilityCode: eligibility.code,
+              error:
+                eligibility.code === "saved_report_field_present"
+                  ? "Request already contains savedReportJson data and is locked against duplicate paid runs."
+                  : `Request is not eligible for new API spend (status="${currentStatus}", claimId="${existingClaim || "none"}").` ,
+            },
+            { status: 409 }
           );
         }
 
-        return Response.json(
-          {
-            ok: false,
-            intent,
-            metaobjectId,
-            status: currentStatus,
-            statusPersisted: true,
-            eligibilityCode: eligibility.code,
-            error:
-              eligibility.code === "saved_report_field_present"
-                ? "Request already contains savedReportJson data and is locked against duplicate paid runs."
-                : `Request is not eligible for new API spend (status="${currentStatus}", claimId="${existingClaim || "none"}").`,
-          },
-          { status: 409 }
-        );
+        inputCheck = eligibility.inputCheck;
       }
-
-      const inputCheck = eligibility.inputCheck;
 
       // Verify server API key readiness BEFORE writing claimId or status="running"
       // so missing environment configuration never bricks an un-dispatched record.
@@ -1071,17 +1105,104 @@ export const action = async ({ request }) => {
         );
       }
 
-      // 2. Claim record BEFORE network call (single-worker lock + claimId re-read check;
-      // note: Shopify metaobjectUpdate is not an atomic cross-worker CAS).
+      // 2. Durably preserve & verify previous-attempt evidence BEFORE any retry
+      // claim/provider dispatch, then claim record (single-worker lock +
+      // claimId re-read check; not a distributed cross-worker CAS).
+      const priorHistoryCount = Math.max(
+        extractAttemptHistoryFromTextField(existingErrorDetail).entryCount,
+        extractAttemptHistoryFromTextField(existingGroundingSummary).entryCount
+      );
+      const nextAttemptNumber = priorHistoryCount + 1;
+
+      const preservedErrorHistory = isRetryIntent
+        ? appendBoundedAttemptHistoryToTextField(existingErrorDetail, {
+            attemptNumber: priorHistoryCount > 0 ? priorHistoryCount : 1,
+            status: currentStatus,
+            claimId: existingClaim || null,
+            executedAt: existingExecutedAt || null,
+            error: existingErrorDetail || null,
+          })
+        : existingErrorDetail;
+
+      const preservedSummaryHistory = isRetryIntent
+        ? appendBoundedAttemptHistoryToTextField(existingGroundingSummary, {
+            attemptNumber: priorHistoryCount > 0 ? priorHistoryCount : 1,
+            status: currentStatus,
+            claimId: existingClaim || null,
+            executedAt: existingExecutedAt || null,
+            error: existingErrorDetail || null,
+          })
+        : existingGroundingSummary;
+
+      if (isRetryIntent) {
+        const preserveWrite = await updateResearchMetaobjectFields(
+          admin,
+          metaobjectId,
+          {
+            errorDetail: preservedErrorHistory,
+            groundingSummary: preservedSummaryHistory,
+          }
+        );
+        if (!preserveWrite.ok) {
+          return Response.json(
+            {
+              ok: false,
+              intent,
+              metaobjectId,
+              status: currentStatus,
+              statusPersisted: false,
+              error: `Aborted retry before claim/provider call: could not durably preserve previous-attempt evidence (${preserveWrite.message}).`,
+            },
+            { status: 500 }
+          );
+        }
+
+        const verifyPreservedRead = await readResearchMetaobjectById(
+          admin,
+          metaobjectId
+        );
+        const readbackErrText = verifyPreservedRead.ok
+          ? String(verifyPreservedRead.fields?.errorDetail || "")
+          : "";
+        if (
+          !verifyPreservedRead.ok ||
+          !readbackErrText.includes("ATTEMPT HISTORY")
+        ) {
+          return Response.json(
+            {
+              ok: false,
+              intent,
+              metaobjectId,
+              status: verifyPreservedRead.ok
+                ? normalizeResearchStatus(verifyPreservedRead.fields?.status)
+                : currentStatus,
+              statusPersisted: Boolean(verifyPreservedRead.ok),
+              error:
+                "Aborted retry before claim/provider call: previous-attempt history was not confirmed on readback.",
+            },
+            { status: 409 }
+          );
+        }
+      }
+
       const claimId = `claim_${Date.now()}_${randomUUID().slice(0, 8)}`;
+      const claimFields = isRetryIntent
+        ? {
+            status: "running",
+            claimId,
+            errorDetail: preservedErrorHistory,
+            groundingSummary: preservedSummaryHistory,
+          }
+        : {
+            status: "running",
+            claimId,
+            errorDetail: "",
+          };
+
       const claimWrite = await updateResearchMetaobjectFields(
         admin,
         metaobjectId,
-        {
-          status: "running",
-          claimId,
-          errorDetail: "",
-        }
+        claimFields
       );
 
       if (!claimWrite.ok) {
@@ -1123,6 +1244,15 @@ export const action = async ({ request }) => {
         );
       }
 
+      const baseErrorAfterClaim = isRetryIntent
+        ? String(verifyClaimRead.fields?.errorDetail || preservedErrorHistory)
+        : "";
+      const baseSummaryAfterClaim = isRetryIntent
+        ? String(
+            verifyClaimRead.fields?.groundingSummary || preservedSummaryHistory
+          )
+        : "";
+
       // 3. Execute single bounded grounded Gemini call (ZERO automatic retries)
       const researchResult = await executeGroundedGeminiResearch({
         query: inputCheck.query,
@@ -1145,14 +1275,46 @@ export const action = async ({ request }) => {
           researchResult.status === "uncertain_after_dispatch"
             ? "uncertain_no_retry"
             : researchResult.status;
+        const attemptExecutedAt =
+          researchResult.executedAt || new Date().toISOString();
+        const diagSnap = normalizeFailureDiagnosticsSnapshot(
+          researchResult.failureDiagnostics
+        );
+        const failureDiagSummary =
+          diagSnap?.summaryLine || "Diagnostics unavailable.";
+        const formattedFailureLine = `[${researchResult.code}] ${researchResult.message} | ${failureDiagSummary}`;
+
+        const nextErrorDetail = isRetryIntent
+          ? appendBoundedAttemptHistoryToTextField(baseErrorAfterClaim, {
+              attemptNumber: nextAttemptNumber,
+              status: executionOutcome,
+              code: researchResult.code,
+              claimId,
+              executedAt: attemptExecutedAt,
+              error: researchResult.message,
+              failureDiagnostics: diagSnap,
+            })
+          : formattedFailureLine;
+
+        const nextGroundingSummary = isRetryIntent
+          ? appendBoundedAttemptHistoryToTextField(baseSummaryAfterClaim, {
+              attemptNumber: nextAttemptNumber,
+              status: executionOutcome,
+              code: researchResult.code,
+              claimId,
+              executedAt: attemptExecutedAt,
+              failureDiagnostics: diagSnap,
+            })
+          : failureDiagSummary;
 
         const failWrite = await updateResearchMetaobjectFields(
           admin,
           metaobjectId,
           {
             status: executionOutcome,
-            executedAt: researchResult.executedAt || new Date().toISOString(),
-            errorDetail: `[${researchResult.code}] ${researchResult.message}`,
+            executedAt: attemptExecutedAt,
+            groundingSummary: nextGroundingSummary,
+            errorDetail: nextErrorDetail,
           }
         );
 
@@ -1174,7 +1336,8 @@ export const action = async ({ request }) => {
             executionOutcome,
             status: confirmedStatus,
             statusPersisted,
-            error: `[${researchResult.code}] ${researchResult.message}${persistenceWarning}`,
+            failureDiagnostics: diagSnap,
+            error: `[${researchResult.code}] ${researchResult.message} | ${failureDiagSummary}${persistenceWarning}`,
           },
           { status: 422 }
         );
@@ -1210,12 +1373,32 @@ export const action = async ({ request }) => {
       vaultEntry.reportId = reportId;
       vaultEntry.cacheStored = cacheOk;
 
-      const summaryLine = `Grounded (${researchResult.usableWebSourceCount} web sources, ${researchResult.usableSupportSpanCount} linked model-answer spans; queries: ${researchResult.webSearchQueries.join("; ").slice(0, 260) || "none listed"})`;
+      const baseSummaryLine = `Grounded (${researchResult.usableWebSourceCount} web sources, ${researchResult.usableSupportSpanCount} linked model-answer spans; queries: ${researchResult.webSearchQueries.join("; ").slice(0, 260) || "none listed"})`;
+      const summaryLine = isRetryIntent
+        ? appendBoundedAttemptHistoryToTextField(baseSummaryAfterClaim, {
+            attemptNumber: nextAttemptNumber,
+            status: "completed_grounded",
+            code: researchResult.code,
+            claimId,
+            executedAt: researchResult.executedAt,
+            diagnosticSummary: baseSummaryLine,
+          })
+        : baseSummaryLine;
 
       const targetStatus = cacheOk ? "completed" : "completed_cache_failed";
-      const targetErrorDetail = cacheOk
+      const baseFailureNote = cacheOk
         ? ""
         : `RAM cache publication failed (${cacheResult?.code || "unknown"}): ${cacheResult?.message || "Use Reload / Save without re-running Gemini."}`;
+      const targetErrorDetail = isRetryIntent
+        ? appendBoundedAttemptHistoryToTextField(baseErrorAfterClaim, {
+            attemptNumber: nextAttemptNumber,
+            status: targetStatus,
+            code: cacheOk ? researchResult.code : cacheResult?.code || "cache_error",
+            claimId,
+            executedAt: researchResult.executedAt,
+            error: baseFailureNote || "Succeeded after retry.",
+          })
+        : baseFailureNote;
 
       const envelopeResult = buildDurableSavedReportEnvelope({
         metaobjectId,
@@ -1677,6 +1860,17 @@ export default function SidekickQueueTab() {
     );
   };
 
+  const handleRetryResearch = (metaobjectId) => {
+    fetcher.submit(
+      {
+        intent: "retryResearch",
+        metaobjectId,
+        merchantRetryConfirmed: "true",
+      },
+      { method: "post" }
+    );
+  };
+
   const handleRepairPublication = (metaobjectId) => {
     fetcher.submit(
       {
@@ -1703,6 +1897,7 @@ export default function SidekickQueueTab() {
       onRefresh={() => revalidate()}
       onSetupDefinition={handleSetupDefinition}
       onRunResearch={handleRunResearch}
+      onRetryResearch={handleRetryResearch}
       onRepairOrRepublish={handleRepairPublication}
     />
   );
